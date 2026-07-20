@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": "..",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": { "@shared/*": ["shared/src/*"] }
+  },
+  "include": ["src/**/*.ts", "vite.config.ts"]
+}
