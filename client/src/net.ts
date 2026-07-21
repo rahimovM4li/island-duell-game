@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { C2S, S2C, PROTOCOL_VERSION } from '@shared/protocol';
 import type {
   GameEvent, InputMsg, LobbyStateMsg, MatchEndMsg, MatchStartMsg,
-  RoundEndMsg, RoundStartMsg, SnapshotMsg,
+  RoundEndMsg, RoundStartMsg, SessionMsg, SnapshotMsg,
 } from '@shared/protocol';
 import type { Recipe } from '@shared/constants';
 
@@ -16,18 +16,34 @@ export interface NetHandlers {
   onEvents(evs: GameEvent[]): void;
   onRoundEnd(m: RoundEndMsg): void;
   onMatchEnd(m: MatchEndMsg): void;
-  onDisconnect(): void;
+  onSession(m: SessionMsg): void;
+  onConnectionState(state: 'connected' | 'disconnected' | 'error', detail?: string): void;
+  onConnectionNotice(notice: { type: 'lost' | 'reconnected' | 'hostChanged'; playerId: string; graceMs?: number }): void;
 }
 
 export class Net {
   socket: Socket;
   /** bytes received in the current stats window (F3 debug) */
   bytesIn = 0;
+  playerId = '';
+  rttMs = 0;
+  jitterMs = 0;
+  lossPct = 0;
+  private sentProbes = 0;
+  private lostProbes = 0;
+  private pendingProbes = new Map<number, number>();
+  private probeSeq = 0;
 
   constructor(url: string | undefined, h: NetHandlers) {
-    this.socket = url ? io(url, { transports: ['websocket'] }) : io({ transports: ['websocket'] });
+    const options = {
+      transports: ['websocket'] as ('websocket')[],
+      reconnection: true, reconnectionDelay: 500, reconnectionDelayMax: 2500,
+    };
+    this.socket = url ? io(url, options) : io(options);
 
     this.socket.on(S2C.lobbyState, (m) => h.onLobby(m));
+    this.socket.on(S2C.session, (m: SessionMsg) => { this.playerId = m.playerId; h.onSession(m); });
+    this.socket.on(S2C.connectionNotice, (m) => h.onConnectionNotice(m));
     this.socket.on(S2C.joinError, (m) => h.onJoinError(typeof m === 'string' ? m : m?.reason ?? 'Beitritt abgelehnt'));
     this.socket.on(S2C.matchStart, (m) => h.onMatchStart(m));
     this.socket.on(S2C.roundStart, (m) => h.onRoundStart(m));
@@ -35,16 +51,46 @@ export class Net {
     this.socket.on(S2C.event, (evs) => h.onEvents(Array.isArray(evs) ? evs : [evs]));
     this.socket.on(S2C.roundEnd, (m) => h.onRoundEnd(m));
     this.socket.on(S2C.matchEnd, (m) => h.onMatchEnd(m));
-    this.socket.on('disconnect', () => h.onDisconnect());
+    this.socket.on('connect', () => h.onConnectionState('connected'));
+    this.socket.on('disconnect', (reason) => h.onConnectionState('disconnected', reason));
+    this.socket.on('connect_error', (error) => h.onConnectionState('error', error.message));
+    setInterval(() => this.probe(), 2000);
   }
 
-  get id(): string { return this.socket.id ?? ''; }
+  get id(): string { return this.playerId; }
 
-  join(name: string): void { this.socket.emit(C2S.join, { v: PROTOCOL_VERSION, name }); }
+  join(name: string, resumeToken?: string): void {
+    this.socket.emit(C2S.join, { v: PROTOCOL_VERSION, name, ...(resumeToken ? { resumeToken } : {}) });
+  }
   setReady(ready: boolean): void { this.socket.emit(C2S.setReady, { ready }); }
   startMatch(): void { this.socket.emit(C2S.startMatch); }
   sendInput(inp: InputMsg): void { this.socket.emit(C2S.input, inp); }
   craft(recipe: Recipe): void { this.socket.emit(C2S.craft, { recipe }); }
   useBandage(): void { this.socket.emit(C2S.useBandage); }
   rematch(): void { this.socket.emit(C2S.rematch); }
+
+  private probe(): void {
+    const now = performance.now();
+    for (const [id, at] of this.pendingProbes) {
+      if (now - at > 4500) { this.pendingProbes.delete(id); this.lostProbes += 1; }
+    }
+    if (!this.socket.connected) { this.updateLoss(); return; }
+    const id = ++this.probeSeq;
+    this.pendingProbes.set(id, now);
+    this.sentProbes += 1;
+    this.socket.emit(C2S.pingProbe, id, () => {
+      const started = this.pendingProbes.get(id);
+      if (started === undefined) return;
+      this.pendingProbes.delete(id);
+      const rtt = performance.now() - started;
+      this.jitterMs = this.rttMs ? this.jitterMs * 0.75 + Math.abs(rtt - this.rttMs) * 0.25 : 0;
+      this.rttMs = this.rttMs ? this.rttMs * 0.72 + rtt * 0.28 : rtt;
+      this.updateLoss();
+    });
+  }
+
+  private updateLoss(): void {
+    this.lossPct = this.sentProbes > 0 ? this.lostProbes / this.sentProbes * 100 : 0;
+    if (this.sentProbes > 50) { this.sentProbes = Math.ceil(this.sentProbes / 2); this.lostProbes = Math.ceil(this.lostProbes / 2); }
+  }
 }

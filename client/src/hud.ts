@@ -5,15 +5,19 @@ import {
 } from '@shared/constants';
 import { sampleHeight, type TerrainParams } from '@shared/terrain';
 import type {
-  CareSnap, InventoryState, PingSnap, PlacementEntry, ZoneSnap,
+  CareSnap, CombatStats, InventoryState, PingSnap, PlacementEntry, ZoneSnap,
 } from '@shared/protocol';
-import type { SpawnPoi } from '@shared/worldgen';
+import type { LandmarkPoi, SpawnPoi } from '@shared/worldgen';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 const WEAPON_NAMES: Record<WeaponType, string> = {
   fists: 'Fäuste', machete: 'Machete', spear: 'Speer', bow: 'Bogen',
   pistol: 'Pistole', rifle: 'Gewehr', shotgun: 'Schrotflinte', grenade: 'Granate',
+};
+const WEAPON_GLYPHS: Record<WeaponType, string> = {
+  fists: '✦', machete: '╱', spear: '↑', bow: '◖',
+  pistol: 'P', rifle: 'G', shotgun: 'S', grenade: '●',
 };
 export const weaponName = (w: WeaponType): string => WEAPON_NAMES[w];
 
@@ -22,7 +26,10 @@ export class Hud {
   private miniCtx = this.mini.getContext('2d')!;
   private islandImg: HTMLCanvasElement | null = null;
   private announceTimer: ReturnType<typeof setTimeout> | null = null;
+  private damageDirectionTimer: ReturnType<typeof setTimeout> | null = null;
   private spawns: SpawnPoi[] = [];
+  private pois: LandmarkPoi[] = [];
+  private reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   show(): void { $('hud').classList.add('active'); }
   hide(): void { $('hud').classList.remove('active'); }
@@ -31,7 +38,7 @@ export class Hud {
     const m = Math.floor(t / 60), s = Math.floor(t % 60);
     $('round-timer').textContent = `${m}:${s.toString().padStart(2, '0')}`;
     $('phase-label').textContent =
-      phase === 'loot' ? 'Looting' : phase === 'closing' ? 'Closing' : 'Endgame';
+      phase === 'loot' ? 'Loot-Phase' : phase === 'closing' ? 'Zone schließt' : 'Endkampf';
   }
 
   setZoneInfo(zone: ZoneSnap, t: number): void {
@@ -43,15 +50,30 @@ export class Hud {
     } else el.textContent = 'Letzte Zone';
   }
 
-  setAlive(count: number): void { $('alive-count').textContent = `👥 ${count}`; }
+  setAlive(count: number): void { $('alive-count').textContent = `${count} übrig`; }
+
+  setWeapon(weapon: WeaponType): void {
+    $('hud').dataset.weapon = weapon;
+  }
+
+  setCrosshairSpread(pixels: number): void {
+    $('crosshair').style.setProperty('--crosshair-gap', `${Math.max(2, Math.min(22, pixels)).toFixed(1)}px`);
+  }
+
+  setCompass(yaw: number): void {
+    const degrees = ((-yaw * 180 / Math.PI) % 360 + 360) % 360;
+    const directions = ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'];
+    const direction = directions[Math.round(degrees / 45) % directions.length];
+    $('compass').textContent = `${direction} · ${Math.round(degrees).toString().padStart(3, '0')}°`;
+  }
 
   setHp(hp: number): void {
-    $('hp-bar').style.width = `${(Math.max(0, hp) / PLAYER_MAX_HP) * 100}%`;
+    $('hp-bar').style.transform = `scaleX(${Math.max(0, hp) / PLAYER_MAX_HP})`;
     $('hp-num').textContent = `${Math.ceil(Math.max(0, hp))}`;
   }
 
   setStamina(st: number): void {
-    $('stamina-bar').style.width = `${(st / SPRINT_STAMINA_MAX) * 100}%`;
+    $('stamina-bar').style.transform = `scaleX(${st / SPRINT_STAMINA_MAX})`;
   }
 
   setInventory(inv: InventoryState): void {
@@ -60,19 +82,28 @@ export class Hud {
       { el: $('slot2'), w: inv.secondary },
     ];
     for (const { el, w } of slots) {
-      el.querySelector('.wname')!.textContent = w ? WEAPON_NAMES[w.type] : '—';
+      el.querySelector('.slot-icon')!.textContent = w ? WEAPON_GLYPHS[w.type] : '—';
+      el.querySelector('.wname')!.textContent = w ? WEAPON_NAMES[w.type] : 'Leer';
       const def = w ? WEAPONS[w.type] : null;
       el.querySelector('.ammo')!.textContent = def?.ammo
         ? `${w!.mag}/${inv.ammo[def.ammo]}${inv.reloading ? ' ⟳' : ''}`
-        : '';
+        : w ? 'Nahkampf' : 'Waffe aufnehmen';
     }
     $('slot3').querySelector('.ammo')!.textContent = `×${inv.grenades}`;
     for (const i of [1, 2, 3] as const) $(`slot${i}`).classList.toggle('active', inv.active === i);
-    $('plates-row').textContent = inv.plates > 0 ? `🛡 ${'▮'.repeat(inv.plates)} (−20% Schaden)` : '';
+    $('plates-row').textContent = inv.plates > 0 ? `Panzerung ${'■'.repeat(inv.plates)} · nächster Treffer −20%` : 'Keine Panzerung';
     $('mats-row').textContent =
-      `🪵 ${inv.mats.wood}  🪨 ${inv.mats.stone}  🌿 ${inv.mats.fiber}   [4] Pfeile  [5] Verband  [6] Platte`;
+      `Holz ${inv.mats.wood}  ·  Stein ${inv.mats.stone}  ·  Fasern ${inv.mats.fiber}`;
+    const affordable = {
+      arrows: inv.mats.wood >= 2,
+      bandage: inv.mats.fiber >= 2,
+      plate: inv.mats.stone >= 3,
+    };
+    for (const [recipe, ok] of Object.entries(affordable)) {
+      document.querySelector(`[data-recipe="${recipe}"]`)?.classList.toggle('affordable', ok);
+    }
     $('consumables').innerHTML =
-      `Verbände: ${inv.bandages} <span style="color:#9fb3c4">[H]</span><br>Pfeile: ${inv.ammo.arrow}`;
+      `<strong>${inv.bandages}</strong> Verbände <span style="color:#ffc45c">[H]</span><br><strong>${inv.ammo.arrow}</strong> Pfeile`;
   }
 
   killfeed(text: string, isMe: boolean): void {
@@ -106,6 +137,31 @@ export class Hud {
     setTimeout(() => { el.style.opacity = '0'; }, 120);
   }
 
+  /** A short, local confirmation pulse when the player successfully loots. */
+  punchPickup(): void {
+    if (this.reduceMotion) return;
+    const targets = [$('bottombar'), document.querySelector('.slot.active') as HTMLElement | null];
+    for (const el of targets) {
+      el?.animate(
+        [
+          { transform: 'translateY(0) scale(1)', filter: 'brightness(1)' },
+          { transform: 'translateY(-4px) scale(1.025)', filter: 'brightness(1.35)', offset: 0.42 },
+          { transform: 'translateY(0) scale(1)', filter: 'brightness(1)' },
+        ],
+        { duration: 220, easing: 'cubic-bezier(.2,.8,.2,1)' },
+      );
+    }
+  }
+
+  damageDirection(angle: number | null): void {
+    if (angle === null) return;
+    const el = $('damage-direction');
+    el.style.setProperty('--damage-angle', `${angle}rad`);
+    el.style.opacity = '1';
+    if (this.damageDirectionTimer) clearTimeout(this.damageDirectionTimer);
+    this.damageDirectionTimer = setTimeout(() => { el.style.opacity = '0'; }, 520);
+  }
+
   setInZone(outside: boolean): void {
     $('zone-warn').style.opacity = outside ? '1' : '0';
   }
@@ -128,6 +184,21 @@ export class Hud {
     $('spectate-label').style.display = v ? 'block' : 'none';
   }
 
+  showDeathRecap(text: string): void {
+    const el = $('death-recap');
+    el.textContent = text;
+    el.style.display = 'block';
+  }
+
+  hideDeathRecap(): void { $('death-recap').style.display = 'none'; }
+
+  setNetworkStatus(text: string | null, danger = true): void {
+    const el = $('network-banner');
+    el.textContent = text ?? '';
+    el.style.background = danger ? '#5e3020' : '#23533d';
+    el.classList.toggle('visible', !!text);
+  }
+
   setDebug(text: string | null): void {
     const el = $('debug');
     el.style.display = text ? 'block' : 'none';
@@ -135,8 +206,9 @@ export class Hud {
   }
 
   // ---------- minimap ----------
-  initIsland(params: TerrainParams, spawns: SpawnPoi[]): void {
+  initIsland(params: TerrainParams, spawns: SpawnPoi[], pois: LandmarkPoi[]): void {
     this.spawns = spawns;
+    this.pois = pois;
     const size = 320;
     const cv = document.createElement('canvas');
     cv.width = cv.height = size;
@@ -183,6 +255,14 @@ export class Hud {
     // ruins marker (map center)
     g.strokeStyle = 'rgba(220,220,220,0.6)';
     g.strokeRect(size / 2 - 3, size / 2 - 3, 6, 6);
+    for (const poi of this.pois) {
+      if (poi.id === 'ruins') continue;
+      const [px, py] = this.toMap(poi.x, poi.z);
+      g.fillStyle = poi.id === 'wreck' ? '#d6b06c' : poi.id === 'watchtower' ? '#ef8f48' : '#9aa79b';
+      g.beginPath();
+      g.arc(px, py, 4, 0, Math.PI * 2);
+      g.fill();
+    }
 
     // zone: current (blue) + target (white)
     g.strokeStyle = '#63d0ff';
@@ -235,21 +315,24 @@ export class Hud {
   // ---------- scoreboards ----------
   showRoundEnd(
     round: number, placements: PlacementEntry[], totals: Record<string, number>,
-    nextRoundIn: number, myId: string, suddenDeathNext: boolean,
+    nextRoundIn: number, myId: string, suddenDeathNext: boolean, stats: Record<string, CombatStats>,
   ): void {
     $('scoreboard-title').textContent = `Runde ${round} beendet`;
     $('scoreboard-sub').textContent = 'Platzierungspunkte: 3 / 2 / 1 / 0 / 0';
-    this.fillScores(placements, totals, myId, true);
+    this.fillScores(placements, totals, myId, true, stats);
     $('rematch-btn').style.display = 'none';
     const label = suddenDeathNext ? 'SUDDEN DEATH' : 'Nächste Runde';
     $('next-round-in').textContent = `${label} in ${Math.round(nextRoundIn)} s …`;
     $('scoreboard-screen').classList.remove('hidden');
   }
 
-  showMatchEnd(standings: PlacementEntry[], totals: Record<string, number>, winnerName: string, myId: string, iWon: boolean): void {
+  showMatchEnd(
+    standings: PlacementEntry[], totals: Record<string, number>, winnerName: string,
+    myId: string, iWon: boolean, stats: Record<string, CombatStats>,
+  ): void {
     $('scoreboard-title').textContent = iWon ? '🏆 SIEG!' : `Match vorbei — ${winnerName} gewinnt`;
     $('scoreboard-sub').textContent = 'Endstand nach 3 Runden';
-    this.fillScores(standings, totals, myId, false);
+    this.fillScores(standings, totals, myId, false, stats);
     $('next-round-in').textContent = '';
     $('rematch-btn').style.display = 'block';
     $('scoreboard-screen').classList.remove('hidden');
@@ -257,14 +340,19 @@ export class Hud {
 
   hideScoreboard(): void { $('scoreboard-screen').classList.add('hidden'); }
 
-  private fillScores(rows: PlacementEntry[], totals: Record<string, number>, myId: string, showRound: boolean): void {
+  private fillScores(
+    rows: PlacementEntry[], totals: Record<string, number>, myId: string,
+    showRound: boolean, stats: Record<string, CombatStats>,
+  ): void {
     const body = $('scoreboard-body');
     body.innerHTML = '';
     const sorted = [...rows].sort((a, b) => a.place - b.place);
     for (const r of sorted) {
       const tr = document.createElement('tr');
       if (r.id === myId) tr.classList.add('me');
-      tr.innerHTML = `<td>${r.place}.</td><td></td><td>${showRound ? `+${r.points}` : ''}</td><td>${totals[r.id] ?? 0}</td>`;
+      const st = stats[r.id] ?? { kills: 0, damageDealt: 0, damageTaken: 0, shotsFired: 0, hits: 0, headshots: 0, pickups: 0 };
+      const accuracy = st.shotsFired > 0 ? `${Math.round(st.hits / st.shotsFired * 100)}%` : '—';
+      tr.innerHTML = `<td>${r.place}.</td><td></td><td>${showRound ? `+${r.points}` : ''}</td><td>${totals[r.id] ?? 0}</td><td>${st.kills}</td><td>${st.damageDealt}</td><td>${accuracy}</td><td>${st.pickups}</td>`;
       (tr.children[1] as HTMLElement).textContent = r.name;
       body.appendChild(tr);
     }

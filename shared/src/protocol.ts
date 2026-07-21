@@ -4,11 +4,17 @@ import type { ItemType, Recipe, WeaponType } from './constants';
 import type { CrateTier, VegKind } from './worldgen';
 import type { Phase } from './timeline';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 3;
 
 // ---------- lobby ----------
-export interface JoinMsg { v: number; name: string }
-export interface PlayerInfo { id: string; name: string; ready: boolean; isHost: boolean }
+export interface JoinMsg { v: number; name: string; resumeToken?: string }
+export interface SessionMsg {
+  playerId: string;
+  resumeToken: string;
+  resumed: boolean;
+  reconnectGraceMs: number;
+}
+export interface PlayerInfo { id: string; name: string; ready: boolean; isHost: boolean; connected: boolean }
 export interface LobbyStateMsg {
   players: PlayerInfo[];
   maxPlayers: number;
@@ -30,12 +36,22 @@ export interface RoundStartMsg {
   pickups: PickupInfo[]; // initial ground loot + crates
 }
 export interface PlacementEntry { id: string; name: string; place: number; points: number }
+export interface CombatStats {
+  kills: number;
+  damageDealt: number;
+  damageTaken: number;
+  shotsFired: number;
+  hits: number;
+  headshots: number;
+  pickups: number;
+}
 export interface RoundEndMsg {
   round: number;
   placements: PlacementEntry[];
   totals: Record<string, number>;
   nextRoundIn: number;   // s
   matchOver: boolean;
+  stats: Record<string, CombatStats>;
 }
 export interface MatchEndMsg {
   totals: Record<string, number>;
@@ -43,6 +59,7 @@ export interface MatchEndMsg {
   winnerName: string;
   standings: PlacementEntry[]; // final match standings
   suddenDeathRounds: number;
+  stats: Record<string, CombatStats>;
 }
 
 // ---------- input (client → host) ----------
@@ -52,6 +69,8 @@ export interface InputMsg {
   mx: number; mz: number; // move axes −1..1 (strafe, forward)
   yaw: number; pitch: number;
   sprint: boolean;
+  sneak: boolean;
+  aim: boolean;
   jump: boolean;
   fire: boolean;         // held
   interact: boolean;     // held: harvest resources / weapon swap
@@ -69,9 +88,15 @@ export interface SnapPlayer {
   weapon: WeaponType;
   slot: 1 | 2 | 3;
   sprinting: boolean;
+  sneaking: boolean;
+  aiming: boolean;
   bandaging: boolean;
   plates: number;
   stamina: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  grounded: boolean;
   lastSeq: number;       // reconciliation ack for the owning client
   kills: number;
 }
@@ -106,6 +131,8 @@ export interface PickupInfo {
   tier?: CrateTier;
   x: number; y: number; z: number;
   amount?: number;
+  /** Present only for dropped weapons; preserves the remaining magazine. */
+  weaponMag?: number;
 }
 export interface WeaponSlotState { type: WeaponType; mag: number }
 export interface InventoryState {
@@ -122,14 +149,14 @@ export interface InventoryState {
 
 // ---------- events (host → clients) ----------
 export type GameEvent =
-  | { type: 'damage'; target: string; attacker: string | null; amount: number; hp: number }
-  | { type: 'death'; target: string; attacker: string | null; cause: 'weapon' | 'zone' | 'grenade'; weapon?: WeaponType }
+  | { type: 'damage'; target: string; attacker: string | null; amount: number; hp: number; weapon?: WeaponType; headshot?: boolean }
+  | { type: 'death'; target: string; attacker: string | null; cause: 'weapon' | 'zone' | 'grenade'; weapon?: WeaponType; distance?: number; attackerHp?: number; headshot?: boolean; finalDamage?: number }
   | { type: 'kill'; killer: string | null; victim: string; weapon: WeaponType | 'zone' }
-  | { type: 'shot'; by: string; weapon: WeaponType; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; hx?: number; hy?: number; hz?: number }
+  | { type: 'shot'; by: string; weapon: WeaponType; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; primary?: boolean; hx?: number; hy?: number; hz?: number }
   | { type: 'melee'; by: string; weapon: WeaponType }
   | { type: 'explosion'; x: number; y: number; z: number; radius: number }
   | { type: 'pickupSpawn'; pickup: PickupInfo }
-  | { type: 'pickupRemove'; id: string; by: string | null }
+  | { type: 'pickupRemove'; id: string; by: string | null; item: PickupInfo['item'] }
   | { type: 'resource'; by: string; kind: VegKind; nodeId: number; depleted: boolean }
   | { type: 'inventory'; inv: InventoryState }                    // owner only
   | { type: 'craft'; by: string; recipe: Recipe; ok: boolean; reason?: string }
@@ -147,10 +174,13 @@ export const C2S = {
   craft: 'craft',
   useBandage: 'useBandage',
   rematch: 'rematch',
+  pingProbe: 'pingProbe',
 } as const;
 
 export const S2C = {
   lobbyState: 'lobbyState',
+  session: 'session',
+  connectionNotice: 'connectionNotice',
   joinError: 'joinError',
   matchStart: 'matchStart',
   roundStart: 'roundStart',
@@ -166,14 +196,16 @@ const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
 
 export function isJoinMsg(m: unknown): m is JoinMsg {
   const x = m as JoinMsg;
-  return !!x && isNum(x.v) && typeof x.name === 'string' && x.name.length >= 1 && x.name.length <= 24;
+  return !!x && x.v === PROTOCOL_VERSION && typeof x.name === 'string' && x.name.length >= 1 && x.name.length <= 24
+    && (x.resumeToken === undefined || (typeof x.resumeToken === 'string' && x.resumeToken.length <= 96));
 }
 
 export function isInputMsg(m: unknown): m is InputMsg {
   const x = m as InputMsg;
   return !!x && isNum(x.seq) && isNum(x.dt) && isNum(x.mx) && isNum(x.mz)
     && isNum(x.yaw) && isNum(x.pitch)
-    && isBool(x.sprint) && isBool(x.jump) && isBool(x.fire) && isBool(x.interact)
+    && isBool(x.sprint) && isBool(x.sneak) && isBool(x.aim)
+    && isBool(x.jump) && isBool(x.fire) && isBool(x.interact)
     && (x.slot === undefined || x.slot === 1 || x.slot === 2 || x.slot === 3)
     && (x.reload === undefined || isBool(x.reload));
 }

@@ -1,8 +1,8 @@
 // Shared kinematic movement (§4.1): identical on host (authority) and client
 // (prediction), so reconciliation errors stay tiny on LAN.
 import {
-  GRAVITY, JUMP_SPEED, SPRINT_SPEED, SPRINT_STAMINA_MAX, SPRINT_STAMINA_REGEN,
-  WALK_SPEED,
+  AIM_SPEED, AIR_ACCEL, GRAVITY, GROUND_ACCEL, GROUND_DECEL, JUMP_SPEED,
+  SNEAK_SPEED, SPRINT_SPEED, SPRINT_STAMINA_MAX, SPRINT_STAMINA_REGEN, WALK_SPEED,
 } from './constants';
 import type { GamePhysics, Vec3 } from './physics';
 import type { InputMsg } from './protocol';
@@ -12,14 +12,20 @@ export const MAX_INPUT_DT = 0.05; // s; clamp both sides so cheating dt is cappe
 
 export interface MoveState {
   pos: Vec3;       // feet position
+  velX: number;
   velY: number;
+  velZ: number;
   grounded: boolean;
   stamina: number; // seconds of sprint left
   sprinting: boolean;
+  sneaking: boolean;
 }
 
 export function freshMoveState(pos: Vec3): MoveState {
-  return { pos: { ...pos }, velY: 0, grounded: false, stamina: SPRINT_STAMINA_MAX, sprinting: false };
+  return {
+    pos: { ...pos }, velX: 0, velY: 0, velZ: 0, grounded: false,
+    stamina: SPRINT_STAMINA_MAX, sprinting: false, sneaking: false,
+  };
 }
 
 /** Apply one input to a movement state via the physics character controller. */
@@ -32,25 +38,41 @@ export function stepMovement(phys: GamePhysics, id: string, st: MoveState, inp: 
   if (len > 1) { mx /= len; mz /= len; }
   const moving = len > 0.01;
 
-  const wantSprint = inp.sprint && moving && st.stamina > 0;
+  st.sneaking = inp.sneak;
+  phys.setPlayerSneaking(id, st.sneaking, st.pos);
+  const wantSprint = inp.sprint && !inp.aim && !st.sneaking && moving && st.stamina > 0;
   st.sprinting = wantSprint;
   st.stamina = wantSprint
     ? Math.max(0, st.stamina - dt)
     : Math.min(SPRINT_STAMINA_MAX, st.stamina + SPRINT_STAMINA_REGEN * dt);
-  const speed = wantSprint ? SPRINT_SPEED : WALK_SPEED;
+  const speed = st.sneaking ? SNEAK_SPEED : inp.aim ? AIM_SPEED : wantSprint ? SPRINT_SPEED : WALK_SPEED;
 
   // yaw convention: yaw = 0 looks toward −Z (three.js)
   const sin = Math.sin(inp.yaw), cos = Math.cos(inp.yaw);
   const fwd = { x: -sin, z: -cos };
   const right = { x: cos, z: -sin };
-  const dx = (right.x * mx + fwd.x * mz) * speed * dt;
-  const dz = (right.z * mx + fwd.z * mz) * speed * dt;
+  const desiredX = (right.x * mx + fwd.x * mz) * speed;
+  const desiredZ = (right.z * mx + fwd.z * mz) * speed;
+  const accel = st.grounded ? (moving ? GROUND_ACCEL : GROUND_DECEL) : (moving ? AIR_ACCEL : 0);
+  const approach = (current: number, target: number, maxDelta: number): number => {
+    const delta = target - current;
+    return current + Math.sign(delta) * Math.min(Math.abs(delta), maxDelta);
+  };
+  st.velX = approach(st.velX, desiredX, accel * dt);
+  st.velZ = approach(st.velZ, desiredZ, accel * dt);
+  const dx = st.velX * dt;
+  const dz = st.velZ * dt;
 
-  if (st.grounded && inp.jump) st.velY = JUMP_SPEED;
+  if (st.grounded && inp.jump && !st.sneaking) st.velY = JUMP_SPEED;
   st.velY = Math.max(-30, st.velY - GRAVITY * dt);
   const dy = st.velY * dt;
 
+  const before = st.pos;
   const res = phys.moveCharacter(id, { x: dx, y: dy, z: dz });
+  const actualVx = (res.pos.x - before.x) / dt;
+  const actualVz = (res.pos.z - before.z) / dt;
+  if (Math.abs(actualVx) < Math.abs(st.velX) * 0.2) st.velX = actualVx;
+  if (Math.abs(actualVz) < Math.abs(st.velZ) * 0.2) st.velZ = actualVz;
   st.pos = res.pos;
   st.grounded = res.grounded;
   if (st.grounded && st.velY < 0) st.velY = -1; // keep pressed to ground on slopes

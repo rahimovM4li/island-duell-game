@@ -4,9 +4,9 @@
 // so predicted movement matches the authority almost exactly.
 import type RAPIER from '@dimforge/rapier3d-compat';
 import {
-  PLAYER_HEIGHT, PLAYER_RADIUS, TERRAIN_VERTS, WORLD_SIZE,
+  PLAYER_HEIGHT, PLAYER_RADIUS, PLAYER_SNEAK_HEIGHT, TERRAIN_VERTS, WORLD_SIZE,
 } from './constants';
-import { buildHeightGrid, TerrainParams } from './terrain';
+import { buildHeightGrid, sampleHeight, TerrainParams } from './terrain';
 import type { WorldGen } from './worldgen';
 
 export type RapierModule = typeof RAPIER;
@@ -14,6 +14,8 @@ export type RapierModule = typeof RAPIER;
 export interface Vec3 { x: number; y: number; z: number }
 
 const CAPSULE_HALF = (PLAYER_HEIGHT - 2 * PLAYER_RADIUS) / 2; // 0.5
+const SNEAK_CAPSULE_HALF = (PLAYER_SNEAK_HEIGHT - 2 * PLAYER_RADIUS) / 2;
+const SNEAK_CAPSULE_CENTER_Y = SNEAK_CAPSULE_HALF + PLAYER_RADIUS;
 export const CAPSULE_CENTER_Y = CAPSULE_HALF + PLAYER_RADIUS; // feet → capsule center
 
 /** Rapier heightfields are column-major (col = x index, row = z index). */
@@ -34,12 +36,23 @@ export interface RayHit {
   playerId: string | null; // null → terrain / obstacle
 }
 
+export interface PhysicsStats {
+  engine: 'Rapier';
+  timestep: number;
+  rigidBodies: number;
+  colliders: number;
+  playerCapsules: number;
+  ccdBodies: number;
+  sensors: number;
+}
+
 export class GamePhysics {
   readonly R: RapierModule;
   readonly world: RAPIER.World;
   private controller: RAPIER.KinematicCharacterController;
   private players = new Map<string, RAPIER.Collider>();
   private handleToPlayer = new Map<number, string>();
+  private sneakingPlayers = new Set<string>();
 
   constructor(R: RapierModule, gen: WorldGen, grid?: Float32Array) {
     this.R = R;
@@ -52,7 +65,7 @@ export class GamePhysics {
         .setTranslation(0, 0, 0),
     );
 
-    // static obstacles: tree trunks + rocks (cylinders), ruin walls (cuboids)
+    // static obstacles: tree trunks + rocks + authored landmark primitives.
     for (const v of gen.vegetation) {
       if (v.colliderRadius <= 0) continue;
       const h = v.kind === 'tree' ? 5 * v.scale : 1.6 * v.scale;
@@ -67,6 +80,17 @@ export class GamePhysics {
           .setTranslation(w.x, y + w.h / 2, w.z)
           .setRotation(quatFromYaw(w.rotY)),
       );
+    }
+    for (const poi of gen.pois) {
+      for (const s of poi.structures) {
+        if (!s.collider) continue;
+        const y = sampleHeight(gen.params, s.x, s.z);
+        this.world.createCollider(
+          R.ColliderDesc.cuboid(s.w / 2, s.h / 2, s.d / 2)
+            .setTranslation(s.x, y + (s.yOffset ?? 0) + s.h / 2, s.z)
+            .setRotation(quatFromYaw(s.rotY)),
+        );
+      }
     }
 
     this.controller = this.world.createCharacterController(0.05);
@@ -91,12 +115,24 @@ export class GamePhysics {
       this.handleToPlayer.delete(col.handle);
       this.world.removeCollider(col, false);
       this.players.delete(id);
+      this.sneakingPlayers.delete(id);
     }
   }
 
   setPlayerPos(id: string, feet: Vec3): void {
     const col = this.players.get(id);
-    col?.setTranslation({ x: feet.x, y: feet.y + CAPSULE_CENTER_Y, z: feet.z });
+    const center = this.sneakingPlayers.has(id) ? SNEAK_CAPSULE_CENTER_Y : CAPSULE_CENTER_Y;
+    col?.setTranslation({ x: feet.x, y: feet.y + center, z: feet.z });
+  }
+
+  /** Keep the collision capsule aligned with the current standing/crouched pose. */
+  setPlayerSneaking(id: string, sneaking: boolean, feet: Vec3): void {
+    const col = this.players.get(id);
+    if (!col || sneaking === this.sneakingPlayers.has(id)) return;
+    if (sneaking) this.sneakingPlayers.add(id);
+    else this.sneakingPlayers.delete(id);
+    col.setHalfHeight(sneaking ? SNEAK_CAPSULE_HALF : CAPSULE_HALF);
+    this.setPlayerPos(id, feet);
   }
 
   playerIdForHandle(handle: number): string | null {
@@ -117,6 +153,7 @@ export class GamePhysics {
     );
     const mv = this.controller.computedMovement();
     const cur = col.translation();
+    const center = this.sneakingPlayers.has(id) ? SNEAK_CAPSULE_CENTER_Y : CAPSULE_CENTER_Y;
     let nx = cur.x + mv.x, ny = cur.y + mv.y, nz = cur.z + mv.z;
     // hard world bound: don't swim off the map
     const r = Math.hypot(nx, nz);
@@ -124,7 +161,7 @@ export class GamePhysics {
     if (r > maxR) { nx *= maxR / r; nz *= maxR / r; }
     col.setTranslation({ x: nx, y: ny, z: nz });
     return {
-      pos: { x: nx, y: ny - CAPSULE_CENTER_Y, z: nz },
+      pos: { x: nx, y: ny - center, z: nz },
       grounded: this.controller.computedGrounded(),
     };
   }
@@ -153,6 +190,26 @@ export class GamePhysics {
   /** Refresh spatial query structures after collider moves. Call once per tick. */
   step(): void {
     this.world.step();
+  }
+
+  stats(): PhysicsStats {
+    return {
+      engine: 'Rapier',
+      timestep: this.world.timestep,
+      rigidBodies: this.world.bodies.len(),
+      colliders: this.world.colliders.len(),
+      playerCapsules: this.players.size,
+      ccdBodies: 0,
+      sensors: 0,
+    };
+  }
+
+  /** Release the WASM allocation when leaving or restarting a match. */
+  dispose(): void {
+    this.players.clear();
+    this.handleToPlayer.clear();
+    this.sneakingPlayers.clear();
+    this.world.free();
   }
 }
 

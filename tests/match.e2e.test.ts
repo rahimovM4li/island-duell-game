@@ -26,6 +26,8 @@ interface Bot {
   lobby: LobbyStateMsg | null;
   matchStart: MatchStartMsg | null;
   ticker: ReturnType<typeof setInterval> | null;
+  token: string;
+  sessionCount: number;
 }
 
 function makeBot(name: string): Bot {
@@ -33,8 +35,11 @@ function makeBot(name: string): Bot {
   const bot: Bot = {
     sock, name, id: '', seq: 0, lastSnap: null,
     roundStarts: [], roundEnds: [], matchEnd: null, lobby: null, matchStart: null, ticker: null,
+    token: '', sessionCount: 0,
   };
-  sock.on('connect', () => { bot.id = sock.id!; });
+  sock.on('session', (m: { playerId: string; resumeToken: string }) => {
+    bot.id = m.playerId; bot.token = m.resumeToken; bot.sessionCount += 1;
+  });
   sock.on('lobbyState', (m: LobbyStateMsg) => { bot.lobby = m; });
   sock.on('matchStart', (m: MatchStartMsg) => { bot.matchStart = m; });
   sock.on('roundStart', (m: RoundStartMsg) => { bot.roundStarts.push(m); });
@@ -67,7 +72,7 @@ function startBotInputs(bot: Bot): void {
     const yaw = Math.atan2(me.x, me.z) + Math.PI;
     bot.sock.emit('input', {
       seq: ++bot.seq, dt: 0.033, mx: 0, mz: 1, yaw, pitch: 0,
-      sprint: bot.seq % 90 < 40, jump: bot.seq % 50 === 0,
+      sprint: bot.seq % 90 < 40, sneak: false, aim: false, jump: bot.seq % 50 === 0,
       fire: bot.seq % 25 === 0, interact: false,
     });
   }, 33);
@@ -89,11 +94,11 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
   });
 
   it('runs join → lobby → 3 rounds → matchEnd → lobby unlock', async () => {
-    // ---- join 3 bots
-    for (const name of ['Alice', 'Bob', 'Cleo']) bots.push(makeBot(name));
-    await until(() => bots.every((b) => b.id !== ''), 5000, 'sockets connected');
+    // ---- join the supported maximum of 5 clients
+    for (const name of ['Alice', 'Bob', 'Cleo', 'Dara', 'Enzo']) bots.push(makeBot(name));
+    await until(() => bots.every((b) => b.sock.connected), 5000, 'sockets connected');
     for (const b of bots) b.sock.emit('join', { v: PROTOCOL_VERSION, name: b.name });
-    await until(() => bots.every((b) => b.lobby?.players.length === 3), 5000, 'lobby with 3 players');
+    await until(() => bots.every((b) => b.id !== '' && b.lobby?.players.length === 5), 5000, 'lobby with 5 players');
 
     const host = bots.find((b) => b.lobby!.players.find((p) => p.id === b.id)?.isHost)!;
     expect(host).toBeDefined();
@@ -109,18 +114,18 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
     // same seed and N for everyone (§8: host sends seed, clients generate)
     const seeds = new Set(bots.map((b) => b.matchStart!.seed));
     expect(seeds.size).toBe(1);
-    expect(bots[0].matchStart!.n).toBe(3);
+    expect(bots[0].matchStart!.n).toBe(5);
 
     await until(() => bots.every((b) => b.roundStarts.length === 1), 5000, 'roundStart 1');
     const rs = bots[0].roundStarts[0];
     expect(rs.round).toBe(1);
     expect(rs.suddenDeath).toBe(false);
     // every player has a spawn POI, all distinct (§5.3)
-    expect(Object.keys(rs.spawns)).toHaveLength(3);
-    expect(new Set(Object.values(rs.spawns)).size).toBe(3);
+    expect(Object.keys(rs.spawns)).toHaveLength(5);
+    expect(new Set(Object.values(rs.spawns)).size).toBe(5);
     // initial loot floor + 12+3×3 crates are announced
-    expect(rs.pickups.filter((p) => p.item === 'crate')).toHaveLength(12 + 9);
-    expect(rs.pickups.length).toBeGreaterThanOrEqual(21 + 20); // + 5 spawns × 4 floor items
+    expect(rs.pickups.filter((p) => p.item === 'crate')).toHaveLength(12 + 15);
+    expect(rs.pickups.length).toBeGreaterThanOrEqual(27 + 20); // + 5 spawns × 4 floor items
 
     // lobby is locked during the match (§0 B3)
     const late = io(URL, { transports: ['websocket'] });
@@ -135,8 +140,29 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
     for (const b of bots) startBotInputs(b);
     await until(() => bots.every((b) => b.lastSnap !== null), 5000, 'first snapshot');
     const snapProbe = bots[0].lastSnap!;
-    expect(snapProbe.players).toHaveLength(3);
+    expect(snapProbe.players).toHaveLength(5);
     expect(snapProbe.zone.radius).toBeGreaterThan(0);
+
+    // A dropped non-host can reclaim the exact stable player identity during the grace window.
+    const reconnecting = bots.find((b) => b !== host)!;
+    const stableId = reconnecting.id;
+    const priorSessions = reconnecting.sessionCount;
+    if (reconnecting.ticker) clearInterval(reconnecting.ticker);
+    reconnecting.ticker = null;
+    reconnecting.sock.disconnect();
+    await until(() => reconnecting.sock.disconnected, 2000, 'bot disconnected');
+    reconnecting.sock.connect();
+    await until(() => reconnecting.sock.connected, 5000, 'bot transport reconnected');
+    reconnecting.sock.emit('join', {
+      v: PROTOCOL_VERSION, name: reconnecting.name, resumeToken: reconnecting.token,
+    });
+    await until(() => reconnecting.sessionCount > priorSessions, 5000, 'session resumed');
+    expect(reconnecting.id).toBe(stableId);
+    await until(
+      () => reconnecting.lastSnap?.players.some((p) => p.id === stableId && p.alive) === true,
+      5000, 'resumed player remains alive',
+    );
+    startBotInputs(reconnecting);
 
     // movement is actually simulated: positions change over time
     const p0 = bots[0].lastSnap!.players.find((p) => p.id === bots[0].id)!;
@@ -151,12 +177,13 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
     expect(rounds).toBeGreaterThanOrEqual(3); // 3 scheduled + possible sudden death
     const end = bots[0].matchEnd!;
     expect(end.winnerId).toBeTruthy();
-    expect(end.standings).toHaveLength(3);
+    expect(end.standings).toHaveLength(5);
     expect(end.standings[0].place).toBe(1);
 
-    // every scheduled round produced placements for all 3 players with valid points
+    // every scheduled round produced placements for all 5 players with valid points
     for (const re of bots[0].roundEnds.slice(0, 3)) {
-      expect(re.placements).toHaveLength(3);
+      expect(re.placements).toHaveLength(5);
+      expect(Object.keys(re.stats)).toHaveLength(5);
       const places = re.placements.map((p) => p.place).sort();
       expect(places[0]).toBe(1);
       for (const pl of re.placements) {
@@ -173,12 +200,21 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
     const best = Math.max(...Object.values(end.totals));
     expect(end.totals[end.winnerId]).toBe(best);
 
-    // ---- after matchEnd the lobby unlocks; rematch readies a player again
+    // ---- after matchEnd the lobby unlocks and a fresh Rapier world can start
     await until(() => bots[0].lobby?.inMatch === false, 5000, 'lobby unlocked');
-    bots[1].sock.emit('rematch');
+    const firstSeed = bots[0].matchStart!.seed;
+    const priorRoundStarts = bots[0].roundStarts.length;
+    for (const b of bots) if (b !== host) b.sock.emit('rematch');
+    await until(() => host.lobby?.canStart === true, 5000, 'rematch canStart');
+    host.sock.emit('startMatch');
     await until(
-      () => bots[0].lobby?.players.find((p) => p.id === bots[1].id)?.ready === true,
-      5000, 'rematch ready',
+      () => bots.every((b) => b.matchStart !== null && b.matchStart.seed !== firstSeed),
+      5000, 'fresh rematch seed',
     );
+    await until(
+      () => bots.every((b) => b.roundStarts.length > priorRoundStarts),
+      5000, 'rematch roundStart',
+    );
+    expect(bots[0].matchStart!.seed).not.toBe(firstSeed);
   }, 150_000);
 });

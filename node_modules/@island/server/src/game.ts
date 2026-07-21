@@ -1,20 +1,22 @@
 // Host-authoritative game room (§8): lobby → 3-round match → scoring → rematch.
 // All hit detection, damage, loot and timers are resolved here; clients render.
 import type { Server, Socket } from 'socket.io';
+import { randomBytes } from 'node:crypto';
 import {
   AMMO_CAP, AMMO_PICKUP, ARROWS_PER_CRAFT, BANDAGE_DURATION, BANDAGE_HEAL,
   BANDAGE_USE_TIME, CARE_PACKAGE_AT, GRENADE_FUSE, GRENADE_RADIUS,
   INTERACT_HOLD_SECS, INTERACT_RANGE, ItemType, LOUD_PING_SECONDS, MAX_BANDAGES,
   MAX_GRENADES, MAX_PLATES, MAX_PLAYERS, MELEE_CONE_COS, MIN_PLAYERS,
   PICKUP_RADIUS, PLATE_DAMAGE_REDUCTION, PLAYER_EYE_HEIGHT, PLAYER_MAX_HP,
+  PLAYER_SNEAK_EYE_HEIGHT, RECONNECT_GRACE_MS, SPRINT_SPEED,
   RECIPES, Recipe, RESOURCE_NODE_CHARGES, RESOURCE_YIELD, ROUNDS_PER_MATCH,
   MAX_SUDDEN_DEATH_ROUNDS, ROUND_END_SCOREBOARD_SECS, SERVER_TICK_HZ,
-  SNAPSHOT_HZ, WEAPONS, WEAPON_START_AMMO, WeaponType, AmmoType,
+  SNAPSHOT_HZ, WEAPONS, WeaponType, AmmoType,
 } from '@shared/constants';
 import { GamePhysics, RapierModule, Vec3 } from '@shared/physics';
-import { freshMoveState, MoveState, stepMovement } from '@shared/movement';
+import { freshMoveState, MAX_INPUT_DT, MoveState, stepMovement } from '@shared/movement';
 import {
-  C2S, GameEvent, InputMsg, InventoryState, isCraftMsg, isInputMsg, isJoinMsg,
+  C2S, CombatStats, GameEvent, InputMsg, InventoryState, isCraftMsg, isInputMsg, isJoinMsg,
   isReadyMsg, LobbyStateMsg, PickupInfo, PlacementEntry, PlayerInfo, S2C,
   SnapPlayer, SnapProjectile, SnapshotMsg, WeaponSlotState,
 } from '@shared/protocol';
@@ -22,13 +24,16 @@ import { decideMatch, scoreRound } from '@shared/scoring';
 import { loudPingActiveAt, phaseAt, timeOfDayAt, zoneAt } from '@shared/timeline';
 import { buildHeightGrid, sampleHeight } from '@shared/terrain';
 import { generateWorld, assignSpawnIndices, CrateTier, WorldGen } from '@shared/worldgen';
-import { mulberry32, pick, Rng } from '@shared/rng';
+import { deriveSeed, mulberry32, pick, Rng } from '@shared/rng';
+import { equipWeapon, grantStarterAmmo, weaponSlotState } from './inventory';
 
 interface Conn {
   socket: Socket;
   id: string;
   name: string;
   ready: boolean;
+  token: string;
+  connected: boolean;
 }
 
 interface Inventory {
@@ -51,6 +56,7 @@ interface MatchPlayer {
   move: MoveState;
   yaw: number;
   pitch: number;
+  aiming: boolean;
   lastSeq: number;
   inputs: InputMsg[];
   prevInteract: boolean;
@@ -64,11 +70,14 @@ interface MatchPlayer {
   craftRecipe: Recipe | null;
   harvestNodeId: number;
   harvestProgress: number;
-  lastDamagedBy: { id: string; at: number } | null;
+  lastDamagedBy: {
+    id: string; at: number; weapon: WeaponType; headshot: boolean; amount: number; distance: number;
+  } | null;
   lastDamageDealtAt: number;
   kills: number;
   zoneDamageAcc: number;
   deathTick: number; // for double-KO grouping
+  stats: CombatStats;
 }
 
 interface Projectile {
@@ -79,6 +88,12 @@ interface Projectile {
   vel: Vec3;
   bornAt: number;
   fuseAt: number; // grenades
+}
+
+interface AddPickupOptions {
+  amount?: number;
+  fixedId?: string;
+  weaponMag?: number;
 }
 
 export interface GameRoomOptions {
@@ -92,6 +107,7 @@ export class GameRoom {
   private R: RapierModule;
   private conns = new Map<string, Conn>();
   private hostId: string | null = null;
+  private disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private timeScale: number;
 
   // ----- match state -----
@@ -107,6 +123,7 @@ export class GameRoom {
   private roundActive = false;
   private t = 0; // round clock, s (scaled)
   private tickHandle: ReturnType<typeof setInterval> | null = null;
+  private roundTransitionHandle: ReturnType<typeof setTimeout> | null = null;
   private lastTickAt = 0;
   private snapshotAcc = 0;
   private tickCounter = 0;
@@ -122,7 +139,11 @@ export class GameRoom {
   private careSpawned = false;
   private eliminationGroups: string[][] = [];
   private lootRng: Rng = mulberry32(1);
+  private combatRng: Rng = mulberry32(2);
   private zoneTierAnnounced = 0;
+  private currentSpawns: Record<string, number> = {};
+  private currentSuddenDeath = false;
+  private matchStats = new Map<string, CombatStats>();
 
   constructor(io: Server, rapier: RapierModule, opts: GameRoomOptions = {}) {
     this.io = io;
@@ -136,72 +157,137 @@ export class GameRoom {
   private onConnection(socket: Socket): void {
     socket.on(C2S.join, (msg: unknown) => {
       if (!isJoinMsg(msg)) return socket.emit(S2C.joinError, { reason: 'bad join message' });
+      const resumed = msg.resumeToken
+        ? [...this.conns.values()].find((conn) => conn.token === msg.resumeToken)
+        : undefined;
+      if (resumed) {
+        if (resumed.connected && resumed.socket.id !== socket.id) {
+          return socket.emit(S2C.joinError, { reason: 'Diese Sitzung ist bereits verbunden' });
+        }
+        const timer = this.disconnectTimers.get(resumed.id);
+        if (timer) clearTimeout(timer);
+        this.disconnectTimers.delete(resumed.id);
+        resumed.socket = socket;
+        resumed.connected = true;
+        socket.data.playerId = resumed.id;
+        const player = this.players.get(resumed.id);
+        if (player) { player.connected = true; player.inputs = []; }
+        socket.emit(S2C.session, {
+          playerId: resumed.id, resumeToken: resumed.token, resumed: true,
+          reconnectGraceMs: RECONNECT_GRACE_MS,
+        });
+        if (this.inMatch) this.resumeMatchFor(resumed);
+        this.io.emit(S2C.connectionNotice, { type: 'reconnected', playerId: resumed.id });
+        this.broadcastLobby();
+        return;
+      }
       if (this.inMatch) return socket.emit(S2C.joinError, { reason: 'Match läuft — Lobby ist gesperrt' });
       if (this.conns.size >= MAX_PLAYERS) return socket.emit(S2C.joinError, { reason: 'Lobby voll (max 5)' });
-      const conn: Conn = { socket, id: socket.id, name: msg.name.trim().slice(0, 16) || 'Player', ready: false };
-      this.conns.set(socket.id, conn);
-      if (!this.hostId) this.hostId = socket.id;
+      const id = randomBytes(8).toString('hex');
+      const conn: Conn = {
+        socket, id, name: msg.name.trim().slice(0, 16) || 'Player', ready: false,
+        token: randomBytes(24).toString('hex'), connected: true,
+      };
+      socket.data.playerId = id;
+      this.conns.set(id, conn);
+      if (!this.hostId) this.hostId = id;
+      socket.emit(S2C.session, {
+        playerId: id, resumeToken: conn.token, resumed: false,
+        reconnectGraceMs: RECONNECT_GRACE_MS,
+      });
       this.broadcastLobby();
     });
 
     socket.on(C2S.setReady, (msg: unknown) => {
-      const c = this.conns.get(socket.id);
+      const c = this.connFor(socket);
       if (!c || !isReadyMsg(msg) || this.inMatch) return;
       c.ready = msg.ready;
       this.broadcastLobby();
     });
 
     socket.on(C2S.startMatch, () => {
-      if (socket.id !== this.hostId || this.inMatch) return;
+      if (socket.data.playerId !== this.hostId || this.inMatch) return;
       if (!this.canStart()) return;
       this.startMatch();
     });
 
     socket.on(C2S.input, (msg: unknown) => {
       if (!this.inMatch || !isInputMsg(msg)) return;
-      const p = this.players.get(socket.id);
+      const p = this.players.get(socket.data.playerId as string);
       if (!p || !p.connected) return;
       if (p.inputs.length < 12) p.inputs.push(msg);
     });
 
     socket.on(C2S.craft, (msg: unknown) => {
       if (!this.inMatch || !isCraftMsg(msg)) return;
-      this.tryCraft(socket.id, msg.recipe);
+      this.tryCraft(socket.data.playerId as string, msg.recipe);
     });
 
     socket.on(C2S.useBandage, () => {
-      if (this.inMatch) this.tryBandage(socket.id);
+      if (this.inMatch) this.tryBandage(socket.data.playerId as string);
     });
 
     socket.on(C2S.rematch, () => {
-      const c = this.conns.get(socket.id);
+      const c = this.connFor(socket);
       if (c && !this.inMatch) { c.ready = true; this.broadcastLobby(); }
     });
 
-    socket.on('disconnect', () => {
-      this.conns.delete(socket.id);
-      if (this.hostId === socket.id) this.hostId = this.conns.keys().next().value ?? null;
-      const p = this.players.get(socket.id);
-      if (p && this.inMatch) {
-        p.connected = false;
-        if (p.alive && this.roundActive) this.kill(p, null, 'zone');
-        const connectedInMatch = [...this.players.values()].filter((q) => q.connected).length;
-        if (connectedInMatch < 2) this.endMatchEarly();
-      }
-      this.broadcastLobby();
+    socket.on(C2S.pingProbe, (sent: unknown, ack: unknown) => {
+      if (typeof sent === 'number' && typeof ack === 'function') (ack as (value: number) => void)(sent);
     });
+    socket.on('disconnect', () => this.handleDisconnect(socket));
+  }
+
+  private connFor(socket: Socket): Conn | undefined {
+    const id = socket.data.playerId;
+    return typeof id === 'string' ? this.conns.get(id) : undefined;
+  }
+
+  private handleDisconnect(socket: Socket): void {
+    const c = this.connFor(socket);
+    if (!c || c.socket.id !== socket.id) return;
+    c.connected = false;
+    const p = this.players.get(c.id);
+    if (!this.inMatch || !p) {
+      this.conns.delete(c.id);
+      this.migrateHost(c.id);
+      this.broadcastLobby();
+      return;
+    }
+    p.connected = false;
+    p.inputs = [];
+    this.io.emit(S2C.connectionNotice, { type: 'lost', playerId: c.id, graceMs: RECONNECT_GRACE_MS });
+    const timer = setTimeout(() => {
+      this.disconnectTimers.delete(c.id);
+      if (c.connected) return;
+      this.conns.delete(c.id);
+      if (p.alive && this.roundActive) this.kill(p, null, 'zone');
+      this.migrateHost(c.id);
+      const connectedInMatch = [...this.players.values()].filter((q) => q.connected).length;
+      if (connectedInMatch < 2) this.endMatchEarly();
+      this.broadcastLobby();
+    }, RECONNECT_GRACE_MS);
+    this.disconnectTimers.set(c.id, timer);
+    this.broadcastLobby();
+  }
+
+  private migrateHost(oldHost: string): void {
+    if (this.hostId !== oldHost) return;
+    this.hostId = [...this.conns.values()].find((conn) => conn.connected)?.id ?? null;
+    if (this.hostId) this.io.emit(S2C.connectionNotice, { type: 'hostChanged', playerId: this.hostId });
   }
 
   private canStart(): boolean {
     if (this.conns.size < MIN_PLAYERS || this.conns.size > MAX_PLAYERS) return false;
-    for (const c of this.conns.values()) if (!c.ready && c.id !== this.hostId) return false;
+    for (const c of this.conns.values()) if (!c.connected || (!c.ready && c.id !== this.hostId)) return false;
     return true;
   }
 
   private lobbyState(): LobbyStateMsg {
     return {
       players: [...this.conns.values()].map((c): PlayerInfo => ({
-        id: c.id, name: c.name, ready: c.ready || c.id === this.hostId, isHost: c.id === this.hostId,
+        id: c.id, name: c.name, ready: c.ready || c.id === this.hostId,
+        isHost: c.id === this.hostId, connected: c.connected,
       })),
       maxPlayers: MAX_PLAYERS,
       inMatch: this.inMatch,
@@ -210,14 +296,15 @@ export class GameRoom {
   }
 
   private broadcastLobby(): void {
-    this.io.emit(S2C.lobbyState, this.lobbyState());
+    const state = this.lobbyState();
+    for (const conn of this.conns.values()) if (conn.connected) conn.socket.emit(S2C.lobbyState, state);
   }
 
   // =============================== match ===============================
 
   private startMatch(): void {
     this.inMatch = true;
-    this.seed = (Math.random() * 0xffffffff) >>> 0; // rematch ⇒ fresh seed (§9 M5)
+    this.seed = randomBytes(4).readUInt32LE(0); // rematch => fresh, OS-backed seed
     this.n = this.conns.size;
     this.gen = generateWorld(this.seed, this.n);
     const grid = buildHeightGrid(this.gen.params);
@@ -226,9 +313,11 @@ export class GameRoom {
     this.suddenDeathRounds = 0;
     this.totals = new Map();
     this.players = new Map();
+    this.matchStats = new Map();
     for (const c of this.conns.values()) {
       this.totals.set(c.id, 0);
       this.players.set(c.id, this.freshMatchPlayer(c.id, c.name));
+      this.matchStats.set(c.id, this.freshStats());
       this.phys.addPlayer(c.id, { x: 0, y: 20, z: 0 });
     }
     this.io.emit(S2C.matchStart, {
@@ -243,13 +332,18 @@ export class GameRoom {
   private freshMatchPlayer(id: string, name: string): MatchPlayer {
     return {
       id, name, connected: true, alive: true, hp: PLAYER_MAX_HP,
-      move: freshMoveState({ x: 0, y: 20, z: 0 }), yaw: 0, pitch: 0,
+      move: freshMoveState({ x: 0, y: 20, z: 0 }), yaw: 0, pitch: 0, aiming: false,
       lastSeq: 0, inputs: [], prevInteract: false, prevFire: false,
       inv: this.freshInventory(),
       cooldownUntil: 0, reloadUntil: 0, bandageBusyUntil: 0, healRemaining: 0,
       craftDoneAt: 0, craftRecipe: null, harvestNodeId: -1, harvestProgress: 0,
       lastDamagedBy: null, lastDamageDealtAt: -1, kills: 0, zoneDamageAcc: 0, deathTick: -1,
+      stats: this.freshStats(),
     };
+  }
+
+  private freshStats(): CombatStats {
+    return { kills: 0, damageDealt: 0, damageTaken: 0, shotsFired: 0, hits: 0, headshots: 0, pickups: 0 };
   }
 
   private freshInventory(): Inventory {
@@ -274,9 +368,11 @@ export class GameRoom {
     this.pings.clear();
     this.pickups.clear();
     this.zoneTierAnnounced = 0;
+    this.currentSuddenDeath = suddenDeath;
     this.care = { state: 'none', x: this.gen.carePackagePos.x, z: this.gen.carePackagePos.z, landsAt: 0 };
     this.careSpawned = false;
     this.lootRng = mulberry32((this.seed ^ (this.round * 0x9e3779b9)) >>> 0);
+    this.combatRng = mulberry32(deriveSeed(this.seed, `combat-round-${this.round}`));
 
     // reset resource nodes
     this.nodeCharges.clear();
@@ -294,18 +390,22 @@ export class GameRoom {
       p.alive = p.connected;
       p.hp = PLAYER_MAX_HP;
       p.move = freshMoveState({ x: sp.x, y, z: sp.z });
+      p.aiming = false;
       p.inv = this.freshInventory();
       p.inputs = [];
       p.cooldownUntil = 0; p.reloadUntil = 0; p.bandageBusyUntil = 0; p.healRemaining = 0;
       p.craftDoneAt = 0; p.craftRecipe = null;
       p.harvestNodeId = -1; p.harvestProgress = 0;
       p.lastDamagedBy = null; p.lastDamageDealtAt = -1; p.zoneDamageAcc = 0; p.deathTick = -1;
+      p.stats = this.freshStats();
+      this.phys.setPlayerSneaking(id, false, p.move.pos);
       this.phys.setPlayerPos(id, p.move.pos);
       if (!p.connected) this.eliminationGroups.push([id]); // disconnected: eliminated at start
     }
+    this.currentSpawns = spawnRecord;
 
     // loot: spawn-floor items (§5.3) + crates (§3)
-    for (const gi of this.gen.spawnFloorItems) this.addPickup(gi.item, gi.x, gi.z, undefined, gi.id);
+    for (const gi of this.gen.spawnFloorItems) this.addPickup(gi.item, gi.x, gi.z, { fixedId: gi.id });
     for (const c of this.gen.crates) {
       this.pickups.set(c.id, {
         id: c.id, item: 'crate', tier: c.tier, x: c.x,
@@ -322,6 +422,21 @@ export class GameRoom {
     });
     // everyone gets a fresh (empty) inventory
     for (const p of this.players.values()) this.pushInventory(p);
+  }
+
+  private resumeMatchFor(conn: Conn): void {
+    conn.socket.emit(S2C.matchStart, {
+      n: this.n, seed: this.seed, players: this.lobbyState().players,
+    });
+    const totals: Record<string, number> = {};
+    for (const [id, value] of this.totals) totals[id] = value;
+    conn.socket.emit(S2C.roundStart, {
+      round: this.round, suddenDeath: this.currentSuddenDeath,
+      spawns: this.currentSpawns, totals, pickups: [...this.pickups.values()],
+    });
+    const player = this.players.get(conn.id);
+    if (player) this.pushInventory(player);
+    conn.socket.emit(S2C.snapshot, this.buildSnapshot());
   }
 
   // =============================== tick ===============================
@@ -367,14 +482,16 @@ export class GameRoom {
     for (const inp of queue) {
       p.yaw = inp.yaw;
       p.pitch = inp.pitch;
+      p.aiming = inp.aim;
       p.lastSeq = inp.seq;
       stepMovement(this.phys, p.id, p.move, inp);
 
       if (inp.slot && inp.slot !== p.inv.active) {
         p.inv.active = inp.slot;
-        p.reloadUntil = 0;
+        this.cancelReload(p, false);
         this.pushInventory(p);
       }
+      if (p.reloadUntil > 0 && inp.sprint && p.move.sprinting) this.cancelReload(p);
       if (inp.reload) this.tryReload(p);
       if (inp.fire) this.tryFire(p, events);
       this.handleInteract(p, inp, events);
@@ -392,7 +509,8 @@ export class GameRoom {
   }
 
   private eyePos(p: MatchPlayer): Vec3 {
-    return { x: p.move.pos.x, y: p.move.pos.y + PLAYER_EYE_HEIGHT, z: p.move.pos.z };
+    const height = p.move.sneaking ? PLAYER_SNEAK_EYE_HEIGHT : PLAYER_EYE_HEIGHT;
+    return { x: p.move.pos.x, y: p.move.pos.y + height, z: p.move.pos.z };
   }
 
   private viewDir(p: MatchPlayer): Vec3 {
@@ -402,7 +520,7 @@ export class GameRoom {
 
   private tryFire(p: MatchPlayer, events: GameEvent[]): void {
     if (this.t < p.cooldownUntil || this.t < p.bandageBusyUntil) return;
-    if (p.reloadUntil > 0) return; // reloading
+    if (p.reloadUntil > 0) this.cancelReload(p); // firing intentionally interrupts reload
     const { type, slotState } = this.activeWeapon(p);
     const def = WEAPONS[type];
 
@@ -428,17 +546,19 @@ export class GameRoom {
     if (def.kind === 'projectile') { // bow: mag = nocked arrows, draws from arrow pool
       if (p.inv.ammo.arrow <= 0) return;
       p.inv.ammo.arrow -= 1;
+      p.stats.shotsFired += 1;
       p.cooldownUntil = this.t + def.cooldown;
       this.spawnProjectile('arrow', p);
       this.pushInventory(p);
       const o = this.eyePos(p), d = this.viewDir(p);
-      events.push({ type: 'shot', by: p.id, weapon: type, ox: o.x, oy: o.y, oz: o.z, dx: d.x, dy: d.y, dz: d.z });
+      events.push({ type: 'shot', by: p.id, weapon: type, ox: o.x, oy: o.y, oz: o.z, dx: d.x, dy: d.y, dz: d.z, primary: true });
       return;
     }
 
     // hitscan
     if (slotState.mag <= 0) { this.tryReload(p); return; }
     slotState.mag -= 1;
+    p.stats.shotsFired += def.pellets ?? 1;
     p.cooldownUntil = this.t + def.cooldown;
     this.hitscanShot(p, type, events);
     this.pushInventory(p);
@@ -481,20 +601,24 @@ export class GameRoom {
     const eye = this.eyePos(p);
     const base = this.viewDir(p);
     const pellets = def.pellets ?? 1;
+    const moveFactor = Math.min(1, Math.hypot(p.move.velX, p.move.velZ) / SPRINT_SPEED)
+      * (p.move.sneaking ? 0.35 : 1);
+    const spread = ((p.aiming ? def.aimSpread : def.hipSpread) ?? 0)
+      + (def.moveSpread ?? 0) * moveFactor;
     for (let i = 0; i < pellets; i++) {
       let dir = base;
-      if (pellets > 1) {
-        const spread = 0.055;
+      if (spread > 0) {
         dir = normalize({
-          x: base.x + (Math.random() - 0.5) * 2 * spread,
-          y: base.y + (Math.random() - 0.5) * 2 * spread,
-          z: base.z + (Math.random() - 0.5) * 2 * spread
+          x: base.x + (this.combatRng() - 0.5) * 2 * spread,
+          y: base.y + (this.combatRng() - 0.5) * 2 * spread,
+          z: base.z + (this.combatRng() - 0.5) * 2 * spread
         });
       }
       const hit = this.phys.raycast(eye, dir, def.range, [p.id]);
       const ev: GameEvent = {
         type: 'shot', by: p.id, weapon,
         ox: eye.x, oy: eye.y, oz: eye.z, dx: dir.x, dy: dir.y, dz: dir.z,
+        primary: i === 0,
       };
       if (hit) { ev.hx = hit.point.x; ev.hy = hit.point.y; ev.hz = hit.point.z; }
       if (i === 0 || (hit && hit.playerId)) events.push(ev);
@@ -508,7 +632,9 @@ export class GameRoom {
             const k = Math.min(1, (hit.dist - fs) / Math.max(0.01, fe - fs));
             dmg *= 1 - 0.65 * k; // down to 35 % at falloffEnd
           }
-          this.applyDamage(target, p, dmg, weapon, 'weapon', events, false);
+          const headshot = isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y);
+          if (headshot) dmg *= 1.65;
+          this.applyDamage(target, p, dmg, weapon, 'weapon', events, headshot);
         }
       }
     }
@@ -548,12 +674,12 @@ export class GameRoom {
             if (target?.alive) {
               const owner = this.players.get(pr.owner);
               const def = WEAPONS.bow;
-              const headshot = hit.point.y > target.move.pos.y + 1.42;
+              const headshot = isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y);
               const dmg = headshot ? (def.headshotDamage ?? def.damage) : def.damage;
               if (owner) this.applyDamage(target, owner, dmg, 'bow', 'weapon', events, headshot);
             } else {
               // arrows stick in the world and can be collected (§4.3)
-              this.addPickup('arrowBundle', hit.point.x, hit.point.z, 1);
+              this.addPickup('arrowBundle', hit.point.x, hit.point.z, { amount: 1 });
             }
             this.projectiles.delete(pr.id);
             continue;
@@ -572,7 +698,7 @@ export class GameRoom {
         pr.pos.x += pr.vel.x * dt; pr.pos.y += pr.vel.y * dt; pr.pos.z += pr.vel.z * dt;
       }
       if (pr.kind === 'arrow' && this.t - pr.bornAt > 8) {
-        this.addPickup('arrowBundle', pr.pos.x, pr.pos.z, 1);
+        this.addPickup('arrowBundle', pr.pos.x, pr.pos.z, { amount: 1 });
         this.projectiles.delete(pr.id);
       }
       if (pr.pos.y < -20) this.projectiles.delete(pr.id);
@@ -607,14 +733,21 @@ export class GameRoom {
       this.pushInventory(target);
     }
     amount = Math.round(amount);
+    const applied = Math.min(target.hp, amount);
     target.hp = Math.max(0, target.hp - amount);
     target.healRemaining = 0; // damage interrupts a running heal
     if (attacker && attacker.id !== target.id) {
-      target.lastDamagedBy = { id: attacker.id, at: this.t };
+      const distance = dist2d(attacker.move.pos.x, attacker.move.pos.z, target.move.pos.x, target.move.pos.z);
+      target.lastDamagedBy = { id: attacker.id, at: this.t, weapon, headshot, amount: applied, distance };
       attacker.lastDamageDealtAt = this.t;
+      attacker.stats.damageDealt += applied;
+      const accurateWeapon = WEAPONS[weapon].kind === 'hitscan' || WEAPONS[weapon].kind === 'projectile';
+      if (accurateWeapon) attacker.stats.hits += 1;
+      if (headshot && accurateWeapon) attacker.stats.headshots += 1;
       this.sendTo(attacker.id, [{ type: 'hitmarker', target: target.id, headshot }]);
     }
-    events.push({ type: 'damage', target: target.id, attacker: attacker?.id ?? null, amount, hp: target.hp });
+    target.stats.damageTaken += applied;
+    events.push({ type: 'damage', target: target.id, attacker: attacker?.id ?? null, amount: applied, hp: target.hp, weapon, headshot });
     if (target.hp <= 0) this.kill(target, attacker, cause, weapon);
   }
 
@@ -622,10 +755,15 @@ export class GameRoom {
     if (!target.alive) return;
     target.alive = false;
     target.deathTick = this.tickCounter;
-    if (attacker && attacker.id !== target.id) attacker.kills += 1;
+    if (attacker && attacker.id !== target.id) { attacker.kills += 1; attacker.stats.kills += 1; }
     this.dropInventory(target);
+    const recap = target.lastDamagedBy;
     const ev: GameEvent[] = [
-      { type: 'death', target: target.id, attacker: attacker?.id ?? null, cause, weapon },
+      {
+        type: 'death', target: target.id, attacker: attacker?.id ?? null, cause, weapon,
+        distance: recap?.distance, attackerHp: attacker?.hp, headshot: recap?.headshot,
+        finalDamage: recap?.amount,
+      },
       { type: 'kill', killer: attacker?.id ?? null, victim: target.id, weapon: cause === 'zone' ? 'zone' : (weapon ?? 'fists') },
     ];
     this.io.emit(S2C.event, ev);
@@ -667,6 +805,7 @@ export class GameRoom {
         const dmg = Math.floor(p.zoneDamageAcc);
         p.zoneDamageAcc -= dmg;
         p.hp = Math.max(0, p.hp - dmg);
+        p.stats.damageTaken += dmg;
         p.healRemaining = 0;
         events.push({ type: 'damage', target: p.id, attacker: null, amount: dmg, hp: p.hp });
         if (p.hp <= 0) {
@@ -731,6 +870,12 @@ export class GameRoom {
     this.pushInventory(p);
   }
 
+  private cancelReload(p: MatchPlayer, push = true): void {
+    if (p.reloadUntil <= 0) return;
+    p.reloadUntil = 0;
+    if (push) this.pushInventory(p);
+  }
+
   private tryBandage(id: string): void {
     const p = this.players.get(id);
     if (!p || !p.alive) return;
@@ -772,9 +917,10 @@ export class GameRoom {
         const slot = p.inv.active === 1 ? 'primary' : 'secondary';
         const old = p.inv[slot]!;
         // drop old weapon where the new one was
-        this.addPickup(old.type, item.x, item.z);
-        p.inv[slot] = { type: item.item as WeaponType, mag: WEAPONS[item.item as WeaponType].magSize ?? 0 };
-        this.grantStartAmmo(p, item.item as WeaponType);
+        this.addPickup(old.type, item.x, item.z, { weaponMag: old.mag });
+        const nextType = item.item as WeaponType;
+        p.inv[slot] = weaponSlotState(nextType, item.weaponMag);
+        if (item.weaponMag === undefined) grantStarterAmmo(p.inv, nextType);
         this.removePickup(item.id, p.id, events);
         this.pushInventory(p);
         return;
@@ -782,11 +928,13 @@ export class GameRoom {
     }
 
     // 2) resource harvest: hold ~1.5 s at tree/rock/bush (§4.2)
-    const dtPerTick = 1 / SERVER_TICK_HZ * this.timeScale;
+    // Progress follows the submitted simulation time. A fixed amount per message
+    // made high-refresh-rate clients harvest faster than 30-Hz clients.
+    const interactDt = Math.min(MAX_INPUT_DT, Math.max(0.001, inp.dt)) * this.timeScale;
     const node = this.nearestResourceNode(p);
     if (!node) { p.harvestProgress = 0; p.harvestNodeId = -1; return; }
     if (p.harvestNodeId !== node.id) { p.harvestNodeId = node.id; p.harvestProgress = 0; }
-    p.harvestProgress += dtPerTick;
+    p.harvestProgress += interactDt;
     if (p.harvestProgress >= INTERACT_HOLD_SECS) {
       p.harvestProgress = 0;
       const charges = (this.nodeCharges.get(node.id) ?? 0) - 1;
@@ -844,7 +992,14 @@ export class GameRoom {
       }
       case 'care': {
         // legendary: fully loaded rifle + deep reserve (§7 default)
-        this.giveWeapon(p, 'rifle');
+        if (!this.giveWeapon(p, 'rifle')) {
+          // A care package must never disappear just because both slots are full:
+          // replace the selected weapon and leave it at the package position.
+          const slot = inv.active === 2 ? 'secondary' : 'primary';
+          const old = inv[slot];
+          if (old) this.addPickup(old.type, pk.x + 0.9, pk.z, { weaponMag: old.mag });
+          inv[slot] = { type: 'rifle', mag: WEAPONS.rifle.magSize ?? 0 };
+        }
         inv.ammo.rifle = Math.min(AMMO_CAP.rifle, inv.ammo.rifle + 40);
         this.removePickup(pk.id, p.id, events);
         events.push({ type: 'care', state: 'taken', x: pk.x, z: pk.z, by: p.id });
@@ -891,7 +1046,8 @@ export class GameRoom {
         // weapon on the ground → auto-equip into a free slot (walk-over §4.2)
         const w = pk.item as WeaponType;
         if (!(w in WEAPONS)) return;
-        if (!this.giveWeapon(p, w)) return; // both slots full → needs interact swap
+        const dropped = pk.weaponMag !== undefined;
+        if (!this.giveWeapon(p, w, pk.weaponMag, !dropped)) return; // both slots full → needs interact swap
         break;
       }
     }
@@ -899,21 +1055,8 @@ export class GameRoom {
     this.pushInventory(p);
   }
 
-  private giveWeapon(p: MatchPlayer, w: WeaponType): boolean {
-    const state: WeaponSlotState = { type: w, mag: WEAPONS[w].magSize ?? 0 };
-    if (!p.inv.primary) p.inv.primary = state;
-    else if (!p.inv.secondary) p.inv.secondary = state;
-    else return false;
-    this.grantStartAmmo(p, w);
-    return true;
-  }
-
-  private grantStartAmmo(p: MatchPlayer, w: WeaponType): void {
-    const def = WEAPONS[w];
-    const start = WEAPON_START_AMMO[w];
-    if (def.ammo && start) {
-      p.inv.ammo[def.ammo] = Math.min(AMMO_CAP[def.ammo], p.inv.ammo[def.ammo] + start);
-    }
+  private giveWeapon(p: MatchPlayer, w: WeaponType, mag?: number, grantAmmo = true): boolean {
+    return equipWeapon(p.inv, w, { mag, grantStarterAmmo: grantAmmo });
   }
 
   private openCrate(pk: PickupInfo): void {
@@ -940,35 +1083,42 @@ export class GameRoom {
   private dropInventory(p: MatchPlayer): void {
     const { x, z } = p.move.pos;
     const rng = this.lootRng;
-    const drop = (item: ItemType, amount?: number) => {
+    const drop = (item: ItemType, options: AddPickupOptions = {}) => {
       const a = rng() * Math.PI * 2;
       const r = 0.6 + rng() * 1.2;
-      this.addPickup(item, x + Math.cos(a) * r, z + Math.sin(a) * r, amount);
+      this.addPickup(item, x + Math.cos(a) * r, z + Math.sin(a) * r, options);
     };
-    if (p.inv.primary) drop(p.inv.primary.type);
-    if (p.inv.secondary) drop(p.inv.secondary.type);
+    if (p.inv.primary) drop(p.inv.primary.type, { weaponMag: p.inv.primary.mag });
+    if (p.inv.secondary) drop(p.inv.secondary.type, { weaponMag: p.inv.secondary.mag });
     for (let i = 0; i < p.inv.grenades; i++) drop('grenade');
     for (let i = 0; i < p.inv.bandages; i++) drop('bandageItem');
     for (let i = 0; i < p.inv.plates; i++) drop('plateItem');
-    if (p.inv.ammo.arrow > 0) drop('arrowBundle', p.inv.ammo.arrow);
-    if (p.inv.ammo.pistol > 0) drop('pistolAmmo', p.inv.ammo.pistol);
-    if (p.inv.ammo.rifle > 0) drop('rifleAmmo', p.inv.ammo.rifle);
-    if (p.inv.ammo.shell > 0) drop('shellAmmo', p.inv.ammo.shell);
+    if (p.inv.ammo.arrow > 0) drop('arrowBundle', { amount: p.inv.ammo.arrow });
+    if (p.inv.ammo.pistol > 0) drop('pistolAmmo', { amount: p.inv.ammo.pistol });
+    if (p.inv.ammo.rifle > 0) drop('rifleAmmo', { amount: p.inv.ammo.rifle });
+    if (p.inv.ammo.shell > 0) drop('shellAmmo', { amount: p.inv.ammo.shell });
     p.inv = this.freshInventory();
   }
 
-  private addPickup(item: ItemType, x: number, z: number, amount?: number, fixedId?: string): void {
-    const id = fixedId ?? `pk-${this.pickupSeq++}`;
+  private addPickup(item: ItemType, x: number, z: number, options: AddPickupOptions = {}): void {
+    const id = options.fixedId ?? `pk-${this.pickupSeq++}`;
     const info: PickupInfo = {
-      id, item, x, z, y: sampleHeight(this.gen.params, x, z), amount,
+      id, item, x, z, y: sampleHeight(this.gen.params, x, z),
+      amount: options.amount,
+      weaponMag: options.weaponMag,
     };
     this.pickups.set(id, info);
     if (this.roundActive) this.io.emit(S2C.event, [{ type: 'pickupSpawn', pickup: info } satisfies GameEvent]);
   }
 
   private removePickup(id: string, by: string | null, events: GameEvent[]): void {
-    if (!this.pickups.delete(id)) return;
-    events.push({ type: 'pickupRemove', id, by });
+    const pickup = this.pickups.get(id);
+    if (!pickup || !this.pickups.delete(id)) return;
+    if (by) {
+      const player = this.players.get(by);
+      if (player) player.stats.pickups += 1;
+    }
+    events.push({ type: 'pickupRemove', id, by, item: pickup.item });
   }
 
   // =============================== care package / pings ===============================
@@ -1013,9 +1163,15 @@ export class GameRoom {
       hp: Math.round(p.hp), alive: p.alive,
       weapon: this.activeWeapon(p).type, slot: p.inv.active,
       sprinting: p.move.sprinting,
+      sneaking: p.move.sneaking,
+      aiming: p.aiming,
       bandaging: p.healRemaining > 0,
       plates: p.inv.plates,
       stamina: round3(p.move.stamina),
+      vx: round3(p.move.velX),
+      vy: round3(p.move.velY),
+      vz: round3(p.move.velZ),
+      grounded: p.move.grounded,
       lastSeq: p.lastSeq,
       kills: p.kills,
     }));
@@ -1082,6 +1238,12 @@ export class GameRoom {
       .sort((a, b) => a.place - b.place);
     const totals: Record<string, number> = {};
     for (const [id, v] of this.totals) totals[id] = v;
+    for (const [id, player] of this.players) {
+      const total = this.matchStats.get(id) ?? this.freshStats();
+      for (const key of Object.keys(total) as (keyof CombatStats)[]) total[key] += player.stats[key];
+      this.matchStats.set(id, total);
+    }
+    const stats = this.statsRecord(false);
 
     const scheduledDone = this.round >= ROUNDS_PER_MATCH;
     let matchOver = false;
@@ -1101,10 +1263,12 @@ export class GameRoom {
       totals,
       nextRoundIn: matchOver ? 0 : ROUND_END_SCOREBOARD_SECS,
       matchOver,
+      stats,
     });
 
     const delay = (ROUND_END_SCOREBOARD_SECS * 1000) / this.timeScale;
-    setTimeout(() => {
+    this.roundTransitionHandle = setTimeout(() => {
+      this.roundTransitionHandle = null;
       if (!this.inMatch) return;
       if (matchOver) this.endMatch();
       else this.startRound(suddenDeathNext);
@@ -1131,6 +1295,7 @@ export class GameRoom {
       winnerName: this.players.get(winnerId)?.name ?? '?',
       standings,
       suddenDeathRounds: this.suddenDeathRounds,
+      stats: this.statsRecord(true),
     });
     this.cleanupMatch();
   }
@@ -1143,14 +1308,37 @@ export class GameRoom {
 
   private cleanupMatch(): void {
     if (this.tickHandle) clearInterval(this.tickHandle);
+    if (this.roundTransitionHandle) clearTimeout(this.roundTransitionHandle);
     this.tickHandle = null;
+    this.roundTransitionHandle = null;
+    this.phys?.dispose();
     this.inMatch = false;
     this.roundActive = false;
     this.players.clear();
     this.pickups.clear();
     this.projectiles.clear();
+    for (const timer of this.disconnectTimers.values()) clearTimeout(timer);
+    this.disconnectTimers.clear();
+    for (const [id, conn] of [...this.conns]) if (!conn.connected) this.conns.delete(id);
+    if (this.hostId && !this.conns.has(this.hostId)) this.migrateHost(this.hostId);
     for (const c of this.conns.values()) c.ready = false;
     this.broadcastLobby(); // lobby unlocked again → rematch with new seed
+  }
+
+  /** Stop timers and release Rapier memory when the host itself shuts down. */
+  dispose(): void {
+    if (this.inMatch) this.cleanupMatch();
+    for (const timer of this.disconnectTimers.values()) clearTimeout(timer);
+    this.disconnectTimers.clear();
+  }
+
+  private statsRecord(match: boolean): Record<string, CombatStats> {
+    const source = match
+      ? this.matchStats
+      : new Map([...this.players].map(([id, player]) => [id, player.stats]));
+    const out: Record<string, CombatStats> = {};
+    for (const [id, stats] of source) out[id] = { ...stats };
+    return out;
   }
 }
 
@@ -1159,3 +1347,7 @@ function normalize(v: Vec3): Vec3 {
   return { x: v.x / l, y: v.y / l, z: v.z / l };
 }
 const round3 = (v: number) => Math.round(v * 1000) / 1000;
+
+export function isHeadshotHeight(feetY: number, sneaking: boolean, hitY: number): boolean {
+  return hitY >= feetY + (sneaking ? 0.92 : 1.38);
+}

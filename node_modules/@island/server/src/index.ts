@@ -24,7 +24,7 @@ export async function startServer(port = Number(process.env.PORT ?? DEFAULT_PORT
   const http = createServer(app);
   const io = new Server(http, { cors: { origin: '*' } });
 
-  new GameRoom(io, RAPIER);
+  const room = new GameRoom(io, RAPIER);
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
@@ -53,7 +53,11 @@ export async function startServer(port = Number(process.env.PORT ?? DEFAULT_PORT
 
   return {
     port,
-    close: () => new Promise((resolve) => { io.close(); http.close(() => resolve()); }),
+    close: () => new Promise((resolve) => {
+      room.dispose();
+      io.close();
+      http.close(() => resolve());
+    }),
   };
 }
 
