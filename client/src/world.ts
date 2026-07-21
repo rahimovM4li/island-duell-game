@@ -178,54 +178,79 @@ export class World {
     const bushes = this.gen.vegetation.filter((v) => v.kind === 'bush');
     const tmp = new THREE.Object3D();
 
-    const trunkGeo = new THREE.CylinderGeometry(0.28, 0.4, 3.2, 6);
-    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2f });
+    // Conifer: tapered trunk + three stacked foliage tiers for a full silhouette.
+    const trunkGeo = new THREE.CylinderGeometry(0.2, 0.44, 3.3, 8);
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5c3f28, flatShading: true });
     const trunk = new THREE.InstancedMesh(trunkGeo, trunkMat, trees.length);
-    const crownGeo = new THREE.ConeGeometry(1.9, 3.6, 7);
-    const crownMat = new THREE.MeshLambertMaterial({ color: 0x2e6b34 });
-    const crown = new THREE.InstancedMesh(crownGeo, crownMat, trees.length);
+    const skirt = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(2.35, 2.9, 8),
+      new THREE.MeshLambertMaterial({ color: 0x275c2d, flatShading: true }),
+      trees.length,
+    );
+    const crown = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(1.85, 3.4, 8),
+      new THREE.MeshLambertMaterial({ color: 0x2e6b34, flatShading: true }),
+      trees.length,
+    );
     const crownTop = new THREE.InstancedMesh(
-      new THREE.ConeGeometry(1.35, 3.0, 7),
-      new THREE.MeshLambertMaterial({ color: 0x3e7b40 }),
+      new THREE.ConeGeometry(1.2, 2.9, 8),
+      new THREE.MeshLambertMaterial({ color: 0x3f7f42, flatShading: true }),
       trees.length,
     );
     trees.forEach((v, i) => {
-      tmp.position.set(v.x, v.y + 1.6 * v.scale, v.z);
+      tmp.position.set(v.x, v.y + 1.65 * v.scale, v.z);
       tmp.scale.setScalar(v.scale);
       tmp.rotation.set(0, v.rot, 0);
       tmp.updateMatrix();
       trunk.setMatrixAt(i, tmp.matrix);
-      tmp.position.y = v.y + (3.2 + 1.4) * v.scale;
+      tmp.position.y = v.y + 3.5 * v.scale;
+      tmp.updateMatrix();
+      skirt.setMatrixAt(i, tmp.matrix);
+      tmp.position.y = v.y + 4.7 * v.scale;
+      tmp.rotation.y = v.rot + 0.5;
       tmp.updateMatrix();
       crown.setMatrixAt(i, tmp.matrix);
-      tmp.position.y = v.y + (4.7 + 1.0) * v.scale;
-      tmp.scale.setScalar(v.scale * 0.82);
-      tmp.rotation.y = v.rot + 0.4;
+      tmp.position.y = v.y + 5.8 * v.scale;
+      tmp.scale.setScalar(v.scale * 0.9);
+      tmp.rotation.y = v.rot + 1.0;
       tmp.updateMatrix();
       crownTop.setMatrixAt(i, tmp.matrix);
-      const meshes = [trunk, crown, crownTop];
+      const meshes = [trunk, skirt, crown, crownTop];
       const matrices = meshes.map((mesh) => { const matrix = new THREE.Matrix4(); mesh.getMatrixAt(i, matrix); return matrix; });
       this.resourceInstances.set(v.id, { meshes, matrices, index: i });
     });
 
-    const rockGeo = new THREE.IcosahedronGeometry(1.1, 0);
-    const rockMat = new THREE.MeshLambertMaterial({ color: 0x8d8778, flatShading: true });
+    // Rocks as a two-boulder cluster with a bit more facet detail.
+    const rockGeo = new THREE.IcosahedronGeometry(1.1, 1);
+    const rockMat = new THREE.MeshLambertMaterial({ color: 0x8a857a, flatShading: true });
     const rock = new THREE.InstancedMesh(rockGeo, rockMat, rocks.length);
+    const rock2 = new THREE.InstancedMesh(
+      new THREE.IcosahedronGeometry(0.62, 0),
+      new THREE.MeshLambertMaterial({ color: 0x7c776d, flatShading: true }),
+      rocks.length,
+    );
     rocks.forEach((v, i) => {
       tmp.position.set(v.x, v.y + 0.55 * v.scale, v.z);
-      tmp.scale.set(v.scale, v.scale * 0.75, v.scale);
-      tmp.rotation.set(0, v.rot, 0);
+      tmp.scale.set(v.scale, v.scale * 0.78, v.scale);
+      tmp.rotation.set(0.12, v.rot, 0.08);
       tmp.updateMatrix();
       rock.setMatrixAt(i, tmp.matrix);
-      const matrix = new THREE.Matrix4(); rock.getMatrixAt(i, matrix);
-      this.resourceInstances.set(v.id, { meshes: [rock], matrices: [matrix], index: i });
+      const cos = Math.cos(v.rot), sin = Math.sin(v.rot);
+      tmp.position.set(v.x + cos * 0.95 * v.scale, v.y + 0.32 * v.scale, v.z + sin * 0.95 * v.scale);
+      tmp.scale.set(v.scale, v.scale * 0.7, v.scale);
+      tmp.rotation.set(0.1, v.rot + 1.3, 0.15);
+      tmp.updateMatrix();
+      rock2.setMatrixAt(i, tmp.matrix);
+      const meshes = [rock, rock2];
+      const matrices = meshes.map((mesh) => { const matrix = new THREE.Matrix4(); mesh.getMatrixAt(i, matrix); return matrix; });
+      this.resourceInstances.set(v.id, { meshes, matrices, index: i });
     });
 
-    const bushGeo = new THREE.SphereGeometry(0.72, 7, 5);
+    const bushGeo = new THREE.SphereGeometry(0.74, 8, 6);
     const bushMeshes = [
-      new THREE.InstancedMesh(bushGeo, new THREE.MeshLambertMaterial({ color: 0x315f31 }), bushes.length),
-      new THREE.InstancedMesh(bushGeo, new THREE.MeshLambertMaterial({ color: 0x3f7d3a }), bushes.length),
-      new THREE.InstancedMesh(bushGeo, new THREE.MeshLambertMaterial({ color: 0x4c8b42 }), bushes.length),
+      new THREE.InstancedMesh(bushGeo, new THREE.MeshLambertMaterial({ color: 0x2c5a2e, flatShading: true }), bushes.length),
+      new THREE.InstancedMesh(bushGeo, new THREE.MeshLambertMaterial({ color: 0x3c7a37, flatShading: true }), bushes.length),
+      new THREE.InstancedMesh(bushGeo, new THREE.MeshLambertMaterial({ color: 0x4f9044, flatShading: true }), bushes.length),
     ];
     bushes.forEach((v, i) => {
       const lobes = [
@@ -281,15 +306,17 @@ export class World {
     grass.receiveShadow = true;
     this.grassMesh = grass;
 
-    for (const mesh of [trunk, crown, crownTop, rock, ...bushMeshes]) {
+    for (const mesh of [trunk, skirt, crown, crownTop, rock, rock2, ...bushMeshes]) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
     }
-    this.scene.add(trunk, crown, crownTop, rock, ...bushMeshes, grass);
+    this.scene.add(trunk, skirt, crown, crownTop, rock, rock2, ...bushMeshes, grass);
   }
 
   private buildRuins(): void {
-    const mat = new THREE.MeshLambertMaterial({ color: 0x9d9484 });
+    const mat = new THREE.MeshLambertMaterial({ color: 0xa79c88, flatShading: true });
+    const trimMat = new THREE.MeshLambertMaterial({ color: 0x8a7f6c, flatShading: true });
+    const mossMat = new THREE.MeshLambertMaterial({ color: 0x5d7440, flatShading: true });
     const y = RUINS_FLOOR_HEIGHT - 0.3;
     const plaza = new THREE.Mesh(
       new THREE.CylinderGeometry(17, 18, 0.35, 18),
@@ -298,6 +325,7 @@ export class World {
     plaza.position.y = RUINS_FLOOR_HEIGHT - 0.12;
     plaza.receiveShadow = true;
     this.scene.add(plaza);
+    const ruinRng = mulberry32(deriveSeed(this.gen.seed, 'ruin-detail'));
     for (const w of this.gen.ruinWalls) {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w.w, w.h, w.d), mat);
       m.position.set(w.x, y + w.h / 2, w.z);
@@ -305,6 +333,32 @@ export class World {
       m.castShadow = true;
       m.receiveShadow = true;
       this.scene.add(m);
+      // broken top course: a couple of loose blocks sitting on the wall crown
+      const blocks = 1 + Math.floor(ruinRng() * 2);
+      for (let b = 0; b < blocks; b++) {
+        const bw = w.w * (0.18 + ruinRng() * 0.22);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.4, w.d * 1.05), ruinRng() < 0.4 ? mossMat : trimMat);
+        const along = (ruinRng() - 0.5) * (w.w - bw);
+        cap.position.set(w.x + Math.cos(w.rotY) * along, y + w.h + 0.2, w.z + Math.sin(w.rotY) * along);
+        cap.rotation.y = w.rotY + (ruinRng() - 0.5) * 0.3;
+        cap.castShadow = true;
+        this.scene.add(cap);
+      }
+    }
+    // scattered rubble around the plaza edge for a weathered, lived-in look
+    for (let i = 0; i < 14; i++) {
+      const a = ruinRng() * Math.PI * 2;
+      const r = 6 + ruinRng() * 10;
+      const rx = Math.cos(a) * r, rz = Math.sin(a) * r;
+      const chunk = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.3 + ruinRng() * 0.4, 0),
+        ruinRng() < 0.3 ? mossMat : trimMat,
+      );
+      chunk.scale.y = 0.6;
+      chunk.position.set(rx, sampleHeight(this.gen.params, rx, rz) + 0.15, rz);
+      chunk.rotation.set(ruinRng(), ruinRng() * Math.PI, ruinRng());
+      chunk.castShadow = true;
+      this.scene.add(chunk);
     }
     // Central signal brazier makes the contested ruins readable from a distance.
     const brazier = new THREE.Group();
@@ -327,10 +381,12 @@ export class World {
 
   private buildLandmarks(): void {
     const materials: Record<'wood' | 'metal' | 'stone', THREE.MeshLambertMaterial> = {
-      wood: new THREE.MeshLambertMaterial({ color: 0x765137, flatShading: true }),
-      metal: new THREE.MeshLambertMaterial({ color: 0x53636a, flatShading: true }),
-      stone: new THREE.MeshLambertMaterial({ color: 0x696f68, flatShading: true }),
+      wood: new THREE.MeshLambertMaterial({ color: 0x7d5738, flatShading: true }),
+      metal: new THREE.MeshLambertMaterial({ color: 0x5a6a71, flatShading: true }),
+      stone: new THREE.MeshLambertMaterial({ color: 0x71776f, flatShading: true }),
     };
+    const rustMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3a, flatShading: true });
+    const propRng = mulberry32(deriveSeed(this.gen.seed, 'poi-props'));
     for (const poi of this.gen.pois) {
       const group = new THREE.Group();
       group.name = `poi-${poi.id}`;
@@ -342,6 +398,24 @@ export class World {
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         group.add(mesh);
+      }
+      // a couple of weathered barrels beside each landmark
+      for (let b = 0; b < 2 + Math.floor(propRng() * 2); b++) {
+        const a = propRng() * Math.PI * 2;
+        const r = 3.2 + propRng() * 1.6;
+        const bx = poi.x + Math.cos(a) * r, bz = poi.z + Math.sin(a) * r;
+        const barrel = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.36, 0.36, 0.95, 10),
+          propRng() < 0.5 ? rustMat : materials.metal,
+        );
+        barrel.position.set(bx, sampleHeight(this.gen.params, bx, bz) + 0.48, bz);
+        barrel.castShadow = true;
+        barrel.receiveShadow = true;
+        group.add(barrel);
+        const rim = new THREE.Mesh(new THREE.TorusGeometry(0.37, 0.03, 6, 12), materials.metal);
+        rim.rotation.x = Math.PI / 2;
+        rim.position.set(bx, barrel.position.y + 0.28, bz);
+        group.add(rim);
       }
       if (poi.id === 'wreck') {
         const sail = new THREE.Mesh(

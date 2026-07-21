@@ -70,9 +70,18 @@ export const ROUND_END_SCOREBOARD_SECS = 8;
 
 // ---------- Combat (§4.3) ----------
 export type WeaponType =
-  | 'fists' | 'machete' | 'spear' | 'bow' | 'pistol' | 'rifle' | 'shotgun' | 'grenade';
+  | 'fists' | 'machete' | 'spear' | 'bow' | 'pistol' | 'rifle' | 'shotgun' | 'sniper'
+  | 'grenade' | 'smoke' | 'flash';
 
-export type AmmoType = 'arrow' | 'pistol' | 'rifle' | 'shell';
+export type AmmoType = 'arrow' | 'pistol' | 'rifle' | 'shell' | 'sniper';
+
+/** The three throwables sharing slot 3; cycled with the throwable key. */
+export type ThrowKind = 'frag' | 'smoke' | 'flash';
+export const THROW_ORDER: readonly ThrowKind[] = ['frag', 'smoke', 'flash'] as const;
+/** Weapon identity used for events/viewmodels per throwable kind. */
+export const THROW_WEAPON: Record<ThrowKind, WeaponType> = {
+  frag: 'grenade', smoke: 'smoke', flash: 'flash',
+};
 
 export interface WeaponDef {
   type: WeaponType;
@@ -89,6 +98,7 @@ export interface WeaponDef {
   projectileSpeed?: number;
   loud: boolean;        // triggers ping-on-loud (§6.2)
   reloadTime?: number;
+  aimFov?: number;       // camera FOV while aiming (default 55); sniper scope zooms harder
   hipSpread?: number;    // radians-ish direction variance, authoritative on host
   aimSpread?: number;
   moveSpread?: number;   // extra spread at full running speed
@@ -119,14 +129,44 @@ export const WEAPONS: Record<WeaponType, WeaponDef> = {
     ammo: 'shell', magSize: 5, falloffStart: 8, falloffEnd: 20, loud: true, reloadTime: 2.2,
     hipSpread: 0.065, aimSpread: 0.038, moveSpread: 0.015, recoilPitch: 0.035, recoilYaw: 0.012,
   },
+  // Bolt-action marksman rifle: one-shot headshot (75 × 1.65 ≈ 123), two body
+  // shots, very loud, ammo-starved and hopeless from the hip — no strictly-best item.
+  sniper: {
+    type: 'sniper', kind: 'hitscan', damage: 75, cooldown: 1.3, range: 200,
+    ammo: 'sniper', magSize: 5, loud: true, reloadTime: 3.2, aimFov: 25,
+    hipSpread: 0.09, aimSpread: 0.0006, moveSpread: 0.05, recoilPitch: 0.06, recoilYaw: 0.009,
+  },
   grenade: {
     type: 'grenade', kind: 'throwable', damage: 60, cooldown: 0.8, range: 5, // range = blast radius
     projectileSpeed: 16, loud: true,
   },
+  smoke: {
+    type: 'smoke', kind: 'throwable', damage: 0, cooldown: 0.8, range: 4.5, // range = cloud radius
+    projectileSpeed: 14, loud: false,
+  },
+  flash: {
+    type: 'flash', kind: 'throwable', damage: 0, cooldown: 0.8, range: 14, // range = blind radius
+    projectileSpeed: 16, loud: true,
+  },
 };
 
-export const GRENADE_FUSE = 3; // s (§4.3)
+export const GRENADE_FUSE = 3; // s (§4.3); also the cooking budget before a hand detonation
 export const GRENADE_RADIUS = 5; // m
+export const GRENADE_MIN_THROW_FUSE = 0.2; // s: a fully cooked release still flies briefly
+
+// ---------- Utility throwables ----------
+export const SMOKE_FUSE = 1.5;      // s flight before the canister pops
+export const SMOKE_RADIUS = 4.5;    // m sight-blocking cloud radius
+export const SMOKE_DURATION = 12;   // s cloud lifetime
+export const FLASH_FUSE = 1.5;      // s flight before detonation
+export const FLASH_RADIUS = 14;     // m maximum blind distance
+export const FLASH_MAX_BLIND = 2.5; // s full-intensity blind duration
+/** Facing the pop head-on = 1; back turned keeps a small residual sting. */
+export const FLASH_BACK_FACTOR = 0.15;
+
+// ---------- Sniper scope breath (client-side hold-breath meter) ----------
+export const SCOPE_BREATH_MAX = 4;     // s of held breath
+export const SCOPE_BREATH_REGEN = 1.2; // s refilled per second not holding
 export const MELEE_CONE_COS = 0.5; // ~60° half-angle cone for melee hits
 export const LOUD_PING_SECONDS = 2; // §6.2 minimap ping duration
 export const PICKUP_RADIUS = 1.4; // walk-over pickup distance
@@ -154,6 +194,8 @@ export const BANDAGE_USE_TIME = 1;
 export const PLATE_DAMAGE_REDUCTION = 0.2; // −20 % damage, 1 charge each
 export const MAX_PLATES = 3;
 export const MAX_GRENADES = 2; // §4.3 "1–2 Stück"
+export const MAX_SMOKE = 2;
+export const MAX_FLASH = 2;
 export const MAX_BANDAGES = 5;
 export const RESOURCE_YIELD = 2; // per completed harvest
 export const RESOURCE_NODE_CHARGES = 3;
@@ -169,13 +211,33 @@ export const RECONNECT_GRACE_MS = 12_000;
 // ---------- Loot ----------
 export type ItemType =
   | WeaponType
-  | 'bandageItem' | 'arrowBundle' | 'pistolAmmo' | 'rifleAmmo' | 'shellAmmo'
-  | 'plateItem';
+  | 'bandageItem' | 'arrowBundle' | 'pistolAmmo' | 'rifleAmmo' | 'shellAmmo' | 'sniperAmmo'
+  | 'plateItem' | 'smokeGrenade' | 'flashGrenade';
 
-export interface AmmoPickupAmounts { arrow: number; pistol: number; rifle: number; shell: number }
-export const AMMO_PICKUP: AmmoPickupAmounts = { arrow: 6, pistol: 14, rifle: 20, shell: 8 };
+export interface AmmoPickupAmounts { arrow: number; pistol: number; rifle: number; shell: number; sniper: number }
+export const AMMO_PICKUP: AmmoPickupAmounts = { arrow: 6, pistol: 14, rifle: 20, shell: 8, sniper: 5 };
 // Weapon pickups come with a starter mag/reserve
 export const WEAPON_START_AMMO: Partial<Record<WeaponType, number>> = {
-  bow: 6, pistol: 14, rifle: 20, shotgun: 8,
+  bow: 6, pistol: 14, rifle: 20, shotgun: 8, sniper: 5,
 };
-export const AMMO_CAP: Record<AmmoType, number> = { arrow: 24, pistol: 56, rifle: 60, shell: 24 };
+export const AMMO_CAP: Record<AmmoType, number> = { arrow: 24, pistol: 56, rifle: 60, shell: 24, sniper: 15 };
+/** Chance a top-tier crate rolls the sniper instead of rifle/shotgun (kept rare). */
+export const SNIPER_CRATE_CHANCE = 0.18;
+
+// ---------- Bots (host-only practice AI; §F4) ----------
+export type BotDifficulty = 'easy' | 'normal' | 'hard';
+export interface BotDifficultyDef {
+  reaction: number;     // s between acquiring a target and the first shot
+  aimError: number;     // radians of gaussian-ish aim wobble
+  detectRange: number;  // m base sight range in full daylight
+  detectFovCos: number; // cos of the half-angle the bot notices enemies in
+  aggression: number;   // 0..1: chance to push instead of holding ground
+  throwSkill: number;   // 0..1: how readily grenades/smokes are used
+}
+export const BOT_DIFFICULTIES: Record<BotDifficulty, BotDifficultyDef> = {
+  easy:   { reaction: 0.55, aimError: 0.085, detectRange: 55, detectFovCos: 0.35, aggression: 0.35, throwSkill: 0.25 },
+  normal: { reaction: 0.30, aimError: 0.045, detectRange: 75, detectFovCos: 0.15, aggression: 0.6,  throwSkill: 0.55 },
+  hard:   { reaction: 0.18, aimError: 0.022, detectRange: 95, detectFovCos: 0.0,  aggression: 0.85, throwSkill: 0.8 },
+};
+export const BOT_NAMES = ['Bot Alpha', 'Bot Bravo', 'Bot Charlie', 'Bot Delta'] as const;
+export const MAX_PRACTICE_BOTS = 4;

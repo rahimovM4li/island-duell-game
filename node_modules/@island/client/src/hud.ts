@@ -13,12 +13,16 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getEl
 
 const WEAPON_NAMES: Record<WeaponType, string> = {
   fists: 'Fäuste', machete: 'Machete', spear: 'Speer', bow: 'Bogen',
-  pistol: 'Pistole', rifle: 'Gewehr', shotgun: 'Schrotflinte', grenade: 'Granate',
+  pistol: 'Pistole', rifle: 'Gewehr', shotgun: 'Schrotflinte', sniper: 'Scharfschütze',
+  grenade: 'Granate', smoke: 'Rauch', flash: 'Blend',
 };
 const WEAPON_GLYPHS: Record<WeaponType, string> = {
   fists: '✦', machete: '╱', spear: '↑', bow: '◖',
-  pistol: 'P', rifle: 'G', shotgun: 'S', grenade: '●',
+  pistol: 'P', rifle: 'G', shotgun: 'S', sniper: '◎',
+  grenade: '●', smoke: '◌', flash: '✳',
 };
+const THROW_LABELS = { frag: 'Granate', smoke: 'Rauch', flash: 'Blend' } as const;
+const THROW_GLYPHS = { frag: '●', smoke: '◌', flash: '✳' } as const;
 export const weaponName = (w: WeaponType): string => WEAPON_NAMES[w];
 
 export class Hud {
@@ -89,7 +93,15 @@ export class Hud {
         ? `${w!.mag}/${inv.ammo[def.ammo]}${inv.reloading ? ' ⟳' : ''}`
         : w ? 'Nahkampf' : 'Waffe aufnehmen';
     }
-    $('slot3').querySelector('.ammo')!.textContent = `×${inv.grenades}`;
+    // slot 3 shows the selected throwable; pressing 3 again cycles (§F2)
+    const throwCount = inv.throwables[inv.activeThrow];
+    $('slot3').querySelector('.slot-icon')!.textContent = THROW_GLYPHS[inv.activeThrow];
+    $('slot3').querySelector('.wname')!.textContent = THROW_LABELS[inv.activeThrow];
+    const others = (['frag', 'smoke', 'flash'] as const)
+      .filter((kind) => kind !== inv.activeThrow && inv.throwables[kind] > 0)
+      .map((kind) => `${THROW_GLYPHS[kind]}${inv.throwables[kind]}`)
+      .join(' ');
+    $('slot3').querySelector('.ammo')!.textContent = `×${throwCount}${others ? `  ${others}` : ''}`;
     for (const i of [1, 2, 3] as const) $(`slot${i}`).classList.toggle('active', inv.active === i);
     $('plates-row').textContent = inv.plates > 0 ? `Panzerung ${'■'.repeat(inv.plates)} · nächster Treffer −20%` : 'Keine Panzerung';
     $('mats-row').textContent =
@@ -178,6 +190,38 @@ export class Hud {
     const el = $('heal-progress');
     el.style.display = p === null ? 'none' : 'block';
     if (p !== null) (el.firstElementChild as HTMLElement).style.width = `${p * 100}%`;
+  }
+
+  /** Sniper scope: overlay + breath meter (§F1). */
+  setScoped(scoped: boolean): void {
+    $('hud').classList.toggle('scoped', scoped);
+    $('scope-overlay').style.display = scoped ? 'block' : 'none';
+  }
+
+  setBreath(fraction: number | null, holding: boolean): void {
+    const wrap = $('breath-wrap');
+    wrap.style.display = fraction === null ? 'none' : 'block';
+    if (fraction !== null) {
+      const bar = $('breath-bar');
+      bar.style.transform = `scaleX(${Math.max(0, Math.min(1, fraction))})`;
+      bar.classList.toggle('holding', holding);
+    }
+  }
+
+  /** Frag cooking countdown ring (§F3); remaining in seconds or null. */
+  setCooking(remaining: number | null, fuse: number): void {
+    const el = $('cook-timer');
+    if (remaining === null) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    const clamped = Math.max(0, remaining);
+    $('cook-num').textContent = clamped.toFixed(1);
+    el.style.setProperty('--cook-frac', `${(clamped / fuse) * 100}`);
+    el.classList.toggle('danger', clamped < 1);
+  }
+
+  /** Full-screen white-out after a flashbang (§F2). */
+  setFlashWhiteout(opacity: number): void {
+    $('flash-overlay').style.opacity = opacity <= 0.005 ? '0' : String(Math.min(1, opacity));
   }
 
   setSpectating(v: boolean): void {

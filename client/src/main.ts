@@ -4,17 +4,22 @@
 // Remote players: interpolated ~100 ms behind the newest snapshot.
 import * as THREE from 'three';
 import {
-  BANDAGE_USE_TIME, INTERACT_HOLD_SECS, INTERP_DELAY_MS, PLAYER_EYE_HEIGHT,
-  PLAYER_SNEAK_EYE_HEIGHT, RECONCILE_SNAP_DIST, WEAPONS, type WeaponType,
+  BANDAGE_USE_TIME, GRENADE_FUSE, INTERACT_HOLD_SECS, INTERP_DELAY_MS,
+  PLAYER_EYE_HEIGHT, PLAYER_SNEAK_EYE_HEIGHT, RECONCILE_SNAP_DIST,
+  SCOPE_BREATH_MAX, SCOPE_BREATH_REGEN, THROW_WEAPON, WEAPONS,
+  type BotDifficulty, type WeaponType,
 } from '@shared/constants';
 import { sampleHeight } from '@shared/terrain';
 import { GamePhysics, type RapierModule } from '@shared/physics';
 import { freshMoveState, stepMovement, type MoveState, MAX_INPUT_DT } from '@shared/movement';
 import { bushAt, generateWorld, type WorldGen } from '@shared/worldgen';
 import type {
-  GameEvent, InputMsg, LobbyStateMsg, MatchStartMsg, PickupInfo,
+  GameEvent, InputMsg, InventoryState, LobbyStateMsg, MatchStartMsg, PickupInfo,
   RoundStartMsg, SessionMsg, SnapPlayer, SnapshotMsg,
 } from '@shared/protocol';
+import {
+  accuracyPct, kdRatio, loadProfile, mergeMatchIntoProfile, saveProfile,
+} from './profile';
 import { Net } from './net';
 import { InputState } from './input';
 import { World } from './world';
@@ -104,6 +109,21 @@ let shotPattern = 0;
 let localBushId: number | null = null;
 let localBushDistance = 0;
 let joinedTransportId = '';
+let lastInv: InventoryState | null = null;
+// sniper scope (§F1): sway is added to the SENT view direction so it counts
+let swayT = 0;
+let swayYaw = 0;
+let swayPitch = 0;
+let breath = SCOPE_BREATH_MAX;
+// flashbang whiteout (§F2)
+let flashLevel = 0;
+let flashDecay = 0;
+// frag cooking beeps (§F3)
+let nextCookBeepAt = 0;
+// profile bookkeeping (§F5)
+let practiceMatch = false;
+let myDeathsThisMatch = 0;
+let roundsThisMatch = 0;
 
 const specPos = new THREE.Vector3();
 
@@ -244,7 +264,7 @@ function applyRuntimeSettings(): void {
   renderer.shadowMap.enabled = settings.graphics !== 'low';
   world?.setGraphicsQuality(settings.graphics);
   if (!settings.cameraShake) { damageKick = 0; fireFovKick = 0; }
-  $('controls-hint').textContent = `${keyLabel(settings.keybinds.forward)}/${keyLabel(settings.keybinds.left)}/${keyLabel(settings.keybinds.back)}/${keyLabel(settings.keybinds.right)} Bewegen · ${keyLabel(settings.keybinds.sneak)} Schleichen · ${keyLabel(settings.keybinds.sprint)} Sprint · RMB Zielen · ${keyLabel(settings.keybinds.reload)} Nachladen · ${keyLabel(settings.keybinds.interact)} Sammeln · ${keyLabel(settings.keybinds.heal)} Heilen`;
+  $('controls-hint').textContent = `${keyLabel(settings.keybinds.forward)}/${keyLabel(settings.keybinds.left)}/${keyLabel(settings.keybinds.back)}/${keyLabel(settings.keybinds.right)} Bewegen · ${keyLabel(settings.keybinds.sneak)} Schleichen · ${keyLabel(settings.keybinds.sprint)} Sprint/Atem · RMB Zielen · ${keyLabel(settings.keybinds.reload)} Nachladen · ${keyLabel(settings.keybinds.interact)} Sammeln · ${keyLabel(settings.keybinds.heal)} Heilen · 3×2 Wurf wechseln`;
 }
 
 function populateSettings(): void {
@@ -376,6 +396,7 @@ async function joinServer(): Promise<void> {
     onEvents: (evs) => { for (const e of evs) onEvent(e); },
     onRoundEnd: (m) => {
       roundRunning = false;
+      roundsThisMatch = m.round;
       const myPlacement = m.placements.find((entry) => entry.id === myId);
       sfx.play(myPlacement?.place === 1 ? 'roundWin' : 'roundLose');
       if (myPlacement?.place === 1) rumble(180, 0.35, 0.55);
@@ -387,6 +408,7 @@ async function joinServer(): Promise<void> {
       inMatch = false;
       hud.showMatchEnd(m.standings, m.totals, m.winnerName, myId, m.winnerId === myId, m.stats);
       document.exitPointerLock?.();
+      recordMatchInProfile(m.standings, m.stats, practiceMatch || !!m.practice);
       disposeMatchScene();
     },
     onSession: (session: SessionMsg) => {
@@ -438,6 +460,92 @@ async function joinServer(): Promise<void> {
   }
 }
 
+// ---------- local profile (§F5) ----------
+function recordMatchInProfile(
+  standings: { id: string; place: number; points: number }[],
+  stats: Record<string, { kills: number; damageDealt: number; damageTaken: number; shotsFired: number; hits: number; headshots: number; pickups: number }>,
+  practice: boolean,
+): void {
+  const mine = standings.find((entry) => entry.id === myId);
+  if (!mine || !myName) return;
+  const myStats = stats[myId]
+    ?? { kills: 0, damageDealt: 0, damageTaken: 0, shotsFired: 0, hits: 0, headshots: 0, pickups: 0 };
+  const merged = mergeMatchIntoProfile(loadProfile(myName), {
+    seed: matchSeed ?? 0,
+    placement: mine.place,
+    points: mine.points,
+    players: standings.length,
+    rounds: roundsThisMatch,
+    deaths: myDeathsThisMatch,
+    stats: myStats,
+    practice,
+  });
+  saveProfile(myName, merged);
+}
+
+function renderProfile(name: string): void {
+  const profile = loadProfile(name);
+  const c = profile.career;
+  $('profile-name').textContent = name ? `Karriere von ${name} (nur echte Matches)` : 'Bitte zuerst einen Namen eingeben.';
+  const winRate = c.matches > 0 ? `${Math.round((c.wins / c.matches) * 100)}%` : '—';
+  const accuracy = accuracyPct(c);
+  const hsPct = c.hits > 0 ? `${Math.round((c.headshots / c.hits) * 100)}%` : '—';
+  const tiles: [string, string][] = [
+    ['Matches', String(c.matches)],
+    ['Siege', `${c.wins} (${winRate})`],
+    ['K/D', kdRatio(c)],
+    ['Kills', String(c.kills)],
+    ['Präzision', accuracy === null ? '—' : `${accuracy}%`],
+    ['Kopftreffer', hsPct],
+    ['Schaden', String(c.damageDealt)],
+    ['Beste Platzierung', c.bestPlacement > 0 ? `${c.bestPlacement}.` : '—'],
+  ];
+  $('profile-tiles').innerHTML = '';
+  for (const [label, value] of tiles) {
+    const tile = document.createElement('div');
+    tile.className = 'profile-tile';
+    const v = document.createElement('strong');
+    v.textContent = value;
+    const l = document.createElement('span');
+    l.textContent = label;
+    tile.append(v, l);
+    $('profile-tiles').appendChild(tile);
+  }
+  const body = $('profile-history-body');
+  body.innerHTML = '';
+  if (profile.history.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="6" style="color:#9fb3c4">Noch keine Matches gespielt.</td>';
+    body.appendChild(tr);
+  }
+  for (const entry of profile.history) {
+    const tr = document.createElement('tr');
+    const date = new Date(entry.date);
+    const dateText = `${date.getDate().toString().padStart(2, '0')}.${(date.getMonth() + 1).toString().padStart(2, '0')}. ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+    tr.innerHTML = `<td></td><td>${entry.placement}. / ${entry.players}</td><td>${entry.kills}</td><td>${entry.damageDealt}</td><td>${entry.points}</td><td>${entry.practice ? '<span class="practice-badge">Übung</span>' : ''}</td>`;
+    (tr.children[0] as HTMLElement).textContent = dateText;
+    body.appendChild(tr);
+  }
+}
+
+$('profile-btn').addEventListener('click', () => {
+  renderProfile(nameInput.value.trim() || myName);
+  showScreen('profile-screen');
+  sfx.play('click');
+});
+$('profile-back-btn').addEventListener('click', () => {
+  showScreen(net ? 'lobby-screen' : 'menu-screen');
+  sfx.play('click');
+});
+
+// ---------- solo practice (§F4) ----------
+$('practice-btn').addEventListener('click', () => {
+  const bots = Number(($('practice-bots') as HTMLSelectElement).value);
+  const difficulty = ($('practice-difficulty') as HTMLSelectElement).value as BotDifficulty;
+  net?.startPractice(bots, difficulty);
+  sfx.play('click');
+});
+
 let myReady = false;
 $('ready-btn').addEventListener('click', () => {
   myReady = !myReady;
@@ -454,7 +562,7 @@ $('rematch-btn').addEventListener('click', () => {
 });
 
 function showScreen(id: string | null): void {
-  for (const s of ['menu-screen', 'lobby-screen', 'scoreboard-screen']) {
+  for (const s of ['menu-screen', 'lobby-screen', 'scoreboard-screen', 'profile-screen']) {
     $(s).classList.toggle('hidden', s !== id);
   }
 }
@@ -487,7 +595,12 @@ function onLobby(m: LobbyStateMsg): void {
   const startBtn = $('start-btn') as HTMLButtonElement;
   startBtn.style.display = isHost ? 'block' : 'none';
   startBtn.disabled = !m.canStart;
-  $('lobby-error').textContent = m.players.length < 2 ? 'Warte auf weitere Spieler (min. 2)…' : '';
+  $('practice-block').style.display = isHost ? 'block' : 'none';
+  const maxBots = Math.max(1, 5 - m.players.length);
+  for (const opt of ($('practice-bots') as HTMLSelectElement).options) {
+    opt.disabled = Number(opt.value) > maxBots;
+  }
+  $('lobby-error').textContent = m.players.length < 2 ? 'Warte auf weitere Spieler (min. 2) — oder starte Solo-Training…' : '';
 }
 
 // ---------- match / round ----------
@@ -502,6 +615,10 @@ function onMatchStart(m: MatchStartMsg): void {
   visualElapsed = 0;
   sfx.setSeed(m.seed);
   suddenDeathAnnounced = false;
+  practiceMatch = !!m.practice;
+  myDeathsThisMatch = 0;
+  roundsThisMatch = 0;
+  lastInv = null;
   m.players.forEach((p, i) => { names.set(p.id, p.name); colorIndex.set(p.id, i); });
 
   gen = generateWorld(m.seed, m.n);
@@ -547,6 +664,16 @@ function onRoundStart(m: RoundStartMsg): void {
   shotPattern = 0;
   cameraEyeHeight = PLAYER_EYE_HEIGHT;
   lastSnap = null;
+  lastInv = null;
+  swayT = 0; swayYaw = 0; swayPitch = 0;
+  breath = SCOPE_BREATH_MAX;
+  flashLevel = 0; flashDecay = 0;
+  nextCookBeepAt = 0;
+  hud.setFlashWhiteout(0);
+  hud.setCooking(null, GRENADE_FUSE);
+  hud.setScoped(false);
+  hud.setBreath(null, false);
+  entities.clearSmokes();
 
   const spawnIdx = m.spawns[myId] ?? 0;
   const sp = gen.spawns[spawnIdx];
@@ -742,6 +869,7 @@ function onEvent(e: GameEvent): void {
       break;
     case 'death': {
       if (e.target === myId) {
+        myDeathsThisMatch += 1;
         hud.announce('☠ Du bist raus — Zuschauermodus', 3000);
         const attacker = e.attacker ? names.get(e.attacker) ?? 'Unbekannt' : null;
         const reason = e.cause === 'zone' ? 'die Zone' : e.weapon ? weaponName(e.weapon) : 'einen Treffer';
@@ -787,6 +915,7 @@ function onEvent(e: GameEvent): void {
       break;
     case 'inventory':
       {
+        lastInv = e.inv;
         const viewWeapon = updateViewmodel(e.inv.active, e.inv);
         if (e.inv.reloading && !wasReloading) sfx.play('reload');
         const reloadDuration = viewWeapon === 'none' ? 1 : WEAPONS[viewWeapon].reloadTime ?? 1;
@@ -812,15 +941,35 @@ function onEvent(e: GameEvent): void {
       hud.announce(`☣ Zone schrumpft! (Schaden ${e.dot} HP/s)`, 3000);
       sfx.play('zone');
       break;
+    case 'smoke':
+      playSpatial('smokePop', e.x, e.y, e.z);
+      break;
+    case 'flash':
+      playSpatial('flashBang', e.x, e.y, e.z);
+      break;
+    case 'flashed':
+      if (e.target === myId) {
+        flashLevel = Math.max(flashLevel, reduceMotion ? e.intensity * 0.6 : e.intensity);
+        flashDecay = flashLevel / Math.max(0.25, e.duration);
+        rumble(140, 0.4, 0.3);
+      }
+      break;
+    case 'cookout':
+      if (e.by === myId) hud.announce('💥 Zu lange gehalten — Granate in der Hand explodiert!', 2600);
+      break;
   }
 }
 
 function updateViewmodel(
   active: 1 | 2 | 3,
-  inv: { primary: { type: WeaponType } | null; secondary: { type: WeaponType } | null },
+  inv: {
+    primary: { type: WeaponType } | null;
+    secondary: { type: WeaponType } | null;
+    activeThrow: InventoryState['activeThrow'];
+  },
 ): WeaponType | 'none' {
   let w: WeaponType | 'none' = 'none';
-  if (active === 3) w = 'grenade';
+  if (active === 3) w = THROW_WEAPON[inv.activeThrow];
   else {
     const slot = active === 1 ? inv.primary : inv.secondary;
     w = slot ? slot.type : 'none';
@@ -874,11 +1023,33 @@ function frame(): void {
   const t = lastSnap ? snapClock.t + (now - snapClock.at) / 1000 : 0;
 
   const aimable = myWeapon === 'bow' || myWeapon === 'pistol'
-    || myWeapon === 'rifle' || myWeapon === 'shotgun';
+    || myWeapon === 'rifle' || myWeapon === 'shotgun' || myWeapon === 'sniper';
   const aiming = roundRunning && alive && input.aim && aimable && !wasReloading;
   entities.setAiming(aiming);
   $('hud').classList.toggle('aiming', aiming);
-  const targetFov = (aiming ? 55 : 75) + fireFovKick;
+
+  // ---- sniper scope: hard zoom + overlay + breathing sway (§F1) ----
+  const scoped = aiming && myWeapon === 'sniper';
+  const holdingBreath = scoped && input.sprint && breath > 0;
+  if (scoped) {
+    swayT += dt;
+    breath = holdingBreath
+      ? Math.max(0, breath - dt)
+      : Math.min(SCOPE_BREATH_MAX, breath + SCOPE_BREATH_REGEN * dt * 0.35);
+    const moveAmp = Math.hypot(move.velX, move.velZ) * 0.0016;
+    const amp = (holdingBreath ? 0.0006 : 0.0034 + moveAmp) * (move.sneaking ? 0.6 : 1);
+    swayYaw = Math.sin(swayT * 1.9) * amp + Math.sin(swayT * 3.1 + 1.3) * amp * 0.5;
+    swayPitch = Math.cos(swayT * 1.55) * amp * 0.8 + Math.sin(swayT * 2.6) * amp * 0.35;
+    hud.setBreath(breath / SCOPE_BREATH_MAX, holdingBreath);
+  } else {
+    breath = Math.min(SCOPE_BREATH_MAX, breath + SCOPE_BREATH_REGEN * dt);
+    swayYaw = 0;
+    swayPitch = 0;
+    hud.setBreath(null, false);
+  }
+  hud.setScoped(scoped);
+
+  const targetFov = (aiming ? (WEAPONS[myWeapon].aimFov ?? 55) : 75) + fireFovKick;
   const fovEase = reduceMotion ? 1 : 1 - Math.exp(-dt * 14);
   const nextFov = camera.fov + (targetFov - camera.fov) * fovEase;
   if (Math.abs(nextFov - camera.fov) > 0.01) {
@@ -897,8 +1068,9 @@ function frame(): void {
       dt: Math.min(dt, MAX_INPUT_DT),
       mx: input.pointerLocked ? input.moveX : 0,
       mz: input.pointerLocked ? input.moveZ : 0,
-      yaw: input.yaw,
-      pitch: input.pitch,
+      // scope sway is baked into the transmitted view so the host raycast sees it (§F1)
+      yaw: input.yaw + swayYaw,
+      pitch: input.pitch + swayPitch,
       sprint: input.sprint && !aiming,
       sneak: input.pointerLocked && input.sneak,
       aim: aiming,
@@ -906,7 +1078,11 @@ function frame(): void {
       fire: input.fire,
       interact: input.interact,
     };
-    if (input.slotPressed) inp.slot = input.slotPressed;
+    if (input.slotPressed) {
+      // pressing 3 while the throwable is already up cycles frag → smoke → flash (§F2)
+      if (input.slotPressed === 3 && lastInv?.active === 3) inp.throwCycle = true;
+      else inp.slot = input.slotPressed;
+    }
     if (input.reloadPressed) inp.reload = true;
     stepMovement(phys, myId, move, inp);
     predicted.set(inp.seq, { ...move.pos });
@@ -923,8 +1099,8 @@ function frame(): void {
     cameraEyeHeight += (targetEyeHeight - cameraEyeHeight) * eyeEase;
     camera.position.set(move.pos.x, move.pos.y + cameraEyeHeight, move.pos.z);
     camera.rotation.set(0, 0, 0);
-    camera.rotateY(input.yaw);
-    camera.rotateX(input.pitch);
+    camera.rotateY(input.yaw + swayYaw);
+    camera.rotateX(input.pitch + swayPitch);
     world.updateLocalCover(move.pos.x, move.pos.z);
   } else if (roundRunning && !alive) {
     // spectator free camera (§0 B3)
@@ -985,12 +1161,30 @@ function frame(): void {
 
   // --- environment / HUD ---
   hud.setCompass(input.yaw);
+  // flashbang whiteout eases off over its duration (§F2)
+  if (flashLevel > 0) {
+    flashLevel = Math.max(0, flashLevel - flashDecay * dt);
+    hud.setFlashWhiteout(flashLevel);
+  }
   if (lastSnap) {
     world.update(t, lastSnap.zone.radius, lastSnap.zone.targetRadius);
+    entities.syncSmokes(lastSnap.smokes, t);
     hud.setTimer(t, lastSnap.phase);
     hud.setZoneInfo(lastSnap.zone, t);
     hud.setAlive(lastSnap.aliveCount);
     const selfSnap = lastSnap.players.find((p) => p.id === myId);
+    // frag cooking countdown + accelerating beep (§F3)
+    if (alive && selfSnap?.cookingUntil !== undefined) {
+      const remaining = Math.max(0, selfSnap.cookingUntil - t);
+      hud.setCooking(remaining, GRENADE_FUSE);
+      if (now >= nextCookBeepAt) {
+        sfx.play('grenadeBeep', 0, remaining < 1 ? 1 : 0.65);
+        nextCookBeepAt = now + Math.max(95, remaining * 260);
+      }
+    } else {
+      hud.setCooking(null, GRENADE_FUSE);
+      nextCookBeepAt = 0;
+    }
     if (selfSnap) {
       hud.setStamina(alive ? move.stamina : 0);
       const outside = Math.hypot(move.pos.x, move.pos.z) > lastSnap.zone.radius;

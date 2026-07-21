@@ -2,7 +2,7 @@
 // projectiles, care package, tracer/explosion FX and the first-person viewmodel.
 import * as THREE from 'three';
 import { WEAPONS, type WeaponType } from '@shared/constants';
-import type { PickupInfo, SnapProjectile } from '@shared/protocol';
+import type { PickupInfo, SmokeSnap, SnapProjectile } from '@shared/protocol';
 import { deriveSeed, mulberry32, type Rng } from '@shared/rng';
 
 const PLAYER_COLORS = [0xe5484d, 0x3d9df2, 0x46c46e, 0xd8b43a, 0xb26ee0];
@@ -36,13 +36,17 @@ const ITEM_VISUALS: Record<string, ItemVisual> = {
   pistol: { label: 'Pistole', color: 0x65b7ee, glyph: 'P' },
   rifle: { label: 'Gewehr', color: 0xb68cff, glyph: 'G' },
   shotgun: { label: 'Schrotflinte', color: 0xff8c56, glyph: 'S' },
+  sniper: { label: 'Scharfschützengewehr', color: 0x7ee0c2, glyph: '◎' },
   grenade: { label: 'Granate', color: 0x83c66b, glyph: '!' },
+  smokeGrenade: { label: 'Rauchgranate', color: 0xb9c4cc, glyph: '◌' },
+  flashGrenade: { label: 'Blendgranate', color: 0xffe9a8, glyph: '✳' },
   bandageItem: { label: 'Verband', color: 0xff6b6f, glyph: '+' },
   plateItem: { label: 'Panzerplatte', color: 0x70d7e8, glyph: 'A' },
   arrowBundle: { label: 'Pfeile', color: 0xd9a441, glyph: '↟' },
   pistolAmmo: { label: 'Pistolen-Munition', color: 0x65b7ee, glyph: '•' },
   rifleAmmo: { label: 'Gewehr-Munition', color: 0xb68cff, glyph: '•' },
   shellAmmo: { label: 'Schrot-Munition', color: 0xff8c56, glyph: '•' },
+  sniperAmmo: { label: 'Sniper-Munition', color: 0x7ee0c2, glyph: '•' },
   care: { label: 'Versorgungspaket', color: 0xffc247, glyph: '★' },
 };
 
@@ -73,48 +77,126 @@ function addCylinder(
   return mesh;
 }
 
+/** Tapered cylinder (radiusTop ≠ radiusBottom): barrels, muzzles, tapered grips. */
+function addTaper(
+  group: THREE.Group, rTop: number, rBottom: number, length: number,
+  pos: [number, number, number], color: number, rot: [number, number, number] = [0, 0, 0], sides = 8,
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, length, sides), material(color));
+  mesh.position.set(...pos);
+  mesh.rotation.set(...rot);
+  mesh.castShadow = true;
+  group.add(mesh);
+  return mesh;
+}
+
+function addCone(
+  group: THREE.Group, radius: number, height: number, pos: [number, number, number],
+  color: number, rot: [number, number, number] = [0, 0, 0], sides = 6,
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(new THREE.ConeGeometry(radius, height, sides), material(color));
+  mesh.position.set(...pos);
+  mesh.rotation.set(...rot);
+  mesh.castShadow = true;
+  group.add(mesh);
+  return mesh;
+}
+
 /** Readable low-poly silhouettes. All ranged weapons point toward -Z. */
 function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
   const g = new THREE.Group();
   const dark = 0x26313a, steel = 0xc4ced5, wood = 0x7a5030, grip = 0x171d22;
+  const bluedSteel = 0x3a444d, brass = 0xd9a441, leather = 0x5a3d28;
   switch (weapon) {
-    case 'machete':
-      addBox(g, [0.09, 0.62, 0.18], [0, 0.28, -0.04], steel, [0, 0, -0.12]);
-      addCylinder(g, 0.055, 0.25, [0.07, -0.17, 0.02], grip, [0, 0, -0.12], 7);
-      addBox(g, [0.22, 0.04, 0.12], [0.05, -0.03, 0], 0xd9a441, [0, 0, -0.12]);
+    case 'machete': {
+      // tapered blade (wide → point) with a fuller line, brass guard and wrapped grip
+      addTaper(g, 0.02, 0.13, 0.66, [0, 0.3, -0.03], steel, [0, 0, 0], 4);
+      addCone(g, 0.09, 0.2, [0, 0.72, -0.03], steel, [0, Math.PI / 4, 0], 4); // pointed tip
+      addBox(g, [0.015, 0.5, 0.02], [0.02, 0.32, -0.08], 0x9aa4ac);           // fuller highlight
+      addBox(g, [0.24, 0.05, 0.13], [0, 0, 0], brass);                        // crossguard
+      addCylinder(g, 0.05, 0.26, [0, -0.16, 0.01], leather, [0, 0, 0], 8);    // grip
+      for (let i = 0; i < 3; i++) addCylinder(g, 0.052, 0.02, [0, -0.08 - i * 0.07, 0.01], 0x3a281a, [0, 0, 0], 8); // wrap ridges
+      addCylinder(g, 0.062, 0.05, [0, -0.3, 0.01], brass, [0, 0, 0], 8);      // pommel
+      g.rotation.z = -0.12;
       break;
-    case 'spear':
-      addCylinder(g, 0.035, 1.72, [0, 0, -0.53], wood, [Math.PI / 2, 0, 0], 7);
-      {
-        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.105, 0.32, 5), material(steel));
-        tip.rotation.x = -Math.PI / 2; tip.position.z = -1.55; tip.castShadow = true; g.add(tip);
-      }
+    }
+    case 'spear': {
+      addTaper(g, 0.028, 0.036, 1.74, [0, 0, -0.5], wood, [Math.PI / 2, 0, 0], 8); // shaft
+      addCone(g, 0.11, 0.42, [0, 0, -1.55], steel, [-Math.PI / 2, 0, 0], 6);       // leaf tip
+      addBox(g, [0.02, 0.02, 0.24], [0, 0, -1.42], 0x9aa4ac);                       // socket highlight
+      for (let i = 0; i < 4; i++) addCylinder(g, 0.04, 0.02, [0, 0, -1.28 + i * 0.09], leather, [Math.PI / 2, 0, 0], 8); // bindings
+      addCone(g, 0.05, 0.14, [0, 0, 0.63], 0x8a7a5a, [Math.PI / 2, 0, 0], 6);       // butt cap
       break;
+    }
     case 'bow': {
-      const arc = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.035, 6, 22, Math.PI * 1.35), material(0x9a672f));
-      arc.rotation.set(0, 0, -Math.PI * 0.68); arc.castShadow = true; g.add(arc);
-      const points = [new THREE.Vector3(0, -0.46, 0), new THREE.Vector3(-0.13, 0, 0), new THREE.Vector3(0, 0.46, 0)];
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.032, 8, 26, Math.PI * 1.42), material(0x9a672f));
+      arc.rotation.set(0, 0, -Math.PI * 0.71); arc.castShadow = true; g.add(arc);
+      // recurve tips
+      addCylinder(g, 0.02, 0.12, [0.02, 0.5, 0], 0x6f4a22, [0, 0, 0.25], 6);
+      addCylinder(g, 0.02, 0.12, [0.02, -0.5, 0], 0x6f4a22, [0, 0, -0.25], 6);
+      const points = [new THREE.Vector3(0.02, -0.52, 0), new THREE.Vector3(-0.14, 0, 0), new THREE.Vector3(0.02, 0.52, 0)];
       g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: 0xe8e2d4 })));
-      addCylinder(g, 0.018, 0.9, [0.05, 0, -0.08], 0xc9b382, [0, 0, 0], 5);
+      addCylinder(g, 0.03, 0.24, [-0.02, 0, 0], leather, [0, 0, 0], 8);            // grip wrap
+      addCylinder(g, 0.016, 0.9, [-0.02, 0.02, -0.08], 0xc9b382, [0, 0, 0], 5);    // nocked arrow
+      addCone(g, 0.035, 0.1, [-0.02, 0.02, -0.55], steel, [-Math.PI / 2, 0, 0], 5);
       break;
     }
     case 'pistol':
-      addBox(g, [0.15, 0.16, 0.5], [0, 0.02, -0.16], dark);
-      addBox(g, [0.12, 0.28, 0.16], [0, -0.18, -0.01], grip, [-0.18, 0, 0]);
-      addBox(g, [0.17, 0.045, 0.28], [0, 0.13, -0.22], 0x657580);
+      addBox(g, [0.14, 0.14, 0.52], [0, 0.05, -0.15], bluedSteel);               // slide
+      addBox(g, [0.145, 0.05, 0.5], [0, 0.115, -0.15], dark);                     // slide top
+      for (let i = 0; i < 4; i++) addBox(g, [0.15, 0.09, 0.012], [0, 0.05, 0.02 + i * 0.03], 0x1c242b); // serrations
+      addBox(g, [0.12, 0.1, 0.4], [0, -0.02, -0.13], 0x20272e);                   // frame
+      addBox(g, [0.125, 0.28, 0.15], [0, -0.2, 0.02], grip, [-0.22, 0, 0]);       // grip
+      addBox(g, [0.09, 0.24, 0.02], [0, -0.2, 0.1], 0x0f1418, [-0.22, 0, 0]);     // grip panel
+      addBox(g, [0.05, 0.11, 0.13], [0, -0.11, -0.06], dark);                     // trigger guard front
+      addCylinder(g, 0.045, 0.12, [0, 0.05, -0.44], 0x0d1216, [Math.PI / 2, 0, 0], 8); // muzzle
+      addBox(g, [0.02, 0.03, 0.02], [0, 0.15, -0.36], steel);                     // front sight
+      addBox(g, [0.06, 0.03, 0.02], [0, 0.15, 0.08], steel);                      // rear sight
       break;
     case 'rifle':
-      addBox(g, [0.15, 0.18, 0.92], [0, 0, -0.27], dark);
-      addCylinder(g, 0.035, 0.58, [0, 0.05, -0.98], steel, [Math.PI / 2, 0, 0], 8);
-      addBox(g, [0.14, 0.22, 0.38], [0, -0.02, 0.42], wood, [0.08, 0, 0]);
-      addBox(g, [0.11, 0.28, 0.16], [0, -0.21, -0.24], grip, [-0.18, 0, 0]);
-      addBox(g, [0.09, 0.09, 0.2], [0, 0.18, -0.2], 0xb68cff);
+      addBox(g, [0.13, 0.16, 0.86], [0, 0, -0.24], bluedSteel);                   // receiver
+      addBox(g, [0.11, 0.1, 0.5], [0, 0.02, -0.62], 0x30383f);                    // handguard
+      addCylinder(g, 0.028, 0.62, [0, 0.04, -0.98], steel, [Math.PI / 2, 0, 0], 8); // barrel
+      addCylinder(g, 0.04, 0.1, [0, 0.04, -1.26], 0x0d1216, [Math.PI / 2, 0, 0], 8); // flash hider
+      addBox(g, [0.13, 0.2, 0.4], [0, -0.03, 0.4], wood, [0.09, 0, 0]);           // stock
+      addBox(g, [0.11, 0.26, 0.15], [0, -0.2, -0.2], grip, [-0.2, 0, 0]);         // pistol grip
+      addTaper(g, 0.05, 0.075, 0.26, [0, -0.24, -0.02], 0x2a323a, [0.28, 0, 0], 6); // curved magazine
+      addBox(g, [0.05, 0.06, 0.34], [0, 0.15, -0.24], 0xb68cff);                  // optic
+      addCylinder(g, 0.032, 0.05, [0, 0.15, -0.42], 0xd7c4ff, [Math.PI / 2, 0, 0], 10); // lens
       break;
     case 'shotgun':
-      addCylinder(g, 0.055, 1.15, [0, 0.07, -0.38], dark, [Math.PI / 2, 0, 0], 10);
-      addBox(g, [0.16, 0.17, 0.5], [0, -0.01, 0.33], wood, [0.08, 0, 0]);
-      addCylinder(g, 0.085, 0.34, [0, 0.02, -0.42], 0xa36c35, [Math.PI / 2, 0, 0], 8);
+      addCylinder(g, 0.05, 1.18, [0, 0.08, -0.36], bluedSteel, [Math.PI / 2, 0, 0], 10); // barrel
+      addCylinder(g, 0.038, 1.0, [0, 0.005, -0.32], 0x20272e, [Math.PI / 2, 0, 0], 8);   // magazine tube
+      addBox(g, [0.11, 0.13, 0.32], [0, 0.02, -0.02], dark);                             // receiver
+      addCylinder(g, 0.06, 0.2, [0, 0.005, -0.5], 0x4a3520, [Math.PI / 2, 0, 0], 8);     // pump
+      for (let i = 0; i < 3; i++) addCylinder(g, 0.062, 0.02, [0, 0.005, -0.58 + i * 0.07], 0x38281a, [Math.PI / 2, 0, 0], 8); // pump grooves
+      addBox(g, [0.15, 0.18, 0.46], [0, -0.02, 0.36], wood, [0.1, 0, 0]);                // stock
+      addBox(g, [0.13, 0.2, 0.14], [0, -0.14, 0.02], 0x4a3520, [-0.2, 0, 0]);            // grip wrist
+      addCylinder(g, 0.02, 0.03, [0, 0.135, -0.92], 0xffcf6b, [Math.PI / 2, 0, 0], 6);   // bead sight
       break;
+    case 'sniper':
+      // long barrel + boxy receiver + prominent scope tube: readable at range
+      addBox(g, [0.14, 0.17, 0.78], [0, 0, -0.14], dark);
+      addCylinder(g, 0.03, 0.95, [0, 0.03, -1.02], steel, [Math.PI / 2, 0, 0], 8);
+      addCylinder(g, 0.05, 0.12, [0, 0.03, -1.46], dark, [Math.PI / 2, 0, 0], 8); // muzzle brake
+      addBox(g, [0.13, 0.2, 0.42], [0, -0.03, 0.42], wood, [0.07, 0, 0]);
+      addBox(g, [0.1, 0.26, 0.15], [0, -0.2, -0.1], grip, [-0.18, 0, 0]);
+      addCylinder(g, 0.055, 0.34, [0, 0.19, -0.18], 0x2b4f46, [Math.PI / 2, 0, 0], 10); // scope
+      addCylinder(g, 0.065, 0.04, [0, 0.19, -0.36], 0x7ee0c2, [Math.PI / 2, 0, 0], 10); // lens
+      addBox(g, [0.035, 0.09, 0.03], [0.08, 0.06, 0.06], steel, [0, 0, -0.9]); // bolt handle
+      break;
+    case 'smoke': {
+      addCylinder(g, 0.11, 0.34, [0, 0.02, 0], 0x8d99a3, [0, 0, 0], 10);
+      addCylinder(g, 0.06, 0.08, [0, 0.22, 0], dark, [0, 0, 0], 7);
+      addBox(g, [0.05, 0.15, 0.04], [0.1, 0.24, 0], 0xd2d9de, [0, 0, -0.55]);
+      break;
+    }
+    case 'flash': {
+      addCylinder(g, 0.1, 0.3, [0, 0.02, 0], 0xcfc39a, [0, 0, 0], 10);
+      addCylinder(g, 0.055, 0.08, [0, 0.2, 0], dark, [0, 0, 0], 7);
+      addBox(g, [0.05, 0.15, 0.04], [0.09, 0.22, 0], 0xffe9a8, [0, 0, -0.55]);
+      break;
+    }
     case 'grenade': {
       const body = new THREE.Mesh(new THREE.DodecahedronGeometry(0.19, 0), material(0x527b48));
       body.castShadow = true; g.add(body);
@@ -137,20 +219,44 @@ function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
 function crateModel(color: number, care = false): THREE.Group {
   const g = new THREE.Group();
   const w = care ? 1.35 : 1.05, h = care ? 0.9 : 0.68, d = care ? 1.08 : 0.86;
+  const trim = care ? 0x39434a : 0x72502f, corner = 0x2d3940;
   addBox(g, [w, h, d], [0, h / 2, 0], color);
-  addBox(g, [w + 0.06, 0.12, d + 0.06], [0, h + 0.03, 0], care ? 0x39434a : 0x72502f);
-  addBox(g, [0.12, h + 0.04, d + 0.08], [-w * 0.3, h / 2, 0], 0x2d3940);
-  addBox(g, [0.12, h + 0.04, d + 0.08], [w * 0.3, h / 2, 0], 0x2d3940);
-  addBox(g, [0.22, 0.2, 0.08], [0, h * 0.62, d / 2 + 0.05], care ? 0xffc247 : 0xd8aa61);
+  addBox(g, [w + 0.06, 0.12, d + 0.06], [0, h + 0.03, 0], trim);           // lid
+  // corner brackets on all four verticals
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    addBox(g, [0.1, h + 0.04, 0.1], [sx * w * 0.44, h / 2, sz * d * 0.44], corner);
+  }
+  // banded straps around the body
+  addBox(g, [w + 0.03, 0.07, d + 0.03], [0, h * 0.32, 0], trim);
+  addBox(g, [w + 0.03, 0.07, d + 0.03], [0, h * 0.72, 0], trim);
+  addBox(g, [0.22, 0.2, 0.08], [0, h * 0.62, d / 2 + 0.05], care ? 0xffc247 : 0xd8aa61); // latch
+  if (care) {
+    // hazard chevrons + a small parachute knot so the airdrop reads instantly
+    for (let i = -1; i <= 1; i++) addBox(g, [0.16, 0.16, 0.02], [i * 0.34, h + 0.14, d / 2 - 0.3], i % 2 === 0 ? 0xffc247 : 0x1c2228, [0, 0, Math.PI / 4]);
+    addBox(g, [0.14, 0.14, 0.14], [0, h + 0.22, 0], 0xcc4433);
+  } else {
+    addCone(g, 0.12, 0.14, [0, h + 0.16, 0], 0x1c2228, [0, Math.PI / 4, 0], 4); // small lock/knob
+  }
   return g;
 }
 
 function ammoModel(color: number, shells = false): THREE.Group {
   const g = new THREE.Group();
-  addBox(g, [0.46, 0.26, 0.34], [0, 0.13, 0], 0x303c43);
-  addBox(g, [0.48, 0.07, 0.36], [0, 0.28, 0], color);
+  addBox(g, [0.46, 0.26, 0.34], [0, 0.13, 0], 0x2a343b);        // ammo can body
+  addBox(g, [0.48, 0.06, 0.36], [0, 0.27, 0], 0x353f47);        // lid
+  addBox(g, [0.5, 0.05, 0.05], [0, 0.32, 0], 0x1c242b);         // latch/handle bar
+  addBox(g, [0.42, 0.1, 0.02], [0, 0.14, 0.18], color);         // colour-coded label
   if (shells) {
-    for (let i = -1; i <= 1; i++) addCylinder(g, 0.035, 0.28, [i * 0.1, 0.43, 0], 0xc54739, [Math.PI / 2, 0, 0], 8);
+    for (let i = -1; i <= 1; i++) {
+      addCylinder(g, 0.038, 0.3, [i * 0.11, 0.44, 0], 0xc54739, [Math.PI / 2, 0, 0], 8);
+      addCylinder(g, 0.04, 0.06, [i * 0.11, 0.44, 0.13], 0xe8b44a, [Math.PI / 2, 0, 0], 8); // brass base
+    }
+  } else {
+    // a few loose rounds standing in the tray
+    for (let i = -1; i <= 1; i++) {
+      addCylinder(g, 0.028, 0.14, [i * 0.1, 0.35, -0.06], 0xe8b44a, [0, 0, 0], 8);
+      addCone(g, 0.028, 0.06, [i * 0.1, 0.45, -0.06], color, [0, 0, 0], 8);
+    }
   }
   return g;
 }
@@ -164,13 +270,17 @@ function pickupModel(p: PickupInfo): THREE.Group {
   if (p.item in WEAPON_MODEL_KEYS) return weaponModel(p.item as WeaponType);
   const g = new THREE.Group();
   if (p.item === 'bandageItem') {
-    addBox(g, [0.5, 0.22, 0.42], [0, 0.11, 0], 0xf1eee7);
-    addBox(g, [0.14, 0.05, 0.3], [0, 0.245, 0], 0xd84c52);
-    addBox(g, [0.34, 0.05, 0.12], [0, 0.245, 0], 0xd84c52);
+    addCylinder(g, 0.22, 0.2, [0, 0.13, 0], 0xf1eee7, [Math.PI / 2, 0, 0], 12); // rolled gauze
+    addCylinder(g, 0.1, 0.21, [0, 0.13, 0], 0xe6ddce, [Math.PI / 2, 0, 0], 12);  // inner core
+    addBox(g, [0.16, 0.05, 0.06], [0, 0.13, 0.02], 0xd84c52);                    // red cross
+    addBox(g, [0.05, 0.16, 0.06], [0, 0.13, 0.02], 0xd84c52);
   } else if (p.item === 'plateItem') {
-    addBox(g, [0.46, 0.58, 0.12], [0, 0.3, 0], 0x5c9ead);
-    addBox(g, [0.54, 0.13, 0.16], [0, 0.54, 0], 0x9ce7ee);
-    addBox(g, [0.12, 0.3, 0.16], [0, 0.3, 0], 0x304e5b);
+    // curved-ish armour plate: a slab flanked by two angled shoulder wings
+    addBox(g, [0.34, 0.54, 0.1], [0, 0.32, 0], 0x5c9ead);
+    addBox(g, [0.12, 0.5, 0.08], [-0.22, 0.32, 0.03], 0x4a7f8b, [0, 0.4, 0]);
+    addBox(g, [0.12, 0.5, 0.08], [0.22, 0.32, 0.03], 0x4a7f8b, [0, -0.4, 0]);
+    addBox(g, [0.5, 0.12, 0.14], [0, 0.55, 0], 0x9ce7ee);                        // top edge
+    addBox(g, [0.24, 0.24, 0.02], [0, 0.34, 0.08], 0x304e5b);                    // center panel
   } else if (p.item === 'arrowBundle') {
     for (let i = -1; i <= 1; i++) {
       addCylinder(g, 0.025, 0.92, [i * 0.09, 0.28, 0], 0xc9b382, [0, 0, 0.08 * i], 5);
@@ -178,9 +288,15 @@ function pickupModel(p: PickupInfo): THREE.Group {
       tip.position.set(i * 0.09, 0.82, 0); g.add(tip);
     }
     addBox(g, [0.34, 0.09, 0.12], [0, 0.25, 0], 0x8b5530);
+  } else if (p.item === 'smokeGrenade') {
+    return weaponModel('smoke');
+  } else if (p.item === 'flashGrenade') {
+    return weaponModel('flash');
   } else {
     return ammoModel(
-      p.item === 'pistolAmmo' ? 0x65b7ee : p.item === 'rifleAmmo' ? 0xb68cff : 0xff8c56,
+      p.item === 'pistolAmmo' ? 0x65b7ee
+        : p.item === 'rifleAmmo' ? 0xb68cff
+          : p.item === 'sniperAmmo' ? 0x7ee0c2 : 0xff8c56,
       p.item === 'shellAmmo',
     );
   }
@@ -189,7 +305,7 @@ function pickupModel(p: PickupInfo): THREE.Group {
 
 const WEAPON_MODEL_KEYS: Record<WeaponType, true> = {
   fists: true, machete: true, spear: true, bow: true, pistol: true,
-  rifle: true, shotgun: true, grenade: true,
+  rifle: true, shotgun: true, sniper: true, grenade: true, smoke: true, flash: true,
 };
 
 function pickupVisual(p: PickupInfo): ItemVisual {
@@ -230,7 +346,7 @@ function pickupLabel(p: PickupInfo): THREE.Sprite {
 
 function viewmodelFor(weapon: WeaponType | 'none'): THREE.Group {
   const g = weaponModel(weapon);
-  const scale = weapon === 'rifle' || weapon === 'shotgun' || weapon === 'spear'
+  const scale = weapon === 'rifle' || weapon === 'shotgun' || weapon === 'spear' || weapon === 'sniper'
     ? 0.36 : weapon === 'bow' || weapon === 'machete' ? 0.46 : 0.54;
   g.scale.setScalar(scale);
   g.rotation.y = -0.08;
@@ -306,28 +422,57 @@ export class Entities {
     const group = new THREE.Group();
     const mat = new THREE.MeshLambertMaterial({ color });
     const darkMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(color).multiplyScalar(0.62) });
+    const gearMat = new THREE.MeshLambertMaterial({ color: 0x2b333b });   // straps/vest/boots
+    const skinMat = new THREE.MeshLambertMaterial({ color: 0xd8a878 });
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.78, 0.38), mat);
     body.position.y = 1.08;
+    // chest rig / plate carrier over the torso (reads as a survivor silhouette)
+    const vest = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.42), gearMat);
+    vest.position.set(0, 1.12, 0);
+    const beltStrap = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.12, 0.42), gearMat);
+    beltStrap.position.set(0, 0.78, 0);
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.19, 0.14, 8), gearMat);
+    collar.position.set(0, 1.44, 0);
+    const shoulderL = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), darkMat);
+    shoulderL.position.set(-0.36, 1.4, 0); shoulderL.scale.set(1, 0.8, 1);
+    const shoulderR = shoulderL.clone(); shoulderR.position.x = 0.36;
     const hips = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.32), darkMat);
     hips.position.y = 0.64;
-    const leftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.12, 0.64, 7), darkMat);
+    const leftLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.12, 0.64, 8), darkMat);
     leftLeg.position.set(-0.17, 0.31, 0);
     const rightLeg = leftLeg.clone(); rightLeg.position.x = 0.17;
-    const leftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.095, 0.62, 7), mat);
+    const bootL = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.14, 0.3), gearMat);
+    bootL.position.set(-0.17, 0.05, 0.04);
+    const bootR = bootL.clone(); bootR.position.x = 0.17;
+    const leftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.095, 0.62, 8), mat);
     leftArm.position.set(-0.39, 1.08, 0); leftArm.rotation.z = -0.12;
     const rightArm = leftArm.clone(); rightArm.position.x = 0.39; rightArm.rotation.z = 0.12;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), new THREE.MeshLambertMaterial({ color: 0xd8a878 }));
+    const handL = new THREE.Mesh(new THREE.SphereGeometry(0.075, 7, 6), gearMat);
+    handL.position.set(-0.42, 0.79, 0);
+    const handR = handL.clone(); handR.position.x = 0.42;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), skinMat);
     head.position.y = 1.67;
-    const backpack = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.56, 0.2), darkMat);
-    backpack.position.set(0, 1.08, 0.28);
+    // low-poly helmet cap + visor
+    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.255, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.62), darkMat);
+    helmet.position.y = 1.7;
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.08, 0.06), gearMat);
+    visor.position.set(0, 1.7, -0.22);
+    const backpack = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.56, 0.22), gearMat);
+    backpack.position.set(0, 1.12, 0.3);
+    const bedroll = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.44, 8), mat);
+    bedroll.rotation.z = Math.PI / 2; bedroll.position.set(0, 1.4, 0.34);
     const weapon = new THREE.Group();
     weapon.position.set(0.34, 1.22, -0.18);
     weapon.scale.setScalar(0.48);
-    for (const mesh of [body, hips, leftLeg, rightLeg, leftArm, rightArm, head, backpack]) {
+    const extras = [
+      vest, beltStrap, collar, shoulderL, shoulderR, hips, leftLeg, rightLeg,
+      bootL, bootR, leftArm, rightArm, handL, handR, helmet, visor, backpack, bedroll,
+    ];
+    for (const mesh of [body, head, ...extras]) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
     }
-    group.add(body, hips, leftLeg, rightLeg, leftArm, rightArm, head, backpack, weapon);
+    group.add(body, head, weapon, ...extras);
     this.scene.add(group);
     this.players.set(id, {
       group, body, head, weapon, currentWeapon: null,
@@ -472,7 +617,8 @@ export class Entities {
           holder.add(m);
           obj = holder;
         } else {
-          obj = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), new THREE.MeshLambertMaterial({ color: 0x4a7a4a }));
+          const color = pr.kind === 'smoke' ? 0x8d99a3 : pr.kind === 'flash' ? 0xcfc39a : 0x4a7a4a;
+          obj = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), new THREE.MeshLambertMaterial({ color }));
         }
         this.scene.add(obj);
         this.projectiles.set(pr.id, obj);
@@ -491,6 +637,61 @@ export class Entities {
       }
     }
   }
+
+  // ---------- smoke clouds (§F2) ----------
+  private smokeClouds = new Map<number, { group: THREE.Group; puffs: THREE.Mesh[] }>();
+
+  /** Mirror the host's active smoke clouds; grow in, hold, fade out near expiry. */
+  syncSmokes(smokes: SmokeSnap[], t: number): void {
+    const seen = new Set<number>();
+    for (const cloud of smokes) {
+      seen.add(cloud.id);
+      let entry = this.smokeClouds.get(cloud.id);
+      if (!entry) {
+        const group = new THREE.Group();
+        const puffs: THREE.Mesh[] = [];
+        const puffRng = mulberry32(cloud.id + 77);
+        for (let i = 0; i < 7; i++) {
+          const r = cloud.radius * (0.42 + puffRng() * 0.3);
+          const puff = new THREE.Mesh(
+            new THREE.SphereGeometry(r, 10, 8),
+            new THREE.MeshLambertMaterial({
+              color: 0xb9c2c9, transparent: true, opacity: 0, depthWrite: false,
+            }),
+          );
+          puff.position.set(
+            (puffRng() - 0.5) * cloud.radius * 1.1,
+            (puffRng() - 0.35) * cloud.radius * 0.75,
+            (puffRng() - 0.5) * cloud.radius * 1.1,
+          );
+          group.add(puff);
+          puffs.push(puff);
+        }
+        group.position.set(cloud.x, cloud.y, cloud.z);
+        this.scene.add(group);
+        entry = { group, puffs };
+        this.smokeClouds.set(cloud.id, entry);
+      }
+      const age = t - cloud.bornAt;
+      const left = cloud.expiresAt - t;
+      const grow = Math.min(1, age / 0.6);
+      const fade = Math.min(1, Math.max(0, left / 1.6));
+      entry.group.scale.setScalar(0.25 + 0.75 * grow);
+      entry.group.rotation.y = age * 0.14;
+      for (const puff of entry.puffs) {
+        (puff.material as THREE.MeshLambertMaterial).opacity = 0.82 * grow * fade;
+      }
+    }
+    for (const [id, entry] of this.smokeClouds) {
+      if (!seen.has(id)) {
+        this.scene.remove(entry.group);
+        disposeObject(entry.group);
+        this.smokeClouds.delete(id);
+      }
+    }
+  }
+
+  clearSmokes(): void { this.syncSmokes([], 0); }
 
   // ---------- FX ----------
   addTracer(from: THREE.Vector3, to: THREE.Vector3): void {
@@ -672,6 +873,7 @@ export class Entities {
     this.clearPlayers();
     this.clearPickups();
     this.clearProjectiles();
+    this.clearSmokes();
     for (const f of this.fx) { this.scene.remove(f.obj); disposeObject(f.obj); }
     this.fx.length = 0;
     if (this.careBeacon) { this.scene.remove(this.careBeacon); disposeObject(this.careBeacon); }

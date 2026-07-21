@@ -5,7 +5,7 @@ import type {
   GameEvent, InputMsg, LobbyStateMsg, MatchEndMsg, MatchStartMsg,
   RoundEndMsg, RoundStartMsg, SessionMsg, SnapshotMsg,
 } from '@shared/protocol';
-import type { Recipe } from '@shared/constants';
+import type { BotDifficulty, Recipe } from '@shared/constants';
 
 export interface NetHandlers {
   onLobby(m: LobbyStateMsg): void;
@@ -64,6 +64,9 @@ export class Net {
   }
   setReady(ready: boolean): void { this.socket.emit(C2S.setReady, { ready }); }
   startMatch(): void { this.socket.emit(C2S.startMatch); }
+  startPractice(bots: number, difficulty: BotDifficulty): void {
+    this.socket.emit(C2S.startPractice, { bots, difficulty });
+  }
   sendInput(inp: InputMsg): void { this.socket.emit(C2S.input, inp); }
   craft(recipe: Recipe): void { this.socket.emit(C2S.craft, { recipe }); }
   useBandage(): void { this.socket.emit(C2S.useBandage); }

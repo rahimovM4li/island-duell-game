@@ -1,10 +1,10 @@
 // Message catalog (§8): join, lobbyState, matchStart(N, seed), input,
 // snapshot (20 Hz), event, roundEnd, matchEnd — plus round bookkeeping.
-import type { ItemType, Recipe, WeaponType } from './constants';
+import type { BotDifficulty, ItemType, Recipe, ThrowKind, WeaponType } from './constants';
 import type { CrateTier, VegKind } from './worldgen';
 import type { Phase } from './timeline';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 // ---------- lobby ----------
 export interface JoinMsg { v: number; name: string; resumeToken?: string }
@@ -27,6 +27,8 @@ export interface MatchStartMsg {
   n: number;
   seed: number;
   players: PlayerInfo[];
+  /** Present and true for solo-practice matches against bots (§F4). */
+  practice?: boolean;
 }
 export interface RoundStartMsg {
   round: number;         // 1-based; > ROUNDS_PER_MATCH ⇒ sudden death
@@ -52,6 +54,7 @@ export interface RoundEndMsg {
   nextRoundIn: number;   // s
   matchOver: boolean;
   stats: Record<string, CombatStats>;
+  practice?: boolean;
 }
 export interface MatchEndMsg {
   totals: Record<string, number>;
@@ -60,6 +63,7 @@ export interface MatchEndMsg {
   standings: PlacementEntry[]; // final match standings
   suddenDeathRounds: number;
   stats: Record<string, CombatStats>;
+  practice?: boolean;
 }
 
 // ---------- input (client → host) ----------
@@ -76,6 +80,8 @@ export interface InputMsg {
   interact: boolean;     // held: harvest resources / weapon swap
   slot?: 1 | 2 | 3;      // weapon slot switch (3 = throwable)
   reload?: boolean;
+  /** Pressing the throwable key while slot 3 is active cycles frag → smoke → flash. */
+  throwCycle?: boolean;
 }
 
 // ---------- snapshot (host → clients, 20 Hz full state §8) ----------
@@ -99,12 +105,23 @@ export interface SnapPlayer {
   grounded: boolean;
   lastSeq: number;       // reconciliation ack for the owning client
   kills: number;
+  /** Selected throwable while slot 3 is up (viewmodel + HUD). */
+  activeThrow?: ThrowKind;
+  /** Round time when a cooked frag detonates in hand; absent when not cooking. */
+  cookingUntil?: number;
 }
 export interface SnapProjectile {
   id: number;
-  kind: 'arrow' | 'grenade';
+  kind: 'arrow' | 'grenade' | 'smoke' | 'flash';
   x: number; y: number; z: number;
   vx: number; vy: number; vz: number;
+}
+export interface SmokeSnap {
+  id: number;
+  x: number; y: number; z: number;
+  radius: number;
+  bornAt: number;    // round time (s)
+  expiresAt: number; // round time (s)
 }
 export interface ZoneSnap {
   radius: number; targetRadius: number; dot: number; tier: number;
@@ -119,6 +136,7 @@ export interface SnapshotMsg {
   zone: ZoneSnap;
   players: SnapPlayer[];
   projectiles: SnapProjectile[];
+  smokes: SmokeSnap[];   // active sight-blocking smoke clouds (§F2)
   pings: PingSnap[];     // ping-on-loud (§6.2)
   care: CareSnap;
   aliveCount: number;
@@ -139,10 +157,11 @@ export interface InventoryState {
   primary: WeaponSlotState | null;
   secondary: WeaponSlotState | null;
   active: 1 | 2 | 3;
-  grenades: number;
+  throwables: { frag: number; smoke: number; flash: number };
+  activeThrow: ThrowKind;
   bandages: number;
   plates: number;
-  ammo: { arrow: number; pistol: number; rifle: number; shell: number };
+  ammo: { arrow: number; pistol: number; rifle: number; shell: number; sniper: number };
   mats: { wood: number; stone: number; fiber: number };
   reloading: boolean;
 }
@@ -163,19 +182,26 @@ export type GameEvent =
   | { type: 'heal'; target: string; amount: number; hp: number }
   | { type: 'hitmarker'; target: string; headshot: boolean }     // shooter only
   | { type: 'care'; state: 'incoming' | 'landed' | 'taken'; x: number; z: number; by?: string }
-  | { type: 'zoneStep'; tier: number; targetRadius: number; dot: number };
+  | { type: 'zoneStep'; tier: number; targetRadius: number; dot: number }
+  | { type: 'smoke'; state: 'pop'; id: number; x: number; y: number; z: number; radius: number }
+  | { type: 'flash'; x: number; y: number; z: number }
+  | { type: 'flashed'; target: string; intensity: number; duration: number } // victim only
+  | { type: 'cookout'; by: string; x: number; y: number; z: number };       // frag detonated in hand
 
 // ---------- socket.io event names ----------
 export const C2S = {
   join: 'join',
   setReady: 'setReady',
   startMatch: 'startMatch',
+  startPractice: 'startPractice',
   input: 'input',
   craft: 'craft',
   useBandage: 'useBandage',
   rematch: 'rematch',
   pingProbe: 'pingProbe',
 } as const;
+
+export interface StartPracticeMsg { bots: number; difficulty: BotDifficulty }
 
 export const S2C = {
   lobbyState: 'lobbyState',
@@ -207,7 +233,14 @@ export function isInputMsg(m: unknown): m is InputMsg {
     && isBool(x.sprint) && isBool(x.sneak) && isBool(x.aim)
     && isBool(x.jump) && isBool(x.fire) && isBool(x.interact)
     && (x.slot === undefined || x.slot === 1 || x.slot === 2 || x.slot === 3)
-    && (x.reload === undefined || isBool(x.reload));
+    && (x.reload === undefined || isBool(x.reload))
+    && (x.throwCycle === undefined || isBool(x.throwCycle));
+}
+
+export function isStartPracticeMsg(m: unknown): m is StartPracticeMsg {
+  const x = m as StartPracticeMsg;
+  return !!x && isNum(x.bots) && Number.isInteger(x.bots) && x.bots >= 1 && x.bots <= 4
+    && (x.difficulty === 'easy' || x.difficulty === 'normal' || x.difficulty === 'hard');
 }
 
 export function isCraftMsg(m: unknown): m is { recipe: Recipe } {
