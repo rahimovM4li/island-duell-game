@@ -12,7 +12,8 @@ const SEED = 424242;
 
 const idleInput = (over: Partial<InputMsg> = {}): InputMsg => ({
   seq: 0, dt: 0.033, mx: 0, mz: 0, yaw: 0, pitch: 0,
-  sprint: false, jump: false, fire: false, interact: false, ...over,
+  sprint: false, sneak: false, aim: false,
+  jump: false, fire: false, interact: false, ...over,
 });
 
 describe('heightfield collider', () => {
@@ -50,10 +51,10 @@ describe('heightfield collider', () => {
     phys.removePlayer('p1');
   });
 
-  it('walking moves at ~6 m/s, sprinting ~9 m/s (§4.1)', () => {
+  it('uses distinct walking, sprinting and aiming speeds', () => {
     // flat, obstacle-free sea floor (no vegetation/ruins colliders out there)
     const start = { x: 0, y: sampleHeight(gen.params, 0, -118) + 0.2, z: -118 };
-    for (const [sprint, speed] of [[false, 6], [true, 9]] as const) {
+    for (const [sprint, aim, speed] of [[false, false, 6], [true, false, 9], [true, true, 4.4]] as const) {
       phys.addPlayer('p2', start);
       const st = freshMoveState(start);
       // settle on ground
@@ -61,13 +62,14 @@ describe('heightfield collider', () => {
       const from = { ...st.pos };
       const steps = 60; // 2 s of movement, walking +X along the rim
       for (let i = 0; i < steps; i++) {
-        stepMovement(phys, 'p2', st, idleInput({ mz: 1, sprint, yaw: -Math.PI / 2 }));
+        stepMovement(phys, 'p2', st, idleInput({ mz: 1, sprint, aim, yaw: -Math.PI / 2 }));
         phys.step();
       }
       const d = Math.hypot(st.pos.x - from.x, st.pos.z - from.z);
       const measured = d / (steps * 0.033);
       expect(measured).toBeGreaterThan(speed * 0.8);
       expect(measured).toBeLessThan(speed * 1.1);
+      if (aim) expect(st.sprinting).toBe(false);
       phys.removePlayer('p2');
     }
   });
@@ -90,6 +92,53 @@ describe('heightfield collider', () => {
     expect(st.grounded).toBe(true);
     expect(Math.abs(st.pos.y - groundY)).toBeLessThan(0.3);
     phys.removePlayer('p3');
+  });
+
+  it('accelerates responsively and decelerates to a stable stop', () => {
+    const start = { x: 0, y: sampleHeight(gen.params, 0, -118) + 0.2, z: -118 };
+    phys.addPlayer('smooth', start);
+    const st = freshMoveState(start);
+    for (let i = 0; i < 30; i++) { stepMovement(phys, 'smooth', st, idleInput()); phys.step(); }
+
+    stepMovement(phys, 'smooth', st, idleInput({ mz: 1, yaw: -Math.PI / 2 }));
+    phys.step();
+    expect(Math.hypot(st.velX, st.velZ)).toBeGreaterThan(0.5);
+    expect(Math.hypot(st.velX, st.velZ)).toBeLessThan(6);
+
+    for (let i = 0; i < 12; i++) {
+      stepMovement(phys, 'smooth', st, idleInput({ mz: 1, yaw: -Math.PI / 2 }));
+      phys.step();
+    }
+    expect(Math.hypot(st.velX, st.velZ)).toBeGreaterThan(5.5);
+
+    for (let i = 0; i < 8; i++) { stepMovement(phys, 'smooth', st, idleInput()); phys.step(); }
+    expect(Math.hypot(st.velX, st.velZ)).toBeLessThan(0.1);
+    phys.removePlayer('smooth');
+  });
+
+  it('sneaking is slower, blocks sprinting and lowers the collision capsule', () => {
+    const start = { x: -35, y: sampleHeight(gen.params, -35, -80) + 0.2, z: -80 };
+    phys.addPlayer('sneak', start);
+    const st = freshMoveState(start);
+    for (let i = 0; i < 30; i++) { stepMovement(phys, 'sneak', st, idleInput()); phys.step(); }
+    const from = { ...st.pos };
+    for (let i = 0; i < 30; i++) {
+      stepMovement(phys, 'sneak', st, idleInput({
+        mz: 1, sprint: true, sneak: true, yaw: -Math.PI / 2,
+      }));
+      phys.step();
+    }
+    const speed = Math.hypot(st.pos.x - from.x, st.pos.z - from.z) / (30 * 0.033);
+    expect(speed).toBeGreaterThan(2.5);
+    expect(speed).toBeLessThan(4);
+    expect(st.sprinting).toBe(false);
+    expect(st.sneaking).toBe(true);
+    const highRay = phys.raycast(
+      { x: st.pos.x - 2, y: st.pos.y + 1.55, z: st.pos.z },
+      { x: 1, y: 0, z: 0 }, 4,
+    );
+    expect(highRay?.playerId).not.toBe('sneak');
+    phys.removePlayer('sneak');
   });
 
   it('raycast can hit a player capsule and reports the id', () => {

@@ -20,12 +20,19 @@ export const FOG_NIGHT = 50;
 // ---------- Player (§4.1) ----------
 export const PLAYER_MAX_HP = 100;
 export const WALK_SPEED = 6; // m/s
+export const AIM_SPEED = 4.4; // m/s while aiming down sights
+export const SNEAK_SPEED = 3.2; // m/s while crouched
 export const SPRINT_SPEED = 9; // m/s
+export const GROUND_ACCEL = 36; // m/s²: responsive, but not an instant velocity snap
+export const GROUND_DECEL = 44; // m/s²: short, readable stopping distance
+export const AIR_ACCEL = 9; // m/s²: limited steering without killing jump momentum
 export const JUMP_SPEED = 6.5; // m/s initial vertical velocity
 export const GRAVITY = 22; // m/s^2 (gamey, snappy)
 export const PLAYER_RADIUS = 0.4;
 export const PLAYER_HEIGHT = 1.8; // capsule total height
 export const PLAYER_EYE_HEIGHT = 1.62;
+export const PLAYER_SNEAK_HEIGHT = 1.22;
+export const PLAYER_SNEAK_EYE_HEIGHT = 1.02;
 // Sprint stamina (§12 open point — default: with slow regen)
 export const SPRINT_STAMINA_MAX = 6; // seconds of sprint
 export const SPRINT_STAMINA_REGEN = 1.2; // seconds refilled per second not sprinting
@@ -82,6 +89,11 @@ export interface WeaponDef {
   projectileSpeed?: number;
   loud: boolean;        // triggers ping-on-loud (§6.2)
   reloadTime?: number;
+  hipSpread?: number;    // radians-ish direction variance, authoritative on host
+  aimSpread?: number;
+  moveSpread?: number;   // extra spread at full running speed
+  recoilPitch?: number;  // client camera kick in radians
+  recoilYaw?: number;
 }
 
 export const WEAPONS: Record<WeaponType, WeaponDef> = {
@@ -95,14 +107,17 @@ export const WEAPONS: Record<WeaponType, WeaponDef> = {
   pistol: {
     type: 'pistol', kind: 'hitscan', damage: 22, cooldown: 0.25, range: 60,
     ammo: 'pistol', magSize: 7, falloffStart: 30, falloffEnd: 60, loud: true, reloadTime: 1.4,
+    hipSpread: 0.018, aimSpread: 0.002, moveSpread: 0.012, recoilPitch: 0.013, recoilYaw: 0.006,
   },
   rifle: {
     type: 'rifle', kind: 'hitscan', damage: 30, cooldown: 0.15, range: 120,
     ammo: 'rifle', magSize: 20, falloffStart: 80, falloffEnd: 120, loud: true, reloadTime: 2.0,
+    hipSpread: 0.012, aimSpread: 0.0015, moveSpread: 0.016, recoilPitch: 0.011, recoilYaw: 0.005,
   },
   shotgun: {
     type: 'shotgun', kind: 'hitscan', damage: 12, cooldown: 0.9, range: 24, pellets: 8,
     ammo: 'shell', magSize: 5, falloffStart: 8, falloffEnd: 20, loud: true, reloadTime: 2.2,
+    hipSpread: 0.065, aimSpread: 0.038, moveSpread: 0.015, recoilPitch: 0.035, recoilYaw: 0.012,
   },
   grenade: {
     type: 'grenade', kind: 'throwable', damage: 60, cooldown: 0.8, range: 5, // range = blast radius
@@ -149,6 +164,7 @@ export const SERVER_TICK_HZ = 30;
 export const INTERP_DELAY_MS = 100;
 export const DEFAULT_PORT = 3000;
 export const RECONCILE_SNAP_DIST = 0.6; // m: prediction error before hard snap
+export const RECONNECT_GRACE_MS = 12_000;
 
 // ---------- Loot ----------
 export type ItemType =

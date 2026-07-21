@@ -118,3 +118,35 @@ describe('assignSpawnIndices (§3)', () => {
     expect(JSON.stringify([...r1])).not.toBe(JSON.stringify([...r2]));
   });
 });
+
+describe('natural cover', () => {
+  it('generates enough walk-through bushes for players to hide', () => {
+    const bushes = generateWorld(SEED, 3).vegetation.filter((v) => v.kind === 'bush');
+    expect(bushes.length).toBeGreaterThanOrEqual(180);
+    expect(bushes.every((b) => b.colliderRadius === 0)).toBe(true);
+  });
+});
+
+describe('risk/reward landmarks', () => {
+  const gen = generateWorld(SEED, 5);
+
+  it('builds exactly one readable wreck, watchtower and bunker with collision primitives', () => {
+    expect(gen.pois.map((poi) => poi.id)).toEqual(['wreck', 'watchtower', 'bunker']);
+    for (const poi of gen.pois) expect(poi.structures.some((part) => part.collider)).toBe(true);
+    expect(gen.pois.find((poi) => poi.id === 'watchtower')!.structures.some((part) => (part.yOffset ?? 0) > 4)).toBe(true);
+  });
+
+  it('places high-value loot at exposed landmarks and recovery loot in forest', () => {
+    expect(gen.crates.filter((crate) => crate.poi === 'wreck' && crate.tier === 'top')).toHaveLength(3);
+    expect(gen.crates.filter((crate) => crate.poi === 'watchtower')).toHaveLength(2);
+    expect(gen.crates.filter((crate) => crate.poi === 'bunker' && crate.tier === 'good')).toHaveLength(2);
+    expect(gen.crates.filter((crate) => crate.poi === 'forest' && crate.tier === 'common')).toHaveLength(2);
+  });
+
+  it('keeps vegetation out of landmark combat footprints', () => {
+    for (const poi of gen.pois) {
+      const radius = poi.id === 'wreck' ? 8 : 7;
+      expect(gen.vegetation.every((veg) => Math.hypot(veg.x - poi.x, veg.z - poi.z) >= radius)).toBe(true);
+    }
+  });
+});
