@@ -5,7 +5,7 @@ import type {
   GameEvent, InputMsg, LobbyStateMsg, MatchEndMsg, MatchStartMsg,
   RoundEndMsg, RoundStartMsg, SessionMsg, SnapshotMsg,
 } from '@shared/protocol';
-import type { BotDifficulty, Recipe } from '@shared/constants';
+import type { BotDifficulty, MatchMode, Recipe } from '@shared/constants';
 
 export interface NetHandlers {
   onLobby(m: LobbyStateMsg): void;
@@ -33,6 +33,8 @@ export class Net {
   private lostProbes = 0;
   private pendingProbes = new Map<number, number>();
   private probeSeq = 0;
+  private probeHandle: ReturnType<typeof setInterval>;
+  private disposed = false;
 
   constructor(url: string | undefined, h: NetHandlers) {
     const options = {
@@ -54,7 +56,7 @@ export class Net {
     this.socket.on('connect', () => h.onConnectionState('connected'));
     this.socket.on('disconnect', (reason) => h.onConnectionState('disconnected', reason));
     this.socket.on('connect_error', (error) => h.onConnectionState('error', error.message));
-    setInterval(() => this.probe(), 2000);
+    this.probeHandle = setInterval(() => this.probe(), 2000);
   }
 
   get id(): string { return this.playerId; }
@@ -63,16 +65,27 @@ export class Net {
     this.socket.emit(C2S.join, { v: PROTOCOL_VERSION, name, ...(resumeToken ? { resumeToken } : {}) });
   }
   setReady(ready: boolean): void { this.socket.emit(C2S.setReady, { ready }); }
-  startMatch(): void { this.socket.emit(C2S.startMatch); }
-  startPractice(bots: number, difficulty: BotDifficulty): void {
-    this.socket.emit(C2S.startPractice, { bots, difficulty });
+  startMatch(mode: MatchMode): void { this.socket.emit(C2S.startMatch, { mode }); }
+  startPractice(bots: number, difficulty: BotDifficulty, mode: MatchMode): void {
+    this.socket.emit(C2S.startPractice, { bots, difficulty, mode });
   }
   sendInput(inp: InputMsg): void { this.socket.emit(C2S.input, inp); }
   craft(recipe: Recipe): void { this.socket.emit(C2S.craft, { recipe }); }
   useBandage(): void { this.socket.emit(C2S.useBandage); }
   rematch(): void { this.socket.emit(C2S.rematch); }
 
+  /** Stop reconnects, probes and event delivery before replacing this session. */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    clearInterval(this.probeHandle);
+    this.pendingProbes.clear();
+    this.socket.removeAllListeners();
+    this.socket.disconnect();
+  }
+
   private probe(): void {
+    if (this.disposed) return;
     const now = performance.now();
     for (const [id, at] of this.pendingProbes) {
       if (now - at > 4500) { this.pendingProbes.delete(id); this.lostProbes += 1; }

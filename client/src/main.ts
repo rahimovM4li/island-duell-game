@@ -4,28 +4,30 @@
 // Remote players: interpolated ~100 ms behind the newest snapshot.
 import * as THREE from 'three';
 import {
-  BANDAGE_USE_TIME, GRENADE_FUSE, INTERACT_HOLD_SECS, INTERP_DELAY_MS,
+  BANDAGE_USE_TIME, GRENADE_FUSE, INTERACT_HOLD_SECS, INTERP_DELAY_MS, MATCH_MODE_PACE,
   PLAYER_EYE_HEIGHT, PLAYER_SNEAK_EYE_HEIGHT, RECONCILE_SNAP_DIST,
-  SCOPE_BREATH_MAX, SCOPE_BREATH_REGEN, THROW_WEAPON, WEAPONS,
-  type BotDifficulty, type WeaponType,
+  SCOPE_BREATH_MAX, SCOPE_BREATH_REGEN, SERVER_TICK_HZ, THROW_WEAPON, WEAPONS,
+  type BotDifficulty, type MatchMode, type WeaponType,
 } from '@shared/constants';
 import { sampleHeight } from '@shared/terrain';
 import { GamePhysics, type RapierModule } from '@shared/physics';
-import { freshMoveState, stepMovement, type MoveState, MAX_INPUT_DT } from '@shared/movement';
+import { freshMoveState, stepMovement, type MoveState } from '@shared/movement';
 import { bushAt, generateWorld, type WorldGen } from '@shared/worldgen';
 import type {
   GameEvent, InputMsg, InventoryState, LobbyStateMsg, MatchStartMsg, PickupInfo,
   RoundStartMsg, SessionMsg, SnapPlayer, SnapshotMsg,
 } from '@shared/protocol';
-import {
-  accuracyPct, kdRatio, loadProfile, mergeMatchIntoProfile, saveProfile,
-} from './profile';
+import { recordProfileMatch, renderProfile } from './profile-ui';
 import { Net } from './net';
 import { InputState } from './input';
 import { World } from './world';
 import { Entities } from './entities';
 import { Hud, weaponName } from './hud';
 import { Sfx, type SfxName } from './sfx';
+import { OnboardingGuide } from './onboarding';
+import { FREECAM_FAST_SPEED, FREECAM_SPEED, updateFreecam } from './spectator';
+import { AdaptiveResolution } from './performance';
+import { gameAssets } from './game-assets';
 import {
   DEFAULT_SETTINGS, keyLabel, loadSettings, saveSettings,
   type BindAction, type PlayerSettings,
@@ -34,7 +36,7 @@ import {
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 // ---------- three.js bootstrap ----------
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -55,7 +57,18 @@ let settings: PlayerSettings = loadSettings();
 const input = new InputState(renderer.domElement, settings);
 const hud = new Hud();
 const sfx = new Sfx();
+const onboarding = new OnboardingGuide(
+  $('onboarding-tip'), $('onboarding-step'), $('onboarding-title'), $('onboarding-body'),
+);
+$('onboarding-skip').addEventListener('click', (event) => {
+  event.stopPropagation();
+  onboarding.dismiss();
+});
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const adaptiveResolution = new AdaptiveResolution();
+let renderScale = 1;
+let matchMode: MatchMode = 'classic';
+let matchPace = MATCH_MODE_PACE.classic;
 
 // ---------- session state ----------
 interface RemoteBufEntry { at: number; x: number; y: number; z: number; yaw: number; pitch: number }
@@ -77,9 +90,11 @@ let phys: GamePhysics | null = null;
 let entities: Entities | null = null;
 
 let move: MoveState = freshMoveState({ x: 0, y: 10, z: 0 });
+const previousMovePos = new THREE.Vector3(move.pos.x, move.pos.y, move.pos.z);
+const renderMovePos = previousMovePos.clone();
+const renderCorrection = new THREE.Vector3();
 let seq = 0;
 let pending: InputMsg[] = [];
-let predicted = new Map<number, { x: number; y: number; z: number }>(); // seq → pos after applying it
 let alive = false;
 let roundRunning = false;
 let suddenDeathAnnounced = false;
@@ -124,8 +139,22 @@ let nextCookBeepAt = 0;
 let practiceMatch = false;
 let myDeathsThisMatch = 0;
 let roundsThisMatch = 0;
+let onboardingOrigin: { x: number; z: number } | null = null;
+let inputAccumulator = 0;
+let reconciliationHardSnaps = 0;
+let reconciliationSmoothCorrections = 0;
+let lastReconciliationError = 0;
+let maxReconciliationError = 0;
+let maxPredictionStepsPerFrame = 0;
+
+function resetRenderMovePosition(): void {
+  previousMovePos.set(move.pos.x, move.pos.y, move.pos.z);
+  renderMovePos.copy(previousMovePos);
+  renderCorrection.set(0, 0, 0);
+}
 
 const specPos = new THREE.Vector3();
+let spectateYaw = 0;
 
 function disposeMatchScene(): void {
   if (world) world.scene.remove(camera);
@@ -226,6 +255,7 @@ const diagnostics = {
     state: { inMatch, roundRunning, alive, pointerLocked: input.pointerLocked },
     player: {
       position: { ...move.pos },
+      renderPosition: { x: renderMovePos.x, y: renderMovePos.y, z: renderMovePos.z },
       velocity: { x: move.velX, y: move.velY, z: move.velZ },
       grounded: move.grounded, sprinting: move.sprinting, sneaking: move.sneaking,
     },
@@ -246,6 +276,8 @@ const diagnostics = {
     network: {
       pendingInputs: pending.length, inboundKbPerSec: bwShown,
       rttMs: net?.rttMs ?? 0, jitterMs: net?.jitterMs ?? 0, lossPct: net?.lossPct ?? 0,
+      reconciliationHardSnaps, lastReconciliationError, maxReconciliationError,
+      reconciliationSmoothCorrections, maxPredictionStepsPerFrame,
     },
   }),
 };
@@ -259,7 +291,9 @@ function applyRuntimeSettings(): void {
   input.setSettings(settings);
   sfx.setVolumes(settings.masterVolume, settings.effectsVolume, settings.footstepsVolume);
   const ratioCap = settings.graphics === 'low' ? 1 : settings.graphics === 'medium' ? 1.5 : 2;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, ratioCap));
+  adaptiveResolution.reset();
+  renderScale = 1;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, ratioCap) * renderScale);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = settings.graphics !== 'low';
   world?.setGraphicsQuality(settings.graphics);
@@ -367,11 +401,11 @@ async function joinServer(): Promise<void> {
   myName = name;
   resumeToken = localStorage.getItem(`islandResumeToken:${name.toLocaleLowerCase()}`) ?? '';
   sfx.unlock();
-  $('menu-error').textContent = 'Lade Physik und verbinde…';
+  $('menu-error').textContent = 'Lade Physik und kompakte Spielmodelle…';
   setJoinBusy(true);
 
   try {
-    await ensureRapier();
+    await Promise.all([ensureRapier(), gameAssets.preload(renderer)]);
   } catch {
     $('menu-error').textContent = 'Die Spielphysik konnte nicht geladen werden. Bitte Seite neu laden.';
     setJoinBusy(false);
@@ -383,7 +417,13 @@ async function joinServer(): Promise<void> {
   if (manual) url = manual.startsWith('http') ? manual : `http://${manual}`;
   else if (location.port === '5173') url = 'http://localhost:3000'; // vite dev
 
-  net = new Net(url, {
+  net?.dispose();
+  net = null;
+  networkConnected = false;
+  joinedTransportId = '';
+
+  let nextNet!: Net;
+  nextNet = new Net(url, {
     onLobby: (m) => onLobby(m),
     onJoinError: (msg) => {
       $('menu-error').textContent = msg;
@@ -408,7 +448,11 @@ async function joinServer(): Promise<void> {
       inMatch = false;
       hud.showMatchEnd(m.standings, m.totals, m.winnerName, myId, m.winnerId === myId, m.stats);
       document.exitPointerLock?.();
-      recordMatchInProfile(m.standings, m.stats, practiceMatch || !!m.practice);
+      recordProfileMatch({
+        name: myName, playerId: myId, seed: matchSeed ?? 0,
+        rounds: roundsThisMatch, deaths: myDeathsThisMatch,
+        practice: practiceMatch || !!m.practice, standings: m.standings, stats: m.stats,
+      });
       disposeMatchScene();
     },
     onSession: (session: SessionMsg) => {
@@ -424,10 +468,10 @@ async function joinServer(): Promise<void> {
     onConnectionState: (state, detail) => {
       if (state === 'connected') {
         networkConnected = true;
-        const transportId = net?.socket.id ?? '';
-        if (net && transportId && transportId !== joinedTransportId) {
+        const transportId = nextNet.socket.id ?? '';
+        if (transportId && transportId !== joinedTransportId) {
           joinedTransportId = transportId;
-          net.join(myName, resumeToken || undefined);
+          nextNet.join(myName, resumeToken || undefined);
         }
       } else if (state === 'disconnected') {
         networkConnected = false;
@@ -453,78 +497,11 @@ async function joinServer(): Promise<void> {
       }
     },
   });
-  if (net.socket.connected) {
+  net = nextNet;
+  if (nextNet.socket.connected) {
     networkConnected = true;
-    joinedTransportId = net.socket.id ?? '';
-    net.join(myName, resumeToken || undefined);
-  }
-}
-
-// ---------- local profile (§F5) ----------
-function recordMatchInProfile(
-  standings: { id: string; place: number; points: number }[],
-  stats: Record<string, { kills: number; damageDealt: number; damageTaken: number; shotsFired: number; hits: number; headshots: number; pickups: number }>,
-  practice: boolean,
-): void {
-  const mine = standings.find((entry) => entry.id === myId);
-  if (!mine || !myName) return;
-  const myStats = stats[myId]
-    ?? { kills: 0, damageDealt: 0, damageTaken: 0, shotsFired: 0, hits: 0, headshots: 0, pickups: 0 };
-  const merged = mergeMatchIntoProfile(loadProfile(myName), {
-    seed: matchSeed ?? 0,
-    placement: mine.place,
-    points: mine.points,
-    players: standings.length,
-    rounds: roundsThisMatch,
-    deaths: myDeathsThisMatch,
-    stats: myStats,
-    practice,
-  });
-  saveProfile(myName, merged);
-}
-
-function renderProfile(name: string): void {
-  const profile = loadProfile(name);
-  const c = profile.career;
-  $('profile-name').textContent = name ? `Karriere von ${name} (nur echte Matches)` : 'Bitte zuerst einen Namen eingeben.';
-  const winRate = c.matches > 0 ? `${Math.round((c.wins / c.matches) * 100)}%` : '—';
-  const accuracy = accuracyPct(c);
-  const hsPct = c.hits > 0 ? `${Math.round((c.headshots / c.hits) * 100)}%` : '—';
-  const tiles: [string, string][] = [
-    ['Matches', String(c.matches)],
-    ['Siege', `${c.wins} (${winRate})`],
-    ['K/D', kdRatio(c)],
-    ['Kills', String(c.kills)],
-    ['Präzision', accuracy === null ? '—' : `${accuracy}%`],
-    ['Kopftreffer', hsPct],
-    ['Schaden', String(c.damageDealt)],
-    ['Beste Platzierung', c.bestPlacement > 0 ? `${c.bestPlacement}.` : '—'],
-  ];
-  $('profile-tiles').innerHTML = '';
-  for (const [label, value] of tiles) {
-    const tile = document.createElement('div');
-    tile.className = 'profile-tile';
-    const v = document.createElement('strong');
-    v.textContent = value;
-    const l = document.createElement('span');
-    l.textContent = label;
-    tile.append(v, l);
-    $('profile-tiles').appendChild(tile);
-  }
-  const body = $('profile-history-body');
-  body.innerHTML = '';
-  if (profile.history.length === 0) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" style="color:#9fb3c4">Noch keine Matches gespielt.</td>';
-    body.appendChild(tr);
-  }
-  for (const entry of profile.history) {
-    const tr = document.createElement('tr');
-    const date = new Date(entry.date);
-    const dateText = `${date.getDate().toString().padStart(2, '0')}.${(date.getMonth() + 1).toString().padStart(2, '0')}. ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-    tr.innerHTML = `<td></td><td>${entry.placement}. / ${entry.players}</td><td>${entry.kills}</td><td>${entry.damageDealt}</td><td>${entry.points}</td><td>${entry.practice ? '<span class="practice-badge">Übung</span>' : ''}</td>`;
-    (tr.children[0] as HTMLElement).textContent = dateText;
-    body.appendChild(tr);
+    joinedTransportId = nextNet.socket.id ?? '';
+    nextNet.join(myName, resumeToken || undefined);
   }
 }
 
@@ -542,7 +519,8 @@ $('profile-back-btn').addEventListener('click', () => {
 $('practice-btn').addEventListener('click', () => {
   const bots = Number(($('practice-bots') as HTMLSelectElement).value);
   const difficulty = ($('practice-difficulty') as HTMLSelectElement).value as BotDifficulty;
-  net?.startPractice(bots, difficulty);
+  const mode = ($('match-mode') as HTMLSelectElement).value as MatchMode;
+  net?.startPractice(bots, difficulty, mode);
   sfx.play('click');
 });
 
@@ -552,7 +530,10 @@ $('ready-btn').addEventListener('click', () => {
   net?.setReady(myReady);
   sfx.play('click');
 });
-$('start-btn').addEventListener('click', () => { net?.startMatch(); sfx.play('click'); });
+$('start-btn').addEventListener('click', () => {
+  net?.startMatch(($('match-mode') as HTMLSelectElement).value as MatchMode);
+  sfx.play('click');
+});
 $('rematch-btn').addEventListener('click', () => {
   net?.rematch();
   hud.hideScoreboard();
@@ -595,6 +576,7 @@ function onLobby(m: LobbyStateMsg): void {
   const startBtn = $('start-btn') as HTMLButtonElement;
   startBtn.style.display = isHost ? 'block' : 'none';
   startBtn.disabled = !m.canStart;
+  $('mode-block').style.display = isHost ? 'flex' : 'none';
   $('practice-block').style.display = isHost ? 'block' : 'none';
   const maxBots = Math.max(1, 5 - m.players.length);
   for (const opt of ($('practice-bots') as HTMLSelectElement).options) {
@@ -611,6 +593,9 @@ function onMatchStart(m: MatchStartMsg): void {
   }
   disposeMatchScene();
   inMatch = true;
+  matchMode = m.mode;
+  matchPace = MATCH_MODE_PACE[matchMode];
+  onboarding.start(!!m.practice);
   matchSeed = m.seed;
   visualElapsed = 0;
   sfx.setSeed(m.seed);
@@ -647,7 +632,6 @@ function onRoundStart(m: RoundStartMsg): void {
   alive = true;
   myWeapon = 'fists';
   pending = [];
-  predicted.clear();
   remoteBufs.clear();
   remoteFootsteps.clear();
   localFootstepDistance = 0;
@@ -669,6 +653,12 @@ function onRoundStart(m: RoundStartMsg): void {
   breath = SCOPE_BREATH_MAX;
   flashLevel = 0; flashDecay = 0;
   nextCookBeepAt = 0;
+  inputAccumulator = 0;
+  reconciliationHardSnaps = 0;
+  reconciliationSmoothCorrections = 0;
+  lastReconciliationError = 0;
+  maxReconciliationError = 0;
+  maxPredictionStepsPerFrame = 0;
   hud.setFlashWhiteout(0);
   hud.setCooking(null, GRENADE_FUSE);
   hud.setScoped(false);
@@ -679,6 +669,8 @@ function onRoundStart(m: RoundStartMsg): void {
   const sp = gen.spawns[spawnIdx];
   const y = sampleHeight(gen.params, sp.x, sp.z);
   move = freshMoveState({ x: sp.x, y: y + 0.1, z: sp.z });
+  resetRenderMovePosition();
+  onboardingOrigin = { x: sp.x, z: sp.z };
   phys.setPlayerSneaking(myId, false, move.pos);
   phys.setPlayerPos(myId, move.pos);
   input.yaw = Math.atan2(-(-sp.x), -(-sp.z)); // face island center
@@ -741,10 +733,6 @@ function reconcile(self: SnapPlayer): void {
 
   // drop acknowledged inputs
   pending = pending.filter((i) => i.seq > self.lastSeq);
-  for (const s of [...predicted.keys()]) if (s < self.lastSeq) predicted.delete(s);
-
-  const pred = predicted.get(self.lastSeq);
-  if (!pred && !forceAuthority) return;
   if (forceAuthority) {
     move.pos = { x: self.x, y: self.y, z: self.z };
     move.velX = self.vx; move.velY = self.vy; move.velZ = self.vz;
@@ -753,33 +741,68 @@ function reconcile(self: SnapPlayer): void {
     phys.setPlayerSneaking(myId, move.sneaking, move.pos);
     phys.setPlayerPos(myId, move.pos);
     pending = [];
-    predicted.clear();
+    resetRenderMovePosition();
     forceAuthority = false;
     return;
   }
-  if (!pred) return;
-  const err = Math.hypot(pred.x - self.x, pred.y - self.y, pred.z - self.z);
-  if (err > RECONCILE_SNAP_DIST) {
-    // snap-back: adopt authority, replay unacknowledged inputs (§8)
-    move.pos = { x: self.x, y: self.y, z: self.z };
-    move.velX = self.vx;
-    move.velY = self.vy;
-    move.velZ = self.vz;
-    move.grounded = self.grounded;
-    move.stamina = self.stamina;
-    move.sprinting = self.sprinting;
-    move.sneaking = self.sneaking;
-    phys.setPlayerSneaking(myId, move.sneaking, move.pos);
-    phys.setPlayerPos(myId, move.pos);
-    for (const inp of pending) stepMovement(phys, myId, move, inp);
+
+  const beforeX = move.pos.x;
+  const beforeY = move.pos.y;
+  const beforeZ = move.pos.z;
+  const visibleX = renderMovePos.x;
+  const visibleY = renderMovePos.y;
+  const visibleZ = renderMovePos.z;
+
+  // Rebuild the predicted present from the authoritative snapshot and only
+  // the inputs that the server has not acknowledged yet. A snapshot can reuse
+  // one input sequence for several server ticks, so comparing its current
+  // position with the historical position stored for that sequence is invalid.
+  move.pos = { x: self.x, y: self.y, z: self.z };
+  move.velX = self.vx;
+  move.velY = self.vy;
+  move.velZ = self.vz;
+  move.grounded = self.grounded;
+  move.stamina = self.stamina;
+  move.sprinting = self.sprinting;
+  move.sneaking = self.sneaking;
+  phys.setPlayerSneaking(myId, move.sneaking, move.pos);
+  phys.setPlayerPos(myId, move.pos);
+
+  let replayPreviousX = move.pos.x;
+  let replayPreviousY = move.pos.y;
+  let replayPreviousZ = move.pos.z;
+  for (const inp of pending) {
+    replayPreviousX = move.pos.x;
+    replayPreviousY = move.pos.y;
+    replayPreviousZ = move.pos.z;
+    stepMovement(phys, myId, move, inp);
   }
-  predicted.delete(self.lastSeq);
+
+  const err = Math.hypot(beforeX - move.pos.x, beforeY - move.pos.y, beforeZ - move.pos.z);
+  lastReconciliationError = err;
+  maxReconciliationError = Math.max(maxReconciliationError, err);
+  if (err > RECONCILE_SNAP_DIST) {
+    reconciliationSmoothCorrections += 1;
+  }
+
+  previousMovePos.set(replayPreviousX, replayPreviousY, replayPreviousZ);
+  const inputStep = 1 / SERVER_TICK_HZ;
+  const alpha = Math.min(1, inputAccumulator / inputStep);
+  const correctedRenderX = THREE.MathUtils.lerp(previousMovePos.x, move.pos.x, alpha);
+  const correctedRenderY = THREE.MathUtils.lerp(previousMovePos.y, move.pos.y, alpha);
+  const correctedRenderZ = THREE.MathUtils.lerp(previousMovePos.z, move.pos.z, alpha);
+  renderCorrection.set(
+    visibleX - correctedRenderX,
+    visibleY - correctedRenderY,
+    visibleZ - correctedRenderZ,
+  );
 }
 
 function enterSpectator(): void {
-  hud.setSpectating(true);
   entities?.setViewVisible(false);
-  specPos.set(move.pos.x, move.pos.y + 14, move.pos.z + 10);
+  specPos.set(renderMovePos.x, Math.max(2, renderMovePos.y + 4), renderMovePos.z);
+  spectateYaw = input.yaw;
+  hud.setSpectating(true);
 }
 
 // ---------- events ----------
@@ -904,6 +927,7 @@ function onEvent(e: GameEvent): void {
       if (e.by === myId) {
         playPickupSound(e);
         hud.punchPickup();
+        onboarding.signal('loot');
       }
       break;
     case 'resource':
@@ -1018,13 +1042,19 @@ function frame(): void {
   dt = Math.min(dt, 0.1);
   visualElapsed += dt;
 
-  if (!world || !entities || !phys || !net) { renderer.clear(); return; }
+  if (input.debugToggled) {
+    showDebug = !showDebug;
+    input.debugToggled = false;
+  }
+
+  if (!world || !entities || !phys || !net) { input.clearEdges(); renderer.clear(); return; }
 
   const t = lastSnap ? snapClock.t + (now - snapClock.at) / 1000 : 0;
 
   const aimable = myWeapon === 'bow' || myWeapon === 'pistol'
     || myWeapon === 'rifle' || myWeapon === 'shotgun' || myWeapon === 'sniper';
   const aiming = roundRunning && alive && input.aim && aimable && !wasReloading;
+  if (aiming) onboarding.signal('aim');
   entities.setAiming(aiming);
   $('hud').classList.toggle('aiming', aiming);
 
@@ -1063,55 +1093,97 @@ function frame(): void {
 
   // --- input → predict → send ---
   if (roundRunning && alive && inMatch && networkConnected) {
-    const inp: InputMsg = {
-      seq: ++seq,
-      dt: Math.min(dt, MAX_INPUT_DT),
-      mx: input.pointerLocked ? input.moveX : 0,
-      mz: input.pointerLocked ? input.moveZ : 0,
-      // scope sway is baked into the transmitted view so the host raycast sees it (§F1)
-      yaw: input.yaw + swayYaw,
-      pitch: input.pitch + swayPitch,
-      sprint: input.sprint && !aiming,
-      sneak: input.pointerLocked && input.sneak,
-      aim: aiming,
-      jump: input.pointerLocked && input.jumpHeld,
-      fire: input.fire,
-      interact: input.interact,
-    };
-    if (input.slotPressed) {
-      // pressing 3 while the throwable is already up cycles frag → smoke → flash (§F2)
-      if (input.slotPressed === 3 && lastInv?.active === 3) inp.throwCycle = true;
-      else inp.slot = input.slotPressed;
-    }
-    if (input.reloadPressed) inp.reload = true;
-    stepMovement(phys, myId, move, inp);
-    predicted.set(inp.seq, { ...move.pos });
-    pending.push(inp);
-    net.sendInput(inp);
-    phys.step();
-    updateLocalFootsteps(dt);
+    const inputStep = 1 / SERVER_TICK_HZ;
+    // Fixed simulation remains in lockstep with the authoritative server. Keep
+    // up to three catch-up ticks after a slow frame instead of dropping time.
+    inputAccumulator = Math.min(inputAccumulator + dt, inputStep * 3);
+    let predictionStepsThisFrame = 0;
+    while (inputAccumulator >= inputStep) {
+      inputAccumulator -= inputStep;
+      predictionStepsThisFrame += 1;
+      const inp: InputMsg = {
+        seq: ++seq,
+        dt: inputStep,
+        mx: input.pointerLocked ? input.moveX : 0,
+        mz: input.pointerLocked ? input.moveZ : 0,
+        // scope sway is baked into the transmitted view so the host raycast sees it (§F1)
+        yaw: input.yaw + swayYaw,
+        pitch: input.pitch + swayPitch,
+        sprint: input.sprint && !aiming,
+        sneak: input.pointerLocked && input.sneak,
+        aim: aiming,
+        jump: input.pointerLocked && input.jumpHeld,
+        fire: input.fire,
+        interact: input.interact,
+      };
+      // Preserve a complete press/release that happened between two 30-Hz
+      // samples (important for quick clicks and cooked-grenade release).
+      if (input.firePressed && input.fireReleased && !input.fire) {
+        net.sendInput({ ...inp, fire: true });
+        inp.seq = ++seq;
+      }
+      if (input.slotPressed) {
+        // pressing 3 while the throwable is already up cycles frag → smoke → flash (§F2)
+        if (input.slotPressed === 3 && lastInv?.active === 3) inp.throwCycle = true;
+        else inp.slot = input.slotPressed;
+      }
+      if (input.reloadPressed) inp.reload = true;
+      previousMovePos.set(move.pos.x, move.pos.y, move.pos.z);
+      stepMovement(phys, myId, move, inp);
+      pending.push(inp);
+      net.sendInput(inp);
+      phys.step(inputStep);
+      updateLocalFootsteps(inputStep);
 
-    if (input.craftPressed) net.craft(input.craftPressed);
-    if (input.bandagePressed) { net.useBandage(); bandageStart = now; }
+      if (input.craftPressed) net.craft(input.craftPressed);
+      if (input.bandagePressed) { net.useBandage(); bandageStart = now; }
+      input.clearEdges();
+    }
+    maxPredictionStepsPerFrame = Math.max(maxPredictionStepsPerFrame, predictionStepsThisFrame);
+
+    // Render one simulation tick behind and interpolate at display refresh
+    // rate. This removes the visible 30-Hz stair-step without changing physics.
+    const renderAlpha = Math.min(1, inputAccumulator / inputStep);
+    renderMovePos.set(
+      THREE.MathUtils.lerp(previousMovePos.x, move.pos.x, renderAlpha),
+      THREE.MathUtils.lerp(previousMovePos.y, move.pos.y, renderAlpha),
+      THREE.MathUtils.lerp(previousMovePos.z, move.pos.z, renderAlpha),
+    );
+    renderMovePos.add(renderCorrection);
+    const correctionLength = renderCorrection.length();
+    if (correctionLength > 0) {
+      const remaining = Math.max(0, correctionLength - 4 * dt);
+      renderCorrection.multiplyScalar(remaining / correctionLength);
+    }
 
     const targetEyeHeight = move.sneaking ? PLAYER_SNEAK_EYE_HEIGHT : PLAYER_EYE_HEIGHT;
     const eyeEase = reduceMotion ? 1 : 1 - Math.exp(-dt * 13);
     cameraEyeHeight += (targetEyeHeight - cameraEyeHeight) * eyeEase;
-    camera.position.set(move.pos.x, move.pos.y + cameraEyeHeight, move.pos.z);
+    camera.position.set(renderMovePos.x, renderMovePos.y + cameraEyeHeight, renderMovePos.z);
     camera.rotation.set(0, 0, 0);
     camera.rotateY(input.yaw + swayYaw);
     camera.rotateX(input.pitch + swayPitch);
-    world.updateLocalCover(move.pos.x, move.pos.z);
+    world.updateLocalCover(renderMovePos.x, renderMovePos.z);
+    if (onboardingOrigin && Math.hypot(move.pos.x - onboardingOrigin.x, move.pos.z - onboardingOrigin.z) > 2) {
+      onboarding.signal('move');
+      onboardingOrigin = null;
+    }
+    if (localBushId !== null) onboarding.signal('cover');
   } else if (roundRunning && !alive) {
-    // spectator free camera (§0 B3)
-    const speed = 22 * dt;
-    const sin = Math.sin(input.yaw), cos = Math.cos(input.yaw);
-    const fwd = new THREE.Vector3(-sin * Math.cos(input.pitch), Math.sin(input.pitch), -cos * Math.cos(input.pitch));
-    const right = new THREE.Vector3(cos, 0, -sin);
-    specPos.addScaledVector(fwd, input.moveZ * speed);
-    specPos.addScaledVector(right, input.moveX * speed);
-    if (input.jumpHeld) specPos.y += speed;
-    specPos.y = Math.max(2, Math.min(120, specPos.y));
+    // Local freecam movement runs on every render frame and therefore remains
+    // smooth regardless of the server's 20 Hz snapshot cadence.
+    const controlsActive = input.pointerLocked;
+    updateFreecam(specPos, {
+      moveX: controlsActive ? input.moveX : 0,
+      moveZ: controlsActive ? input.moveZ : 0,
+      rise: controlsActive && input.jumpHeld,
+      descend: controlsActive && input.sneak,
+      yaw: input.yaw,
+      pitch: input.pitch,
+      speed: input.sprint ? FREECAM_FAST_SPEED : FREECAM_SPEED,
+      dt,
+    });
+    spectateYaw = input.yaw;
     camera.position.copy(specPos);
     camera.rotation.set(0, 0, 0);
     camera.rotateY(input.yaw);
@@ -1167,7 +1239,7 @@ function frame(): void {
     hud.setFlashWhiteout(flashLevel);
   }
   if (lastSnap) {
-    world.update(t, lastSnap.zone.radius, lastSnap.zone.targetRadius);
+    world.update(t * matchPace, lastSnap.zone.radius, lastSnap.zone.targetRadius);
     entities.syncSmokes(lastSnap.smokes, t);
     hud.setTimer(t, lastSnap.phase);
     hud.setZoneInfo(lastSnap.zone, t);
@@ -1198,7 +1270,8 @@ function frame(): void {
       }
     }
     hud.drawMinimap(
-      alive ? move.pos.x : specPos.x, alive ? move.pos.z : specPos.z, input.yaw,
+      alive ? renderMovePos.x : specPos.x, alive ? renderMovePos.z : specPos.z,
+      alive ? input.yaw : spectateYaw,
       lastSnap.zone, lastSnap.pings, lastSnap.care, t,
     );
   }
@@ -1206,7 +1279,6 @@ function frame(): void {
   entities.update(dt, visualElapsed);
 
   // --- F3 debug ---
-  if (input.debugToggled) showDebug = !showDebug;
   fpsAcc += dt; fpsFrames++;
   if (fpsAcc >= 0.5) {
     fpsShown = Math.round(fpsFrames / fpsAcc);
@@ -1214,17 +1286,26 @@ function frame(): void {
     net.bytesIn = 0;
     fpsAcc = 0; fpsFrames = 0;
   }
+  if (roundRunning && !document.hidden) {
+    const sample = adaptiveResolution.sample(dt);
+    if (sample?.changed) {
+      renderScale = sample.scale;
+      const ratioCap = settings.graphics === 'low' ? 1 : settings.graphics === 'medium' ? 1.5 : 2;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, ratioCap) * renderScale);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+  }
   const entityStats = entities.stats();
   const physicsStats = phys.stats();
   hud.setDebug(showDebug
-    ? `FPS ${fpsShown} · calls ${renderer.info.render.calls} · tris ${renderer.info.render.triangles}\n`
+    ? `FPS ${fpsShown} · render ${Math.round(renderScale * 100)}% · calls ${renderer.info.render.calls} · tris ${renderer.info.render.triangles}\n`
       + `pos ${move.pos.x.toFixed(1)} ${move.pos.y.toFixed(1)} ${move.pos.z.toFixed(1)} · vel ${Math.hypot(move.velX, move.velZ).toFixed(1)}\n`
       + `entities P${entityStats.players} L${entityStats.pickups} J${entityStats.projectiles} FX${entityStats.effects}\n`
       + `Rapier bodies ${physicsStats.rigidBodies} · colliders ${physicsStats.colliders} · capsules ${physicsStats.playerCapsules}\n`
       + `net ↓ ${bwShown} kB/s · ${net.rttMs.toFixed(0)} ms ±${net.jitterMs.toFixed(0)} · loss ${net.lossPct.toFixed(1)}% · pending ${pending.length}`
     : null);
 
-  input.clearEdges();
+  if (!roundRunning || !alive || !inMatch || !networkConnected) input.clearEdges();
   renderer.render(world.scene, camera);
 }
 
@@ -1242,4 +1323,5 @@ renderer.domElement.addEventListener('click', () => {
 });
 
 // ---------- boot ----------
+window.addEventListener('beforeunload', () => net?.dispose(), { once: true });
 requestAnimationFrame(frame);

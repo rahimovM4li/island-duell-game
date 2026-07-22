@@ -188,7 +188,8 @@ export class GamePhysics {
   }
 
   /** Refresh spatial query structures after collider moves. Call once per tick. */
-  step(): void {
+  step(dt?: number): void {
+    if (dt !== undefined) this.world.timestep = dt;
     this.world.step();
   }
 

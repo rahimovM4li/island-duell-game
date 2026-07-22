@@ -253,7 +253,13 @@
     <canvas id="minimap" width="320" height="320"></canvas>
     <div id="killfeed"></div>
     <div id="announce"></div>
-    <div id="spectate-label">☠ Zuschauer — Freikamera (WASD + Maus)</div>
+    <aside id="onboarding-tip" aria-live="polite">
+      <button id="onboarding-skip" type="button" aria-label="Einf&uuml;hrung &uuml;berspringen">&times;</button>
+      <div id="onboarding-step"></div>
+      <strong id="onboarding-title"></strong>
+      <p id="onboarding-body"></p>
+    </aside>
+    <div id="spectate-label">Freecam · WASD fliegen · Leertaste hoch · Strg runter · Shift schneller</div>
     <div id="death-recap" role="status" aria-live="polite"></div>
     <div id="interact-hint"><span id="interact-text"></span><div id="interact-progress"><div></div></div></div>
     <div id="heal-progress"><div></div></div>
@@ -308,6 +314,14 @@
       <h2>Lobby</h2>
       <div class="sub">2–5 Spieler · der Host startet das Match, wenn alle bereit sind</div>
       <ul id="lobby-players"></ul>
+      <div id="mode-block" class="practice-row">
+        <label>Matchtempo
+          <select id="match-mode">
+            <option value="classic">Klassisch &middot; 8&ndash;11 Min.</option>
+            <option value="quick" selected>Schnell &middot; 5&ndash;7 Min.</option>
+          </select>
+        </label>
+      </div>
       <button id="ready-btn" class="secondary">Bereit</button>
       <button id="start-btn" disabled>Match starten</button>
       <div id="practice-block">

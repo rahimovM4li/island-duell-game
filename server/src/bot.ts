@@ -43,6 +43,8 @@ export interface BotCtx {
   zone: { radius: number; target: number; shrinking: boolean };
   /** Best loot candidate as scored by the host (null when nothing worthwhile). */
   loot: BotLootTarget | null;
+  /** A host-selected point hidden behind real world collision geometry. */
+  cover: { x: number; z: number } | null;
   rng: Rng;
   diff: BotDifficultyDef;
 }
@@ -122,15 +124,24 @@ function baseInput(mem: BotMemory): InputMsg {
   };
 }
 
-function bestRangedSlot(self: BotSelfView): 1 | 2 | null {
+export function scoreBotWeapon(type: WeaponType, distance: number, supply: number): number {
+  const def = WEAPONS[type];
+  if (def.kind === 'melee' || supply <= 0) return -1;
+  const dps = def.damage * (def.pellets ?? 1) / Math.max(0.2, def.cooldown);
+  let rangeFactor = distance <= def.range ? 1 : 0.08;
+  if (type === 'shotgun') rangeFactor *= distance < 10 ? 1.8 : distance < 18 ? 0.65 : 0.12;
+  else if (type === 'sniper') rangeFactor *= distance < 12 ? 0.22 : distance > 34 ? 1.65 : 1;
+  else if (type === 'rifle') rangeFactor *= distance > 14 && distance < 55 ? 1.3 : 0.9;
+  else if (type === 'pistol') rangeFactor *= distance < 24 ? 1.15 : 0.65;
+  else if (type === 'bow') rangeFactor *= distance > 10 ? 1.15 : 0.75;
+  return dps * rangeFactor + Math.min(20, supply) * 0.1;
+}
+
+function bestRangedSlot(self: BotSelfView, distance = 25): 1 | 2 | null {
   const score = (s: { type: WeaponType; mag: number } | null): number => {
     if (!s) return -1;
-    const def = WEAPONS[s.type];
-    if (def.kind === 'melee') return -1;
     const supply = s.mag + self.reserveAmmo(s.type);
-    if (supply <= 0) return -1;
-    // prefer higher sustained damage; sniper valued but not while blind-close
-    return def.damage * (def.pellets ?? 1) / Math.max(0.2, def.cooldown) + supply * 0.1;
+    return scoreBotWeapon(s.type, distance, supply);
   };
   const p = score(self.primary), s = score(self.secondary);
   if (p < 0 && s < 0) return null;
@@ -276,7 +287,7 @@ export function computeBotInput(mem: BotMemory, ctx: BotCtx): BotDecision {
     mem.state = losing ? 'flee' : 'engage';
 
     // choose a weapon for the range
-    const ranged = bestRangedSlot(self);
+    const ranged = bestRangedSlot(self, enemy.dist);
     const melee = meleeSlot(self);
     let desiredSlot: 1 | 2 | null = null;
     if (ranged) {
@@ -299,7 +310,15 @@ export function computeBotInput(mem: BotMemory, ctx: BotCtx): BotDecision {
     inp.mx = mem.strafeDir;
     const meleeType = desiredSlot !== null ? weaponInSlot(self, desiredSlot) : null;
     const usingMelee = meleeType !== null && WEAPONS[meleeType].kind === 'melee';
-    if (losing) inp.mz = -1;
+    if (losing && ctx.cover) {
+      const dx = ctx.cover.x - self.pos.x;
+      const dz = ctx.cover.z - self.pos.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const wx = dx / len, wz = dz / len;
+      const sin = Math.sin(mem.yaw), cos = Math.cos(mem.yaw);
+      inp.mx = wx * cos + wz * -sin;
+      inp.mz = wx * -sin + wz * -cos;
+    } else if (losing) inp.mz = -1;
     else if (usingMelee || enemy.dist > 34) inp.mz = 1;
     else if (enemy.dist < 7 && !usingMelee) inp.mz = -0.6;
     else inp.mz = ctx.rng() < ctx.diff.aggression ? 0.6 : 0;

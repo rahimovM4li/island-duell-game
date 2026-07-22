@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   cookRemainingFuse, flashIntensityAt, nextOwnedThrow, segmentThroughSphere,
-} from '../server/src/game';
+} from '../server/src/throwables';
 import {
   FLASH_BACK_FACTOR, FLASH_RADIUS, GRENADE_FUSE, GRENADE_MIN_THROW_FUSE,
   SMOKE_RADIUS, WEAPONS,

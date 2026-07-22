@@ -106,6 +106,9 @@ export class Hud {
     $('plates-row').textContent = inv.plates > 0 ? `Panzerung ${'■'.repeat(inv.plates)} · nächster Treffer −20%` : 'Keine Panzerung';
     $('mats-row').textContent =
       `Holz ${inv.mats.wood}  ·  Stein ${inv.mats.stone}  ·  Fasern ${inv.mats.fiber}`;
+    const hasMaterials = inv.mats.wood + inv.mats.stone + inv.mats.fiber > 0;
+    $('mats-row').style.display = hasMaterials ? 'block' : 'none';
+    $('craft-recipes').style.display = hasMaterials ? 'flex' : 'none';
     const affordable = {
       arrows: inv.mats.wood >= 2,
       bandage: inv.mats.fiber >= 2,
@@ -225,7 +228,9 @@ export class Hud {
   }
 
   setSpectating(v: boolean): void {
-    $('spectate-label').style.display = v ? 'block' : 'none';
+    const label = $('spectate-label');
+    label.style.display = v ? 'block' : 'none';
+    if (v) label.textContent = 'Freecam \u00b7 WASD fliegen \u00b7 Leertaste hoch \u00b7 Strg runter \u00b7 Shift schneller';
   }
 
   showDeathRecap(text: string): void {

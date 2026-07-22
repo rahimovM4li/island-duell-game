@@ -89,4 +89,12 @@ describe('zone (§6.3)', () => {
     const z = zoneAt(FINAL_COLLAPSE_AT + 60, 4);
     expect(z.radius).toBe(1.5);
   });
+
+  it('quick mode compresses time without changing the zone geometry', () => {
+    const pace = 1.75;
+    expect(phaseAt(180 / pace, pace)).toBe('closing');
+    expect(zoneAt(SHRINK1_AT / pace + 22.5 / pace, 3, pace).radius)
+      .toBeCloseTo(zoneAt(SHRINK1_AT + 22.5, 3).radius);
+    expect(zoneSteps(3, pace)[0].at).toBeCloseTo(SHRINK1_AT / pace);
+  });
 });

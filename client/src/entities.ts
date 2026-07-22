@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { WEAPONS, type WeaponType } from '@shared/constants';
 import type { PickupInfo, SmokeSnap, SnapProjectile } from '@shared/protocol';
 import { deriveSeed, mulberry32, type Rng } from '@shared/rng';
+import { gameAssets, isSharedAssetResource } from './game-assets';
 
 const PLAYER_COLORS = [0xe5484d, 0x3d9df2, 0x46c46e, 0xd8b43a, 0xb26ee0];
 const HIT_FLASH_BODY = new THREE.Color(0xffffff);
@@ -103,7 +104,7 @@ function addCone(
 }
 
 /** Readable low-poly silhouettes. All ranged weapons point toward -Z. */
-function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
+function proceduralWeaponModel(weapon: WeaponType | 'none'): THREE.Group {
   const g = new THREE.Group();
   const dark = 0x26313a, steel = 0xc4ced5, wood = 0x7a5030, grip = 0x171d22;
   const bluedSteel = 0x3a444d, brass = 0xd9a441, leather = 0x5a3d28;
@@ -214,6 +215,10 @@ function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
     }
   }
   return g;
+}
+
+function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
+  return gameAssets.cloneWeapon(weapon) ?? proceduralWeaponModel(weapon);
 }
 
 function crateModel(color: number, care = false): THREE.Group {
@@ -354,17 +359,25 @@ function viewmodelFor(weapon: WeaponType | 'none'): THREE.Group {
 }
 
 function disposeObject(root: THREE.Object3D): void {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  const textures = new Set<THREE.Texture>();
   root.traverse((obj) => {
     const renderable = obj as THREE.Mesh & THREE.Sprite;
-    if (!renderable.isSprite) renderable.geometry?.dispose();
+    if (!renderable.isSprite && renderable.geometry && !isSharedAssetResource(renderable.geometry)) {
+      geometries.add(renderable.geometry);
+    }
     const mats = Array.isArray(renderable.material)
       ? renderable.material : renderable.material ? [renderable.material] : [];
     for (const mat of mats) {
       const withMap = mat as THREE.Material & { map?: THREE.Texture };
-      withMap.map?.dispose();
-      mat.dispose();
+      if (withMap.map && !isSharedAssetResource(withMap.map)) textures.add(withMap.map);
+      if (!isSharedAssetResource(mat)) materials.add(mat);
     }
   });
+  textures.forEach((texture) => texture.dispose());
+  materials.forEach((mat) => mat.dispose());
+  geometries.forEach((geometry) => geometry.dispose());
 }
 
 function setObjectOpacity(root: THREE.Object3D, opacity: number): void {
@@ -639,7 +652,10 @@ export class Entities {
   }
 
   // ---------- smoke clouds (§F2) ----------
-  private smokeClouds = new Map<number, { group: THREE.Group; puffs: THREE.Mesh[] }>();
+  private smokeGeometry = new THREE.SphereGeometry(1, 8, 6);
+  private smokeClouds = new Map<number, {
+    group: THREE.Group; puffs: THREE.Mesh[]; material: THREE.MeshLambertMaterial;
+  }>();
 
   /** Mirror the host's active smoke clouds; grow in, hold, fade out near expiry. */
   syncSmokes(smokes: SmokeSnap[], t: number): void {
@@ -650,15 +666,14 @@ export class Entities {
       if (!entry) {
         const group = new THREE.Group();
         const puffs: THREE.Mesh[] = [];
+        const smokeMaterial = new THREE.MeshLambertMaterial({
+          color: 0xb9c2c9, transparent: true, opacity: 0, depthWrite: false,
+        });
         const puffRng = mulberry32(cloud.id + 77);
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < 5; i++) {
           const r = cloud.radius * (0.42 + puffRng() * 0.3);
-          const puff = new THREE.Mesh(
-            new THREE.SphereGeometry(r, 10, 8),
-            new THREE.MeshLambertMaterial({
-              color: 0xb9c2c9, transparent: true, opacity: 0, depthWrite: false,
-            }),
-          );
+          const puff = new THREE.Mesh(this.smokeGeometry, smokeMaterial);
+          puff.scale.setScalar(r);
           puff.position.set(
             (puffRng() - 0.5) * cloud.radius * 1.1,
             (puffRng() - 0.35) * cloud.radius * 0.75,
@@ -669,7 +684,7 @@ export class Entities {
         }
         group.position.set(cloud.x, cloud.y, cloud.z);
         this.scene.add(group);
-        entry = { group, puffs };
+        entry = { group, puffs, material: smokeMaterial };
         this.smokeClouds.set(cloud.id, entry);
       }
       const age = t - cloud.bornAt;
@@ -685,7 +700,8 @@ export class Entities {
     for (const [id, entry] of this.smokeClouds) {
       if (!seen.has(id)) {
         this.scene.remove(entry.group);
-        disposeObject(entry.group);
+        entry.material.dispose();
+        entry.group.clear();
         this.smokeClouds.delete(id);
       }
     }
@@ -874,6 +890,7 @@ export class Entities {
     this.clearPickups();
     this.clearProjectiles();
     this.clearSmokes();
+    this.smokeGeometry.dispose();
     for (const f of this.fx) { this.scene.remove(f.obj); disposeObject(f.obj); }
     this.fx.length = 0;
     if (this.careBeacon) { this.scene.remove(this.careBeacon); disposeObject(this.careBeacon); }

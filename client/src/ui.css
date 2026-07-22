@@ -245,6 +245,30 @@ button.secondary:hover:not(:disabled) { background: #31505e; }
 }
 #controls-hint kbd { margin-left: 7px; background: transparent; color: var(--accent); font: inherit; font-weight: 750; }
 
+#onboarding-tip {
+  position: absolute;
+  left: 18px;
+  top: 84px;
+  width: min(310px, calc(100vw - 36px));
+  padding: 13px 42px 13px 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--surface);
+  box-shadow: 0 8px 28px rgba(0,0,0,.3);
+  opacity: 0;
+  transform: translateX(-16px);
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
+  pointer-events: none;
+}
+#onboarding-tip.visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
+#onboarding-step { color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+#onboarding-title { display: block; margin-top: 3px; color: var(--ink); font-size: 14px; }
+#onboarding-body { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+#onboarding-skip {
+  position: absolute; right: 7px; top: 5px; width: 28px; height: 28px; margin: 0; padding: 0;
+  background: transparent; color: var(--muted); font-size: 18px;
+}
+
 #scoreboard-screen .panel { width: min(100%, 820px); min-width: 0; }
 table.scores th, table.scores td { padding: 9px 10px; border-bottom: 1px solid var(--line); }
 table.scores th { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 0; text-transform: none; }

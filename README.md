@@ -28,13 +28,15 @@ Anderer Port (macOS/Linux): `PORT=4000 npm start`.
 | Strg | Schleichen (kleinere Haltung, langsamer und deutlich leiser) |
 | Leertaste | Springen |
 | Linksklick | Angreifen / Schießen / Granate werfen |
-| Rechte Maustaste | Mit Bogen/Pistole/Gewehr/Schrotflinte zielen |
+| Rechte Maustaste | Mit Bogen/Pistole/Gewehr/Schrotflinte/Scharfschützengewehr zielen |
 | R | Nachladen |
 | 1 / 2 / 3 | Waffenslot 1 / 2 / Wurfslot |
 | E (halten ~1,5 s) | Ressourcen abbauen (Baum→Holz, Fels→Stein, Busch→Fasern); kurz drücken: Waffe tauschen wenn beide Slots voll |
 | H | Verband benutzen (30 HP über 3 s) |
 | 4 / 5 / 6 | Craften: Pfeile (2 Holz) / Verband (2 Fasern) / Panzerplatte (3 Stein) |
 | F3 | Debug-Overlay (FPS, Draw Calls, Dreiecke, Position/Tempo, Entities, Rapier, Netzwerk) |
+| WASD + Maus (als Zuschauer) | Freecam fliegen und umsehen |
+| Leertaste / Strg / Shift (als Zuschauer) | Hoch / runter / schneller fliegen |
 
 Items am Boden werden durch Drüberlaufen aufgehoben.
 Über **Einstellungen** im Hauptmenü oder Pause-Hinweis lassen sich Maus,
@@ -45,6 +47,9 @@ wichtigsten Tasten dauerhaft konfigurieren.
 
 - **Match = 3 Runden.** Platzierungspunkte 3/2/1/0/0; bei N=2 exakt Best-of-3
   (Sieger 3 / Verlierer 0). Gleichstand nach Runde 3 → Sudden-Death-Runde(n).
+- **Zwei Tempi:** Klassisch bleibt bei etwa 8–11 Minuten pro Runde. Schnell
+  komprimiert nur Zone, Licht und Care-Package auf etwa 5–7 Minuten; Bewegung,
+  Feuerrate, Nachladen und Heilung bleiben unverändert.
 - **Rundenablauf:** 0:00–3:00 Looting (Tag) → 3:00–8:00 Closing (Dämmerung,
   Zone schrumpft 3:00 und 6:00) → ab 8:00 Endgame (Nacht, letzte Zone 8:30).
   Finaler Ring: 20 + 5×N m Durchmesser. Zonenschaden 2 → 5 → 10 HP/s.
@@ -68,7 +73,8 @@ wichtigsten Tasten dauerhaft konfigurieren.
 - **Care-Package** bei 5:00 in der Inselmitte (voll geladenes Gewehr).
 - **Double-KO** durch die Zone: wer zuletzt Schaden ausgeteilt hat, gewinnt die
   Runde; sonst geteilte (bessere) Platzierung.
-- Tote Spieler spektieren frei bis zum Rundenende. Rematch = gleiche Lobby,
+- Tote Spieler können bis zum Rundenende mit der Freecam über die Insel fliegen.
+  Rematch = gleiche Lobby,
   neue Insel (neuer Seed). Der Death Recap zeigt Ursache, Distanz, letzten
   Schaden und Rest-HP des Gegners; die Wertung zeigt Kills, Schaden,
   Präzision und Loot.
@@ -80,8 +86,10 @@ wichtigsten Tasten dauerhaft konfigurieren.
 
 ```bash
 npm run dev        # Server (tsx watch, :3000) + Vite-Client (:5173) parallel
+npm run assets:build # 256px-Atlas + Meshopt-GLBs für Waffen und POIs neu erzeugen
 npm run typecheck  # tsc für shared/server/client
 npm test           # Unit-Tests + E2E-Botmatch über echte Sockets
+npm run test:browser # Produktionsbuild + echter Headless-Edge-Smoke-Test
 ```
 
 Der E2E-Test (`tests/match.e2e.test.ts`) spielt mit 5 Bot-Clients ein komplettes
@@ -100,13 +108,15 @@ damit das Aufräumen und Neuaufbauen der Physikwelt.
 shared/   deterministische Spiellogik: Konstanten (§-Balancing), Seed-RNG,
           Terrain (analytische Höhenfunktion), Worldgen, Timeline/Zone,
           Scoring, Protokoll (+Type Guards), Rapier-Physik, Movement-Sim
-server/   Host-autoritativer GameRoom: Lobby, 30-Hz-Tick, Kampf (Melee/
-          Hitscan/Projektile/Granaten), Kampfstatistiken, Reconnect-Sitzungen,
+server/   Host-autoritativer GameRoom: Lobby, fester 30-Hz-Input-/Physik-Tick,
+          begrenzte monotone Input-Queues, Kampf (Melee/Hitscan/Projektile/
+          Granaten), Kampfstatistiken, Reconnect-Sitzungen,
           Zone, Loot/Kisten, Crafting,
           20-Hz-Snapshots, Wertung; Express + Socket.io, dient client/dist aus
 client/   Three.js-Renderer (Chunk-Terrain 8×8 à 32 m, instanzierte Vegetation,
           Tag/Nacht, Nebel), Client-Prediction mit identischer Shared-Sim +
           Snap-Back-Reconciliation, ~100 ms Interpolation für Remote-Spieler,
+          adaptive Renderauflösung, Solo-Onboarding und flüssige Zuschauer-Freecam,
           HUD/Minimap/Death-Recap/Scoreboards, persistente Einstellungen,
           räumliche WebAudio-SFX
 ```
@@ -116,10 +126,23 @@ client/   Three.js-Renderer (Chunk-Terrain 8×8 à 32 m, instanzierte Vegetation
 - Snapshots sind **vollständig** (20 Hz), Events (Schüsse, Treffer, Loot, …)
   kommen zusätzlich als Batch pro Tick. Kein Rollback/Lag-Compensation — LAN.
 
+### Kompakte 3D-Assets
+
+Die erkennbaren Waffenmodelle sowie Strandwrack, Aussichtsposten und Waldbunker
+liegen in zwei Meshopt-komprimierten GLBs unter `client/public/assets/`. Alle
+Modelle verwenden denselben 256×256-PNG-Atlas. Die Dateien werden erst beim
+Beitritt geladen und danach für alle Runden gecacht; Geometrien und Textur werden
+zwischen Instanzen geteilt. Falls ein Download oder die Decodierung fehlschlägt,
+verwendet der Client automatisch die bisherigen prozeduralen Modelle.
+
+`npm run assets:build` erzeugt Atlas und GLBs reproduzierbar aus
+`scripts/build-game-assets.mjs`. Dadurch können Farben, Silhouetten und Details
+ohne Blender-Abhängigkeit angepasst werden.
+
 ## Bewusste Abweichungen vom PRD
 
-- **Grafik:** prozedurale Low-Poly-Meshes statt Kenney-Asset-Pack — das Repo
-  bleibt ohne Downloads/Assets lauffähig.
+- **Grafik:** eigene Low-Poly-GLBs mit gemeinsamem Texturatlas statt
+  Kenney-Asset-Pack; prozedurale Meshes bleiben als Offline-Fallback erhalten.
 - **Sound:** WebAudio-synthetisierte Effekte statt Audiodateien (gleiche
   Begründung).
 - Bogenschütze bekommt Pfeile über Crafting (2 Holz → 4 Pfeile), Pfeilbündel

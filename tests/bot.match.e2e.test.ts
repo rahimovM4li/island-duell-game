@@ -68,7 +68,7 @@ describe('solo practice vs bots over a real socket (accelerated ×40)', () => {
     // a lone human cannot start a normal match…
     expect(lobby!.canStart).toBe(false);
     // …but can start practice with 3 bots
-    sock.emit('startPractice', { bots: 3, difficulty: 'normal' });
+    sock.emit('startPractice', { bots: 3, difficulty: 'normal', mode: 'quick' });
     await until(() => matchStart !== null, 5000, 'practice matchStart');
     expect(matchStart!.practice).toBe(true);
     expect(matchStart!.n).toBe(4);

@@ -1,10 +1,10 @@
 // Message catalog (§8): join, lobbyState, matchStart(N, seed), input,
 // snapshot (20 Hz), event, roundEnd, matchEnd — plus round bookkeeping.
-import type { BotDifficulty, ItemType, Recipe, ThrowKind, WeaponType } from './constants';
+import type { BotDifficulty, ItemType, MatchMode, Recipe, ThrowKind, WeaponType } from './constants';
 import type { CrateTier, VegKind } from './worldgen';
 import type { Phase } from './timeline';
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 // ---------- lobby ----------
 export interface JoinMsg { v: number; name: string; resumeToken?: string }
@@ -29,6 +29,7 @@ export interface MatchStartMsg {
   players: PlayerInfo[];
   /** Present and true for solo-practice matches against bots (§F4). */
   practice?: boolean;
+  mode: MatchMode;
 }
 export interface RoundStartMsg {
   round: number;         // 1-based; > ROUNDS_PER_MATCH ⇒ sudden death
@@ -201,7 +202,8 @@ export const C2S = {
   pingProbe: 'pingProbe',
 } as const;
 
-export interface StartPracticeMsg { bots: number; difficulty: BotDifficulty }
+export interface StartMatchMsg { mode: MatchMode }
+export interface StartPracticeMsg { bots: number; difficulty: BotDifficulty; mode: MatchMode }
 
 export const S2C = {
   lobbyState: 'lobbyState',
@@ -240,7 +242,13 @@ export function isInputMsg(m: unknown): m is InputMsg {
 export function isStartPracticeMsg(m: unknown): m is StartPracticeMsg {
   const x = m as StartPracticeMsg;
   return !!x && isNum(x.bots) && Number.isInteger(x.bots) && x.bots >= 1 && x.bots <= 4
-    && (x.difficulty === 'easy' || x.difficulty === 'normal' || x.difficulty === 'hard');
+    && (x.difficulty === 'easy' || x.difficulty === 'normal' || x.difficulty === 'hard')
+    && (x.mode === 'classic' || x.mode === 'quick');
+}
+
+export function isStartMatchMsg(m: unknown): m is StartMatchMsg {
+  const x = m as StartMatchMsg;
+  return !!x && (x.mode === 'classic' || x.mode === 'quick');
 }
 
 export function isCraftMsg(m: unknown): m is { recipe: Recipe } {

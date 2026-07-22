@@ -1,0 +1,24 @@
+# Installed workspace dependencies and package-manager caches
+node_modules/
+**/node_modules/
+
+# Reproducible production output (`npm run build`)
+client/dist/
+client/public/assets/*.raw.glb
+client/public/assets/*.weld.glb
+
+# Test and tooling output
+coverage/
+playwright-report/
+test-results/
+.vite/
+*.log
+
+# Local-only configuration and editor metadata
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

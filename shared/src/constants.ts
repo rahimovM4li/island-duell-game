@@ -47,6 +47,9 @@ export const scatterCrateCount = (n: number) => 3 * n;
 export const finalRingDiameter = (n: number) => 20 + 5 * n; // m
 
 // ---------- Round timeline (§6.1), seconds ----------
+export type MatchMode = 'classic' | 'quick';
+/** Quick keeps combat physics unchanged and only compresses the world/zone timeline. */
+export const MATCH_MODE_PACE: Record<MatchMode, number> = { classic: 1, quick: 1.75 };
 export const PHASE_LOOT_END = 180; // 3:00
 export const PHASE_CLOSING_END = 480; // 8:00
 export const SHRINK1_AT = 180;

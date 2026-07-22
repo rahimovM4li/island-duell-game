@@ -5,9 +5,10 @@ import { randomBytes } from 'node:crypto';
 import {
   AMMO_CAP, AMMO_PICKUP, ARROWS_PER_CRAFT, BANDAGE_DURATION, BANDAGE_HEAL,
   BANDAGE_USE_TIME, BOT_DIFFICULTIES, BOT_NAMES, BotDifficulty, CARE_PACKAGE_AT,
-  FLASH_BACK_FACTOR, FLASH_FUSE, FLASH_MAX_BLIND, FLASH_RADIUS,
-  GRENADE_FUSE, GRENADE_MIN_THROW_FUSE, GRENADE_RADIUS,
-  INTERACT_HOLD_SECS, INTERACT_RANGE, ItemType, LOUD_PING_SECONDS, MAX_BANDAGES,
+  FLASH_FUSE, FLASH_MAX_BLIND, FLASH_RADIUS,
+  GRENADE_FUSE, GRENADE_RADIUS,
+  INTERACT_HOLD_SECS, INTERACT_RANGE, ItemType, LOUD_PING_SECONDS, MATCH_MODE_PACE,
+  MatchMode, MAX_BANDAGES,
   MAX_FLASH, MAX_GRENADES, MAX_PLATES, MAX_PLAYERS, MAX_PRACTICE_BOTS, MAX_SMOKE,
   MELEE_CONE_COS, MIN_PLAYERS,
   PICKUP_RADIUS, PLATE_DAMAGE_REDUCTION, PLAYER_EYE_HEIGHT, PLAYER_MAX_HP,
@@ -18,10 +19,10 @@ import {
   SNAPSHOT_HZ, THROW_ORDER, THROW_WEAPON, ThrowKind, WEAPONS, WeaponType, AmmoType,
 } from '@shared/constants';
 import { GamePhysics, RapierModule, Vec3 } from '@shared/physics';
-import { freshMoveState, MAX_INPUT_DT, MoveState, stepMovement } from '@shared/movement';
+import { freshMoveState, MoveState, stepMovement } from '@shared/movement';
 import {
   C2S, CombatStats, GameEvent, InputMsg, InventoryState, isCraftMsg, isInputMsg, isJoinMsg,
-  isReadyMsg, isStartPracticeMsg, LobbyStateMsg, PickupInfo, PlacementEntry, PlayerInfo, S2C,
+  isReadyMsg, isStartMatchMsg, isStartPracticeMsg, LobbyStateMsg, PickupInfo, PlacementEntry, PlayerInfo, S2C,
   SmokeSnap, SnapPlayer, SnapProjectile, SnapshotMsg, WeaponSlotState,
 } from '@shared/protocol';
 import { decideMatch, scoreRound } from '@shared/scoring';
@@ -33,6 +34,12 @@ import {
   BotCtx, BotEnemy, BotMemory, computeBotInput, freshBotMemory,
 } from './bot';
 import { equipWeapon, grantStarterAmmo, weaponSlotState } from './inventory';
+import {
+  enqueueServerInput, inputForServerTick, neutralServerInput, ServerInputBuffer,
+} from './input';
+import {
+  cookRemainingFuse, flashIntensityAt, nextOwnedThrow, segmentThroughSphere,
+} from './throwables';
 
 interface Conn {
   socket: Socket;
@@ -75,7 +82,9 @@ interface MatchPlayer {
   pitch: number;
   aiming: boolean;
   lastSeq: number;
-  inputs: InputMsg[];
+  inputBuffer: ServerInputBuffer;
+  lastInput: InputMsg;
+  lastInputAt: number;
   prevInteract: boolean;
   prevFire: boolean;
   inv: Inventory;
@@ -123,44 +132,6 @@ export interface GameRoomOptions {
 
 const dist2d = (ax: number, az: number, bx: number, bz: number) => Math.hypot(ax - bx, az - bz);
 
-// ---------- exported pure helpers (unit-tested; used by the room below) ----------
-
-/** Does the segment from→to pass through the sphere at center with radius? */
-export function segmentThroughSphere(from: Vec3, to: Vec3, center: Vec3, radius: number): boolean {
-  const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
-  const len2 = dx * dx + dy * dy + dz * dz;
-  const px = center.x - from.x, py = center.y - from.y, pz = center.z - from.z;
-  const k = len2 > 0 ? Math.max(0, Math.min(1, (px * dx + py * dy + pz * dz) / len2)) : 0;
-  const cx = px - dx * k, cy = py - dy * k, cz = pz - dz * k;
-  return cx * cx + cy * cy + cz * cz <= radius * radius;
-}
-
-/**
- * Flashbang blind intensity 0..1 from distance and facing (§F2).
- * facing = cos of the angle between the view direction and the direction to
- * the pop; a back-turned player keeps only FLASH_BACK_FACTOR of the effect.
- */
-export function flashIntensityAt(dist: number, facing: number): number {
-  if (dist > FLASH_RADIUS) return 0;
-  const facingFactor = FLASH_BACK_FACTOR + (1 - FLASH_BACK_FACTOR) * Math.max(0, Math.min(1, facing));
-  return Math.min(1, (1 - dist / FLASH_RADIUS) * 1.25) * facingFactor;
-}
-
-/** Fuse left on a cooked frag released at time t (§F3): never below the safety floor. */
-export function cookRemainingFuse(t: number, cookingSince: number): number {
-  return Math.max(GRENADE_MIN_THROW_FUSE, GRENADE_FUSE - (t - cookingSince));
-}
-
-/** Next owned throwable after `current` in frag→smoke→flash order, or current if alone. */
-export function nextOwnedThrow(current: ThrowKind, counts: Record<ThrowKind, number>): ThrowKind {
-  const start = THROW_ORDER.indexOf(current);
-  for (let step = 1; step <= THROW_ORDER.length; step++) {
-    const kind = THROW_ORDER[(start + step) % THROW_ORDER.length];
-    if (counts[kind] > 0) return kind;
-  }
-  return current;
-}
-
 export class GameRoom {
   private io: Server;
   private R: RapierModule;
@@ -196,6 +167,7 @@ export class GameRoom {
   private smokes = new Map<number, SmokeCloud>();
   private smokeSeq = 0;
   private practice = false;
+  private matchMode: MatchMode = 'classic';
   private botDifficulty: BotDifficulty = 'normal';
   private botMems = new Map<string, BotMemory>();
   private matchRoster: PlayerInfo[] = [];
@@ -236,7 +208,12 @@ export class GameRoom {
         resumed.connected = true;
         socket.data.playerId = resumed.id;
         const player = this.players.get(resumed.id);
-        if (player) { player.connected = true; player.inputs = []; }
+        if (player) {
+          player.connected = true;
+          player.inputBuffer.queue = [];
+          player.lastInput = neutralServerInput(player.lastSeq, player.yaw, player.pitch);
+          player.lastInputAt = Date.now();
+        }
         socket.emit(S2C.session, {
           playerId: resumed.id, resumeToken: resumed.token, resumed: true,
           reconnectGraceMs: RECONNECT_GRACE_MS,
@@ -270,23 +247,23 @@ export class GameRoom {
       this.broadcastLobby();
     });
 
-    socket.on(C2S.startMatch, () => {
+    socket.on(C2S.startMatch, (msg: unknown) => {
       if (socket.data.playerId !== this.hostId || this.inMatch) return;
-      if (!this.canStart()) return;
-      this.startMatch();
+      if (!this.canStart() || !isStartMatchMsg(msg)) return;
+      this.startMatch(msg.mode);
     });
 
     socket.on(C2S.startPractice, (msg: unknown) => {
       if (socket.data.playerId !== this.hostId || this.inMatch) return;
       if (!isStartPracticeMsg(msg)) return;
-      this.startPractice(msg.bots, msg.difficulty);
+      this.startPractice(msg.bots, msg.difficulty, msg.mode);
     });
 
     socket.on(C2S.input, (msg: unknown) => {
       if (!this.inMatch || !isInputMsg(msg)) return;
       const p = this.players.get(socket.data.playerId as string);
       if (!p || !p.connected) return;
-      if (p.inputs.length < 12) p.inputs.push(msg);
+      if (enqueueServerInput(p.inputBuffer, msg)) p.lastInputAt = Date.now();
     });
 
     socket.on(C2S.craft, (msg: unknown) => {
@@ -326,7 +303,8 @@ export class GameRoom {
       return;
     }
     p.connected = false;
-    p.inputs = [];
+    p.inputBuffer.queue = [];
+    p.lastInput = neutralServerInput(p.lastSeq, p.yaw, p.pitch);
     this.io.emit(S2C.connectionNotice, { type: 'lost', playerId: c.id, graceMs: RECONNECT_GRACE_MS });
     const timer = setTimeout(() => {
       this.disconnectTimers.delete(c.id);
@@ -374,15 +352,15 @@ export class GameRoom {
 
   // =============================== match ===============================
 
-  private startMatch(): void {
+  private startMatch(mode: MatchMode): void {
     this.beginMatch(
       [...this.conns.values()].map((c) => ({ id: c.id, name: c.name, bot: false })),
-      false,
+      false, mode,
     );
   }
 
   /** Solo practice (§F4): every connected lobby human + K tactical bots. */
-  private startPractice(botCount: number, difficulty: BotDifficulty): void {
+  private startPractice(botCount: number, difficulty: BotDifficulty, mode: MatchMode): void {
     const humans = [...this.conns.values()].filter((c) => c.connected);
     if (humans.length < 1) return;
     const bots = Math.min(botCount, MAX_PRACTICE_BOTS, MAX_PLAYERS - humans.length);
@@ -392,14 +370,15 @@ export class GameRoom {
       ...humans.map((c) => ({ id: c.id, name: c.name, bot: false })),
       ...Array.from({ length: bots }, (_, k) => ({ id: `bot-${k}`, name: BOT_NAMES[k], bot: true })),
     ];
-    this.beginMatch(participants, true);
+    this.beginMatch(participants, true, mode);
   }
 
   private beginMatch(
-    participants: { id: string; name: string; bot: boolean }[], practice: boolean,
+    participants: { id: string; name: string; bot: boolean }[], practice: boolean, mode: MatchMode,
   ): void {
     this.inMatch = true;
     this.practice = practice;
+    this.matchMode = mode;
     this.seed = randomBytes(4).readUInt32LE(0); // rematch => fresh, OS-backed seed
     this.n = participants.length;
     this.gen = generateWorld(this.seed, this.n);
@@ -426,6 +405,7 @@ export class GameRoom {
     }));
     this.io.emit(S2C.matchStart, {
       n: this.n, seed: this.seed, players: this.matchRoster,
+      mode: this.matchMode,
       ...(practice ? { practice: true } : {}),
     });
     this.broadcastLobby(); // now locked
@@ -438,7 +418,10 @@ export class GameRoom {
     return {
       id, name, isBot, connected: true, alive: true, hp: PLAYER_MAX_HP,
       move: freshMoveState({ x: 0, y: 20, z: 0 }), yaw: 0, pitch: 0, aiming: false,
-      lastSeq: 0, inputs: [], prevInteract: false, prevFire: false,
+      lastSeq: 0,
+      inputBuffer: { queue: [], lastAcceptedSeq: 0 },
+      lastInput: neutralServerInput(), lastInputAt: Date.now(),
+      prevInteract: false, prevFire: false,
       inv: this.freshInventory(),
       cooldownUntil: 0, reloadUntil: 0, bandageBusyUntil: 0, healRemaining: 0,
       craftDoneAt: 0, craftRecipe: null, harvestNodeId: -1, harvestProgress: 0,
@@ -500,7 +483,11 @@ export class GameRoom {
       p.move = freshMoveState({ x: sp.x, y, z: sp.z });
       p.aiming = false;
       p.inv = this.freshInventory();
-      p.inputs = [];
+      p.inputBuffer = { queue: [], lastAcceptedSeq: p.lastSeq };
+      p.lastInput = neutralServerInput(p.lastSeq, p.yaw, p.pitch);
+      p.lastInputAt = Date.now();
+      p.prevFire = false;
+      p.prevInteract = false;
       p.cooldownUntil = 0; p.reloadUntil = 0; p.bandageBusyUntil = 0; p.healRemaining = 0;
       p.craftDoneAt = 0; p.craftRecipe = null;
       p.harvestNodeId = -1; p.harvestProgress = 0;
@@ -541,6 +528,7 @@ export class GameRoom {
   private resumeMatchFor(conn: Conn): void {
     conn.socket.emit(S2C.matchStart, {
       n: this.n, seed: this.seed, players: this.matchRoster,
+      mode: this.matchMode,
       ...(this.practice ? { practice: true } : {}),
     });
     const totals: Record<string, number> = {};
@@ -568,8 +556,8 @@ export class GameRoom {
     const events: GameEvent[] = [];
 
     this.tickBots();
-    for (const p of this.players.values()) this.processPlayerInputs(p, events);
-    this.phys.step();
+    for (const p of this.players.values()) this.processPlayerInputs(p, events, now);
+    this.phys.step(1 / SERVER_TICK_HZ);
 
     this.updateProjectiles(rawDt, events);
     this.updateZoneDamage(dt, events);
@@ -592,36 +580,64 @@ export class GameRoom {
     this.checkRoundEnd();
   }
 
-  private processPlayerInputs(p: MatchPlayer, events: GameEvent[]): void {
-    const queue = p.inputs;
-    p.inputs = [];
+  private processPlayerInputs(p: MatchPlayer, events: GameEvent[], nowMs: number): void {
+    const tickInput = inputForServerTick(
+      p.lastInput,
+      p.inputBuffer.queue,
+      nowMs,
+      p.lastInputAt,
+    );
+    p.inputBuffer.queue = [];
     if (!p.alive || !p.connected) return;
-    for (const inp of queue) {
-      p.yaw = inp.yaw;
-      p.pitch = inp.pitch;
-      p.aiming = inp.aim;
-      p.lastSeq = inp.seq;
-      stepMovement(this.phys, p.id, p.move, inp);
 
-      if (inp.slot && inp.slot !== p.inv.active) {
+    const inp = tickInput.movement;
+    p.lastInput = inp;
+    p.yaw = inp.yaw;
+    p.pitch = inp.pitch;
+    p.aiming = inp.aim;
+    p.lastSeq = inp.seq;
+    stepMovement(this.phys, p.id, p.move, inp);
+
+    let interactState = p.prevInteract;
+    let interactEdge = false;
+    for (const action of tickInput.actions) {
+      p.yaw = action.yaw;
+      p.pitch = action.pitch;
+      p.aiming = action.aim;
+      p.lastSeq = action.seq;
+      if (action.interact && !interactState) interactEdge = true;
+      interactState = action.interact;
+
+      if (action.slot && action.slot !== p.inv.active) {
         // switching away from a cooking frag commits the throw (pin is pulled)
         if (p.cookingSince !== null) this.releaseCookedFrag(p);
-        p.inv.active = inp.slot;
-        if (inp.slot === 3) this.ensureOwnedThrow(p);
+        p.inv.active = action.slot;
+        if (action.slot === 3) this.ensureOwnedThrow(p);
         this.cancelReload(p, false);
         this.pushInventory(p);
       }
-      if (inp.throwCycle && p.inv.active === 3 && p.cookingSince === null) {
+      if (action.throwCycle && p.inv.active === 3 && p.cookingSince === null) {
         this.cycleThrow(p);
       }
-      if (p.reloadUntil > 0 && inp.sprint && p.move.sprinting) this.cancelReload(p);
-      if (inp.reload) this.tryReload(p);
-      if (p.inv.active === 3) this.handleThrowable(p, inp);
-      else if (inp.fire) this.tryFire(p, events);
-      this.handleInteract(p, inp, events);
-      p.prevFire = inp.fire;
-      p.prevInteract = inp.interact;
+      if (action.reload) this.tryReload(p);
+      if (p.inv.active === 3) this.handleThrowable(p, action);
+      else if (action.fire) this.tryFire(p, events);
+      p.prevFire = action.fire;
     }
+
+    // Held actions run once per server tick. This keeps 30/60/144-Hz clients
+    // equally fast while the action loop above preserves press/release pulses.
+    p.yaw = inp.yaw;
+    p.pitch = inp.pitch;
+    p.aiming = inp.aim;
+    if (p.reloadUntil > 0 && inp.sprint && p.move.sprinting) this.cancelReload(p);
+    if (p.inv.active === 3) this.handleThrowable(p, inp);
+    else if (inp.fire) this.tryFire(p, events);
+    p.prevFire = inp.fire;
+
+    const interactInput = interactEdge && !inp.interact ? { ...inp, interact: true } : inp;
+    this.handleInteract(p, interactInput, events, interactEdge);
+    p.prevInteract = inp.interact;
   }
 
   // =============================== throwables (§F2/F3) ===============================
@@ -758,7 +774,7 @@ export class GameRoom {
 
   private notifyLoud(p: MatchPlayer, loud: boolean): void {
     // ping-on-loud (§6.2): only while there is still daylight
-    if (loud && loudPingActiveAt(this.t)) {
+    if (loud && loudPingActiveAt(this.t, MATCH_MODE_PACE[this.matchMode])) {
       this.pings.set(p.id, { x: p.move.pos.x, z: p.move.pos.z, until: this.t + LOUD_PING_SECONDS });
     }
   }
@@ -1062,7 +1078,7 @@ export class GameRoom {
   // =============================== zone / heal / timers ===============================
 
   private updateZoneDamage(dt: number, events: GameEvent[]): void {
-    const zone = zoneAt(this.t, this.n);
+    const zone = zoneAt(this.t, this.n, MATCH_MODE_PACE[this.matchMode]);
     for (const p of this.players.values()) {
       if (!p.alive) continue;
       const d = Math.hypot(p.move.pos.x, p.move.pos.z);
@@ -1175,9 +1191,11 @@ export class GameRoom {
 
   // =============================== interact / loot ===============================
 
-  private handleInteract(p: MatchPlayer, inp: InputMsg, events: GameEvent[]): void {
+  private handleInteract(
+    p: MatchPlayer, inp: InputMsg, events: GameEvent[], forceEdge = false,
+  ): void {
     if (!inp.interact) { p.harvestProgress = 0; p.harvestNodeId = -1; return; }
-    const edge = !p.prevInteract;
+    const edge = forceEdge || !p.prevInteract;
 
     // 1) weapon swap on interact edge when standing on a weapon with full slots
     if (edge) {
@@ -1197,9 +1215,8 @@ export class GameRoom {
     }
 
     // 2) resource harvest: hold ~1.5 s at tree/rock/bush (§4.2)
-    // Progress follows the submitted simulation time. A fixed amount per message
-    // made high-refresh-rate clients harvest faster than 30-Hz clients.
-    const interactDt = Math.min(MAX_INPUT_DT, Math.max(0.001, inp.dt)) * this.timeScale;
+    // Progress follows the authoritative fixed server tick, never packet rate.
+    const interactDt = inp.dt * this.timeScale;
     const node = this.nearestResourceNode(p);
     if (!node) { p.harvestProgress = 0; p.harvestNodeId = -1; return; }
     if (p.harvestNodeId !== node.id) { p.harvestNodeId = node.id; p.harvestProgress = 0; }
@@ -1417,7 +1434,7 @@ export class GameRoom {
   // =============================== care package / pings ===============================
 
   private updateCarePackage(events: GameEvent[]): void {
-    if (!this.careSpawned && this.t >= CARE_PACKAGE_AT) {
+    if (!this.careSpawned && this.t >= CARE_PACKAGE_AT / MATCH_MODE_PACE[this.matchMode]) {
       this.careSpawned = true;
       this.care.state = 'incoming';
       this.care.landsAt = this.t + 10;
@@ -1438,7 +1455,7 @@ export class GameRoom {
   }
 
   private announceZoneSteps(events: GameEvent[]): void {
-    const zone = zoneAt(this.t, this.n);
+    const zone = zoneAt(this.t, this.n, MATCH_MODE_PACE[this.matchMode]);
     if (zone.tier > this.zoneTierAnnounced) {
       this.zoneTierAnnounced = zone.tier;
       events.push({ type: 'zoneStep', tier: zone.tier, targetRadius: zone.targetRadius, dot: zone.dot });
@@ -1452,10 +1469,11 @@ export class GameRoom {
   /** Feed every living bot one synthetic InputMsg through the normal pipeline. */
   private tickBots(): void {
     if (this.botMems.size === 0 || !this.roundActive) return;
-    const zone = zoneAt(this.t, this.n);
+    const pace = MATCH_MODE_PACE[this.matchMode];
+    const zone = zoneAt(this.t, this.n, pace);
     const diff = BOT_DIFFICULTIES[this.botDifficulty];
     // night + fog shrink bot vision exactly like a human's screen does
-    const detectRange = Math.min(diff.detectRange, fogAt(this.t) * 0.95);
+    const detectRange = Math.min(diff.detectRange, fogAt(this.t, pace) * 0.95);
     for (const [id, mem] of this.botMems) {
       const p = this.players.get(id);
       if (!p || !p.alive) continue;
@@ -1492,15 +1510,44 @@ export class GameRoom {
         enemies,
         zone: { radius: zone.radius, target: zone.targetRadius, shrinking: zone.shrinking },
         loot: this.pickBotLoot(p, zone.radius),
+        cover: this.pickBotCover(p, enemies, zone.radius),
         rng: this.botRng,
         diff,
       };
       const decision = computeBotInput(mem, ctx);
-      if (p.inputs.length < 12) p.inputs.push(decision.input);
+      enqueueServerInput(p.inputBuffer, decision.input);
+      p.lastInputAt = Date.now();
       // consumables use a direct server call — the one allowed bot shortcut,
       // since there is no socket round-trip to route it through
       if (decision.wantHeal) this.tryBandage(id);
     }
+  }
+
+  /** Pick a point on the far side of nearby solid vegetation from the enemy. */
+  private pickBotCover(
+    p: MatchPlayer, enemies: BotEnemy[], zoneRadius: number,
+  ): { x: number; z: number } | null {
+    const enemy = enemies.filter((candidate) => candidate.losClear)
+      .sort((a, b) => a.dist - b.dist)[0];
+    if (!enemy) return null;
+
+    let best: { x: number; z: number } | null = null;
+    let bestScore = Infinity;
+    for (const obstacle of this.gen.vegetation) {
+      if (obstacle.colliderRadius <= 0) continue;
+      const distance = dist2d(p.move.pos.x, p.move.pos.z, obstacle.x, obstacle.z);
+      if (distance > 28) continue;
+      const awayX = obstacle.x - enemy.pos.x;
+      const awayZ = obstacle.z - enemy.pos.z;
+      const awayLength = Math.hypot(awayX, awayZ) || 1;
+      const clearance = obstacle.colliderRadius + 0.75;
+      const x = obstacle.x + awayX / awayLength * clearance;
+      const z = obstacle.z + awayZ / awayLength * clearance;
+      if (Math.hypot(x, z) > zoneRadius - 2) continue;
+      const score = distance - obstacle.colliderRadius * 1.5;
+      if (score < bestScore) { bestScore = score; best = { x, z }; }
+    }
+    return best;
   }
 
   /** Best pickup for a bot to chase, scored by need over distance. */
@@ -1545,7 +1592,8 @@ export class GameRoom {
   // =============================== snapshot ===============================
 
   private buildSnapshot(): SnapshotMsg {
-    const zone = zoneAt(this.t, this.n);
+    const pace = MATCH_MODE_PACE[this.matchMode];
+    const zone = zoneAt(this.t, this.n, pace);
     const players: SnapPlayer[] = [...this.players.values()].map((p) => ({
       id: p.id,
       x: round3(p.move.pos.x), y: round3(p.move.pos.y), z: round3(p.move.pos.z),
@@ -1578,8 +1626,8 @@ export class GameRoom {
     }));
     return {
       t: round3(this.t),
-      phase: phaseAt(this.t),
-      timeOfDay: round3(timeOfDayAt(this.t)),
+      phase: phaseAt(this.t, pace),
+      timeOfDay: round3(timeOfDayAt(this.t, pace)),
       zone: {
         radius: round3(zone.radius), targetRadius: zone.targetRadius, dot: zone.dot,
         tier: zone.tier, shrinking: zone.shrinking, nextShrinkAt: zone.nextShrinkAt,

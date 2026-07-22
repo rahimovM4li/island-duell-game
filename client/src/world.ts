@@ -9,6 +9,7 @@ import { sampleHeight, RUINS_FLOOR_HEIGHT } from '@shared/terrain';
 import { fogAt, timeOfDayAt } from '@shared/timeline';
 import { bushAt, type WorldGen } from '@shared/worldgen';
 import { deriveSeed, mulberry32 } from '@shared/rng';
+import { gameAssets, isSharedAssetResource } from './game-assets';
 
 const DAY_SKY = new THREE.Color(0x87b8dc);
 const NIGHT_SKY = new THREE.Color(0x0a1020);
@@ -21,13 +22,15 @@ function disposeObject(root: THREE.Object3D): void {
   const textures = new Set<THREE.Texture>();
   root.traverse((obj) => {
     const renderable = obj as THREE.Mesh & THREE.Sprite;
-    if (!renderable.isSprite && renderable.geometry) geometries.add(renderable.geometry);
+    if (!renderable.isSprite && renderable.geometry && !isSharedAssetResource(renderable.geometry)) {
+      geometries.add(renderable.geometry);
+    }
     const mats = Array.isArray(renderable.material)
       ? renderable.material : renderable.material ? [renderable.material] : [];
     for (const mat of mats) {
-      materials.add(mat);
+      if (!isSharedAssetResource(mat)) materials.add(mat);
       const withMap = mat as THREE.Material & { map?: THREE.Texture };
-      if (withMap.map) textures.add(withMap.map);
+      if (withMap.map && !isSharedAssetResource(withMap.map)) textures.add(withMap.map);
     }
   });
   textures.forEach((texture) => texture.dispose());
@@ -380,14 +383,33 @@ export class World {
   }
 
   private buildLandmarks(): void {
-    const materials: Record<'wood' | 'metal' | 'stone', THREE.MeshLambertMaterial> = {
+    const compactModels = new Map(this.gen.pois.map((poi) => (
+      [poi.id, gameAssets.cloneLandmark(poi.id)] as const
+    )));
+    const needsFallback = [...compactModels.values()].some((model) => !model);
+    const materials: Record<'wood' | 'metal' | 'stone', THREE.MeshLambertMaterial> | null = needsFallback ? {
       wood: new THREE.MeshLambertMaterial({ color: 0x7d5738, flatShading: true }),
       metal: new THREE.MeshLambertMaterial({ color: 0x5a6a71, flatShading: true }),
       stone: new THREE.MeshLambertMaterial({ color: 0x71776f, flatShading: true }),
-    };
-    const rustMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3a, flatShading: true });
+    } : null;
+    const rustMat = needsFallback
+      ? new THREE.MeshLambertMaterial({ color: 0x8a5a3a, flatShading: true })
+      : null;
     const propRng = mulberry32(deriveSeed(this.gen.seed, 'poi-props'));
     for (const poi of this.gen.pois) {
+      const compactModel = compactModels.get(poi.id);
+      if (compactModel) {
+        compactModel.name = `poi-${poi.id}`;
+        compactModel.position.set(
+          poi.x,
+          sampleHeight(this.gen.params, poi.x, poi.z),
+          poi.z,
+        );
+        compactModel.rotation.y = poi.structures[0]?.rotY ?? 0;
+        this.scene.add(compactModel);
+        continue;
+      }
+      if (!materials || !rustMat) continue;
       const group = new THREE.Group();
       group.name = `poi-${poi.id}`;
       for (const s of poi.structures) {

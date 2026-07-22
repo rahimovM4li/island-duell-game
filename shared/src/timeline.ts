@@ -8,24 +8,25 @@ import { clamp } from './terrain';
 
 export type Phase = 'loot' | 'closing' | 'endgame';
 
-export function phaseAt(t: number): Phase {
-  if (t < PHASE_LOOT_END) return 'loot';
-  if (t < PHASE_CLOSING_END) return 'closing';
+export function phaseAt(t: number, pace = 1): Phase {
+  const designT = t * pace;
+  if (designT < PHASE_LOOT_END) return 'loot';
+  if (designT < PHASE_CLOSING_END) return 'closing';
   return 'endgame';
 }
 
 /** 0 = full day … 1 = full night (§6.2). */
-export function timeOfDayAt(t: number): number {
-  return clamp((t - NIGHT_START) / (NIGHT_FULL - NIGHT_START), 0, 1);
+export function timeOfDayAt(t: number, pace = 1): number {
+  return clamp((t * pace - NIGHT_START) / (NIGHT_FULL - NIGHT_START), 0, 1);
 }
 
-export function fogAt(t: number): number {
-  return FOG_DAY + (FOG_NIGHT - FOG_DAY) * timeOfDayAt(t);
+export function fogAt(t: number, pace = 1): number {
+  return FOG_DAY + (FOG_NIGHT - FOG_DAY) * timeOfDayAt(t, pace);
 }
 
 /** Loud shots ping the shooter on the minimap only while it is still light (§6.2). */
-export function loudPingActiveAt(t: number): boolean {
-  return timeOfDayAt(t) < 1;
+export function loudPingActiveAt(t: number, pace = 1): boolean {
+  return timeOfDayAt(t, pace) < 1;
 }
 
 export interface ZoneState {
@@ -40,19 +41,19 @@ export interface ZoneState {
 
 interface Step { at: number; from: number; to: number; dur: number }
 
-export function zoneSteps(n: number): Step[] {
+export function zoneSteps(n: number, pace = 1): Step[] {
   const finalR = finalRingDiameter(n) / 2;
   return [
-    { at: SHRINK1_AT, from: ZONE_START_RADIUS, to: ZONE_RADII[0], dur: SHRINK_DURATION[0] },
-    { at: SHRINK2_AT, from: ZONE_RADII[0], to: ZONE_RADII[1], dur: SHRINK_DURATION[1] },
-    { at: SHRINK3_AT, from: ZONE_RADII[1], to: finalR, dur: SHRINK_DURATION[2] },
+    { at: SHRINK1_AT / pace, from: ZONE_START_RADIUS, to: ZONE_RADII[0], dur: SHRINK_DURATION[0] / pace },
+    { at: SHRINK2_AT / pace, from: ZONE_RADII[0], to: ZONE_RADII[1], dur: SHRINK_DURATION[1] / pace },
+    { at: SHRINK3_AT / pace, from: ZONE_RADII[1], to: finalR, dur: SHRINK_DURATION[2] / pace },
     // safety collapse guarantees the round ends by ~11 min (§6.1 target length)
-    { at: FINAL_COLLAPSE_AT, from: finalR, to: 1.5, dur: SHRINK_DURATION[3] },
+    { at: FINAL_COLLAPSE_AT / pace, from: finalR, to: 1.5, dur: SHRINK_DURATION[3] / pace },
   ];
 }
 
-export function zoneAt(t: number, n: number): ZoneState {
-  const steps = zoneSteps(n);
+export function zoneAt(t: number, n: number, pace = 1): ZoneState {
+  const steps = zoneSteps(n, pace);
   let radius = ZONE_START_RADIUS;
   let tier = 0;
   let shrinking = false;
@@ -69,6 +70,6 @@ export function zoneAt(t: number, n: number): ZoneState {
     nextShrinkAt = i + 1 < steps.length ? steps[i + 1].at : null;
   }
   // DoT tiers: early 2, mid 5 (after shrink 2 begins), final 10 (after shrink 3 begins)
-  const dot = t < SHRINK2_AT ? ZONE_DOT[0] : t < SHRINK3_AT ? ZONE_DOT[1] : ZONE_DOT[2];
+  const dot = t < SHRINK2_AT / pace ? ZONE_DOT[0] : t < SHRINK3_AT / pace ? ZONE_DOT[1] : ZONE_DOT[2];
   return { radius, targetRadius, nextShrinkAt, shrinking, dot, tier };
 }

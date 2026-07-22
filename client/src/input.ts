@@ -21,6 +21,8 @@ export class InputState {
   craftPressed: Recipe | null = null;
   bandagePressed = false;
   debugToggled = false;
+  firePressed = false;
+  fireReleased = false;
 
   constructor(private canvas: HTMLElement, private settings: PlayerSettings) {
     document.addEventListener('keydown', (e) => {
@@ -45,11 +47,17 @@ export class InputState {
 
     document.addEventListener('mousedown', (e) => {
       if (!this.pointerLocked) return;
-      if (e.button === 0) this.fireHeld = true;
+      if (e.button === 0) {
+        if (!this.fireHeld) this.firePressed = true;
+        this.fireHeld = true;
+      }
       if (e.button === 2) this.aimHeld = true;
     });
     document.addEventListener('mouseup', (e) => {
-      if (e.button === 0) this.fireHeld = false;
+      if (e.button === 0) {
+        if (this.fireHeld) this.fireReleased = true;
+        this.fireHeld = false;
+      }
       if (e.button === 2) this.aimHeld = false;
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -105,5 +113,7 @@ export class InputState {
     this.craftPressed = null;
     this.bandagePressed = false;
     this.debugToggled = false;
+    this.firePressed = false;
+    this.fireReleased = false;
   }
 }

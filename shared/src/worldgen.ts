@@ -228,7 +228,10 @@ export function generateWorld(seed: number, n: number): WorldGen {
     if (Math.hypot(x, z) < RUINS_RADIUS + 4) return false;
     for (const sp of spawns) if (Math.hypot(x - sp.x, z - sp.z) < 5) return false;
     for (const c of crates) if (Math.hypot(x - c.x, z - c.z) < 2.5) return false;
-    for (const poi of pois) if (Math.hypot(x - poi.x, z - poi.z) < (poi.id === 'wreck' ? 8 : 7)) return false;
+    for (const poi of pois) {
+      const clearRadius = poi.id === 'wreck' ? 8 : 7;
+      if (Math.hypot(x - poi.x, z - poi.z) < clearRadius) return false;
+    }
     return true;
   };
   const addVeg = (kind: VegKind, count: number, colliderBase: number, minScale: number, maxScale: number) => {

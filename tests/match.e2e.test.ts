@@ -108,7 +108,7 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
     await until(() => host.lobby?.canStart === true, 5000, 'canStart');
 
     // a 6th... (4th) client trying to join mid-match is rejected later; start now
-    host.sock.emit('startMatch');
+    host.sock.emit('startMatch', { mode: 'classic' });
     await until(() => bots.every((b) => b.matchStart !== null), 5000, 'matchStart');
 
     // same seed and N for everyone (§8: host sends seed, clients generate)
@@ -206,7 +206,7 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
     const priorRoundStarts = bots[0].roundStarts.length;
     for (const b of bots) if (b !== host) b.sock.emit('rematch');
     await until(() => host.lobby?.canStart === true, 5000, 'rematch canStart');
-    host.sock.emit('startMatch');
+    host.sock.emit('startMatch', { mode: 'classic' });
     await until(
       () => bots.every((b) => b.matchStart !== null && b.matchStart.seed !== firstSeed),
       5000, 'fresh rematch seed',

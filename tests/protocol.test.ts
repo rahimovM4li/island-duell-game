@@ -1,6 +1,9 @@
 // §8 message type guards (defensive server parsing).
 import { describe, expect, it } from 'vitest';
-import { isCraftMsg, isInputMsg, isJoinMsg, isReadyMsg, PROTOCOL_VERSION } from '@shared/protocol';
+import {
+  isCraftMsg, isInputMsg, isJoinMsg, isReadyMsg, isStartMatchMsg,
+  isStartPracticeMsg, PROTOCOL_VERSION,
+} from '@shared/protocol';
 
 describe('isJoinMsg', () => {
   it('accepts a valid join', () => {
@@ -51,5 +54,15 @@ describe('isCraftMsg / isReadyMsg', () => {
   it('validates ready flag', () => {
     expect(isReadyMsg({ ready: true })).toBe(true);
     expect(isReadyMsg({ ready: 'yes' })).toBe(false);
+  });
+});
+
+describe('match mode guards', () => {
+  it('accepts only explicit browser-safe match modes', () => {
+    expect(isStartMatchMsg({ mode: 'quick' })).toBe(true);
+    expect(isStartMatchMsg({ mode: 'classic' })).toBe(true);
+    expect(isStartMatchMsg({ mode: 'turbo' })).toBe(false);
+    expect(isStartPracticeMsg({ bots: 3, difficulty: 'normal', mode: 'quick' })).toBe(true);
+    expect(isStartPracticeMsg({ bots: 3, difficulty: 'normal' })).toBe(false);
   });
 });
