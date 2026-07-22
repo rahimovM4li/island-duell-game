@@ -86,7 +86,8 @@ wichtigsten Tasten dauerhaft konfigurieren.
 
 ```bash
 npm run dev        # Server (tsx watch, :3000) + Vite-Client (:5173) parallel
-npm run assets:build # 256px-Atlas + Meshopt-GLBs für Waffen und POIs neu erzeugen
+npm run assets:build # Blender-GLBs mit Meshopt komprimieren und validieren
+npm run assets:validate # bestehende Atlas-/GLB-Ausgaben nur prüfen
 npm run typecheck  # tsc für shared/server/client
 npm test           # Unit-Tests + E2E-Botmatch über echte Sockets
 npm run test:browser # Produktionsbuild + echter Headless-Edge-Smoke-Test
@@ -128,16 +129,19 @@ client/   Three.js-Renderer (Chunk-Terrain 8×8 à 32 m, instanzierte Vegetation
 
 ### Kompakte 3D-Assets
 
-Die erkennbaren Waffenmodelle sowie Strandwrack, Aussichtsposten und Waldbunker
-liegen in zwei Meshopt-komprimierten GLBs unter `client/public/assets/`. Alle
-Modelle verwenden denselben 256×256-PNG-Atlas. Die Dateien werden erst beim
-Beitritt geladen und danach für alle Runden gecacht; Geometrien und Textur werden
-zwischen Instanzen geteilt. Falls ein Download oder die Decodierung fehlschlägt,
-verwendet der Client automatisch die bisherigen prozeduralen Modelle.
+Waffen, Loot-Props, Vegetation, Ruinenobjekte, Spielfigur sowie Strandwrack,
+Aussichtsposten und Waldbunker liegen in fünf Meshopt-komprimierten GLBs unter
+`client/public/assets/`. Alle Modelle verwenden denselben 512×256-PNG-Atlas.
+Die Dateien werden beim Beitritt parallel geladen und danach für alle Runden
+gecacht; Geometrien und Textur werden zwischen Instanzen geteilt. Falls ein
+Download oder die Decodierung fehlschlägt, verwendet der Client automatisch die
+bisherigen prozeduralen Modelle.
 
-`npm run assets:build` erzeugt Atlas und GLBs reproduzierbar aus
-`scripts/build-game-assets.mjs`. Dadurch können Farben, Silhouetten und Details
-ohne Blender-Abhängigkeit angepasst werden.
+Der editierbare Master liegt unter `art/island-duell-assets.blend`.
+`scripts/blender/build_island_assets.py` erzeugt daraus Atlas, GLBs und das
+gemeinsame Collider-Manifest. `npm run assets:build` weldet und komprimiert die
+Blender-Exporte und prüft Namen, UVs, Dreiecks- sowie Downloadbudgets. Der genaue
+Ablauf steht in `docs/ASSET_PIPELINE.md`.
 
 ## Bewusste Abweichungen vom PRD
 

@@ -1,8 +1,8 @@
 // Shared kinematic movement (§4.1): identical on host (authority) and client
 // (prediction), so reconciliation errors stay tiny on LAN.
 import {
-  AIM_SPEED, AIR_ACCEL, GRAVITY, GROUND_ACCEL, GROUND_DECEL, JUMP_SPEED,
-  SNEAK_SPEED, SPRINT_SPEED, SPRINT_STAMINA_MAX, SPRINT_STAMINA_REGEN, WALK_SPEED,
+  AIM_SPEED, AIR_ACCEL, GRAVITY, GROUND_ACCEL, GROUND_DECEL, JUMP_SPEED, PRONE_SPEED,
+  SNEAK_SPEED, SPRINT_SPEED, SPRINT_STAMINA_MAX, SPRINT_STAMINA_REGEN, WALK_SPEED, type WeaponType,
 } from './constants';
 import type { GamePhysics, Vec3 } from './physics';
 import type { InputMsg } from './protocol';
@@ -19,13 +19,21 @@ export interface MoveState {
   stamina: number; // seconds of sprint left
   sprinting: boolean;
   sneaking: boolean;
+  prone: boolean;
 }
 
 export function freshMoveState(pos: Vec3): MoveState {
   return {
     pos: { ...pos }, velX: 0, velY: 0, velZ: 0, grounded: false,
-    stamina: SPRINT_STAMINA_MAX, sprinting: false, sneaking: false,
+    stamina: SPRINT_STAMINA_MAX, sprinting: false, sneaking: false, prone: false,
   };
+}
+
+export function stanceForWeapon(weapon: WeaponType, controlHeld: boolean): { sneak: boolean; prone: boolean } {
+  if (!controlHeld) return { sneak: false, prone: false };
+  return weapon === 'sniper'
+    ? { sneak: false, prone: true }
+    : { sneak: true, prone: false };
 }
 
 /** Apply one input to a movement state via the physics character controller. */
@@ -38,14 +46,15 @@ export function stepMovement(phys: GamePhysics, id: string, st: MoveState, inp: 
   if (len > 1) { mx /= len; mz /= len; }
   const moving = len > 0.01;
 
-  st.sneaking = inp.sneak;
-  phys.setPlayerSneaking(id, st.sneaking, st.pos);
-  const wantSprint = inp.sprint && !inp.aim && !st.sneaking && moving && st.stamina > 0;
+  st.prone = inp.prone === true;
+  st.sneaking = inp.sneak && !st.prone;
+  phys.setPlayerStance(id, st.sneaking, st.prone, st.pos);
+  const wantSprint = inp.sprint && !inp.aim && !st.sneaking && !st.prone && moving && st.stamina > 0;
   st.sprinting = wantSprint;
   st.stamina = wantSprint
     ? Math.max(0, st.stamina - dt)
     : Math.min(SPRINT_STAMINA_MAX, st.stamina + SPRINT_STAMINA_REGEN * dt);
-  const speed = st.sneaking ? SNEAK_SPEED : inp.aim ? AIM_SPEED : wantSprint ? SPRINT_SPEED : WALK_SPEED;
+  const speed = st.prone ? PRONE_SPEED : st.sneaking ? SNEAK_SPEED : inp.aim ? AIM_SPEED : wantSprint ? SPRINT_SPEED : WALK_SPEED;
 
   // yaw convention: yaw = 0 looks toward −Z (three.js)
   const sin = Math.sin(inp.yaw), cos = Math.cos(inp.yaw);
@@ -63,7 +72,7 @@ export function stepMovement(phys: GamePhysics, id: string, st: MoveState, inp: 
   const dx = st.velX * dt;
   const dz = st.velZ * dt;
 
-  if (st.grounded && inp.jump && !st.sneaking) st.velY = JUMP_SPEED;
+  if (st.grounded && inp.jump && !st.sneaking && !st.prone) st.velY = JUMP_SPEED;
   st.velY = Math.max(-30, st.velY - GRAVITY * dt);
   const dy = st.velY * dt;
 

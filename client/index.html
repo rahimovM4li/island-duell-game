@@ -58,6 +58,16 @@
     /* ---------- HUD ---------- */
     #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; display: none; }
     #hud.active { display: block; }
+    #hud.victory-cinematic > * {
+      opacity: 0 !important;
+      transition: opacity 180ms ease;
+    }
+    #hud.victory-cinematic::before, #hud.victory-cinematic::after {
+      content: ''; position: fixed; left: 0; right: 0; height: 5vh;
+      background: #020506; z-index: 30;
+    }
+    #hud.victory-cinematic::before { top: 0; }
+    #hud.victory-cinematic::after { bottom: 0; }
 
     #crosshair {
       position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
@@ -237,7 +247,7 @@
     <div id="damage-flash"></div>
     <div id="damage-direction"></div>
     <div id="zone-warn"></div>
-    <div id="scope-overlay" aria-hidden="true"><div class="scope-ring"></div></div>
+    <div id="scope-overlay" aria-hidden="true"><div class="scope-ring"></div><div id="scope-zoom"></div></div>
     <div id="flash-overlay" aria-hidden="true"></div>
     <div id="crosshair" aria-hidden="true"><i class="north"></i><i class="south"></i><i class="west"></i><i class="east"></i></div>
     <div id="hitmarker">✕</div>
@@ -253,6 +263,7 @@
     <canvas id="minimap" width="320" height="320"></canvas>
     <div id="killfeed"></div>
     <div id="announce"></div>
+    <div id="elimination-confirm" role="status" aria-live="polite"><span>ELIMINIERUNG</span><strong id="elimination-name"></strong><small id="elimination-detail"></small></div>
     <aside id="onboarding-tip" aria-live="polite">
       <button id="onboarding-skip" type="button" aria-label="Einf&uuml;hrung &uuml;berspringen">&times;</button>
       <div id="onboarding-step"></div>
@@ -286,11 +297,13 @@
   </div>
 
   <div id="network-banner" role="status" aria-live="polite"></div>
+  <div id="duel-result" role="status" aria-live="assertive"><span id="duel-result-kicker"></span><strong id="duel-result-title"></strong><small id="duel-result-detail"></small></div>
 
   <div id="pause-hint">
     <div style="font-size:18px;font-weight:600;margin-bottom:6px">Maus freigegeben</div>
     <div style="color:#9fb3c4;font-size:13px">Klicken, um weiterzuspielen</div>
     <button id="pause-settings-btn" class="secondary">Einstellungen</button>
+    <button id="pause-leave-btn" class="secondary danger-button">Spiel verlassen</button>
   </div>
 
   <div id="menu-screen" class="screen">
@@ -336,6 +349,7 @@
         </div>
         <button id="practice-btn" class="secondary">🤖 Solo üben (gegen Bots)</button>
       </div>
+      <button id="lobby-leave-btn" class="secondary danger-button">Spiel verlassen</button>
       <div class="error" id="lobby-error"></div>
     </div>
   </div>
@@ -359,6 +373,7 @@
       <table class="scores"><thead><tr><th>#</th><th>Spieler</th><th>Runde</th><th>Gesamt</th><th>K</th><th>Schaden</th><th>Präz.</th><th>Loot</th></tr></thead><tbody id="scoreboard-body"></tbody></table>
       <div id="next-round-in"></div>
       <button id="rematch-btn" style="display:none">Rematch (neue Insel)</button>
+      <button id="scoreboard-leave-btn" class="secondary danger-button">Spiel verlassen</button>
     </div>
   </div>
 
@@ -368,6 +383,7 @@
       <div class="settings-scroll">
         <fieldset><legend>Steuerung</legend>
           <label class="setting-row" for="mouse-sensitivity"><span>Mausempfindlichkeit <small id="mouse-sensitivity-value"></small></span><input id="mouse-sensitivity" type="range" min="0.25" max="2" step="0.05" /></label>
+          <label class="setting-row" for="sniper-aim-sensitivity"><span>Sniper-Zielempfindlichkeit <small id="sniper-aim-sensitivity-value"></small></span><input id="sniper-aim-sensitivity" type="range" min="0.1" max="1.5" step="0.05" /></label>
           <div id="keybind-grid" class="keybind-grid">
             <span>Vorwärts</span><button type="button" data-bind="forward"></button><span>Rückwärts</span><button type="button" data-bind="back"></button>
             <span>Links</span><button type="button" data-bind="left"></button><span>Rechts</span><button type="button" data-bind="right"></button>

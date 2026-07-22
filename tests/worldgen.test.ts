@@ -5,6 +5,7 @@ import {
 } from '@shared/constants';
 import { buildHeightGrid, sampleHeight, terrainParams, RUINS_FLOOR_HEIGHT, RUINS_RADIUS } from '@shared/terrain';
 import { assignSpawnIndices, generateWorld } from '@shared/worldgen';
+import { World } from '../client/src/world';
 
 const SEED = 123456789;
 
@@ -88,6 +89,17 @@ describe('crates (§3, §5.2)', () => {
 });
 
 describe('terrain features (§5.1)', () => {
+  it('supports the complete central platform without floating edges', () => {
+    for (const seed of [1, 7, 42, SEED]) {
+      const params = terrainParams(seed);
+      for (let i = 0; i < 24; i++) {
+        const angle = (i / 24) * Math.PI * 2;
+        const x = Math.cos(angle) * 18;
+        const z = Math.sin(angle) * 18;
+        expect(sampleHeight(params, x, z)).toBeCloseTo(RUINS_FLOOR_HEIGHT, 5);
+      }
+    }
+  });
   const p = terrainParams(SEED);
 
   it('ruins pad is flattened to a walkable floor', () => {
@@ -120,10 +132,27 @@ describe('assignSpawnIndices (§3)', () => {
 });
 
 describe('natural cover', () => {
+  it('renders pine, broadleaf and palm as distinct fallback batches', () => {
+    const gen = generateWorld(SEED, 3);
+    const world = new World(gen);
+    const batches = world.scene.children
+      .filter((object) => typeof object.userData.treeVariant === 'string')
+      .map((object) => object.userData.treeVariant);
+    expect(new Set(batches)).toEqual(new Set(['pine', 'broadleaf', 'palm']));
+    world.dispose();
+  });
   it('generates enough walk-through bushes for players to hide', () => {
     const bushes = generateWorld(SEED, 3).vegetation.filter((v) => v.kind === 'bush');
     expect(bushes.length).toBeGreaterThanOrEqual(180);
     expect(bushes.every((b) => b.colliderRadius === 0)).toBe(true);
+  });
+
+  it('distributes multiple readable tree and rock silhouettes deterministically', () => {
+    const vegetation = generateWorld(SEED, 3).vegetation;
+    const treeVariants = new Set(vegetation.filter((v) => v.kind === 'tree').map((v) => v.variant));
+    const rockVariants = new Set(vegetation.filter((v) => v.kind === 'rock').map((v) => v.variant));
+    expect(treeVariants).toEqual(new Set(['pine', 'broadleaf', 'palm']));
+    expect(rockVariants).toEqual(new Set(['boulder', 'slab', 'cluster']));
   });
 });
 
@@ -147,6 +176,61 @@ describe('risk/reward landmarks', () => {
     for (const poi of gen.pois) {
       const radius = poi.id === 'wreck' ? 8 : 7;
       expect(gen.vegetation.every((veg) => Math.hypot(veg.x - poi.x, veg.z - poi.z) >= radius)).toBe(true);
+    }
+  });
+
+  it('guarantees one sniper cache at the exposed watchtower each round', () => {
+    const gen = generateWorld(SEED, 3);
+    const sniperCrates = gen.crates.filter((crate) => crate.guaranteedItem === 'sniper');
+    expect(sniperCrates).toHaveLength(1);
+    expect(sniperCrates[0]).toMatchObject({ poi: 'watchtower', tier: 'top' });
+  });
+
+  it('orients the watchtower stairs and bunker entrance away from the island centre', () => {
+    for (const seed of [1, 42, 170, 330, 484]) {
+      const world = generateWorld(seed, 2);
+      for (const id of ['watchtower', 'bunker'] as const) {
+        const poi = world.pois.find((entry) => entry.id === id)!;
+        const yaw = poi.structures[0].rotY;
+        const outwardX = poi.x / Math.hypot(poi.x, poi.z);
+        const outwardZ = poi.z / Math.hypot(poi.x, poi.z);
+        // Authored entrances face local +Z. A Three.js Y rotation maps that
+        // direction to (sin(yaw), cos(yaw)) in world X/Z.
+        expect(Math.sin(yaw) * outwardX + Math.cos(yaw) * outwardZ).toBeGreaterThan(0.999);
+      }
+    }
+  });
+
+  it('keeps the tower and bunker construction pads from overlapping', () => {
+    for (let seed = 1; seed <= 250; seed++) {
+      const world = generateWorld(seed, 2);
+      const tower = world.pois.find((poi) => poi.id === 'watchtower')!;
+      const bunker = world.pois.find((poi) => poi.id === 'bunker')!;
+      expect(Math.hypot(tower.x - bunker.x, tower.z - bunker.z)).toBeGreaterThan(38);
+    }
+  });
+
+  it('keeps tower access and the entire bunker footprint level on formerly broken seeds', () => {
+    for (const seed of [42, 170, 330, 484, 496]) {
+      const world = generateWorld(seed, 2);
+      const tower = world.pois.find((poi) => poi.id === 'watchtower')!;
+      const towerYaw = tower.structures[0].rotY;
+      const towerBase = sampleHeight(world.params, tower.x, tower.z);
+      const stairFootX = tower.x + Math.sin(towerYaw) * 7.5;
+      const stairFootZ = tower.z + Math.cos(towerYaw) * 7.5;
+      expect(sampleHeight(world.params, stairFootX, stairFootZ)).toBeCloseTo(towerBase, 5);
+
+      const bunker = world.pois.find((poi) => poi.id === 'bunker')!;
+      const bunkerYaw = bunker.structures[0].rotY;
+      const c = Math.cos(bunkerYaw), s = Math.sin(bunkerYaw);
+      const bunkerBase = sampleHeight(world.params, bunker.x, bunker.z);
+      for (const lx of [-4.25, 0, 4.25]) {
+        for (const lz of [-3.25, 0, 3.25]) {
+          const x = bunker.x + c * lx + s * lz;
+          const z = bunker.z - s * lx + c * lz;
+          expect(sampleHeight(world.params, x, z)).toBeCloseTo(bunkerBase, 5);
+        }
+      }
     }
   });
 });

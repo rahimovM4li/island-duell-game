@@ -12,21 +12,24 @@ import {
   MAX_FLASH, MAX_GRENADES, MAX_PLATES, MAX_PLAYERS, MAX_PRACTICE_BOTS, MAX_SMOKE,
   MELEE_CONE_COS, MIN_PLAYERS,
   PICKUP_RADIUS, PLATE_DAMAGE_REDUCTION, PLAYER_EYE_HEIGHT, PLAYER_MAX_HP,
-  PLAYER_SNEAK_EYE_HEIGHT, RECONNECT_GRACE_MS, SMOKE_DURATION, SMOKE_FUSE,
+  PLAYER_PRONE_EYE_HEIGHT, PLAYER_SNEAK_EYE_HEIGHT, RECONNECT_GRACE_MS, SMOKE_DURATION, SMOKE_FUSE,
   SMOKE_RADIUS, SNIPER_CRATE_CHANCE, SPRINT_SPEED,
   RECIPES, Recipe, RESOURCE_NODE_CHARGES, RESOURCE_YIELD, ROUNDS_PER_MATCH,
   MAX_SUDDEN_DEATH_ROUNDS, ROUND_END_SCOREBOARD_SECS, SERVER_TICK_HZ,
   SNAPSHOT_HZ, THROW_ORDER, THROW_WEAPON, ThrowKind, WEAPONS, WeaponType, AmmoType,
 } from '@shared/constants';
 import { GamePhysics, RapierModule, Vec3 } from '@shared/physics';
-import { freshMoveState, MoveState, stepMovement } from '@shared/movement';
+import { freshMoveState, MoveState, stanceForWeapon, stepMovement } from '@shared/movement';
 import {
-  C2S, CombatStats, GameEvent, InputMsg, InventoryState, isCraftMsg, isInputMsg, isJoinMsg,
+  C2S, CombatStats, GameEvent, InputMsg, InventoryState, isCraftMsg, isInputMsg, isJoinMsg, isKickMsg,
   isReadyMsg, isStartMatchMsg, isStartPracticeMsg, LobbyStateMsg, PickupInfo, PlacementEntry, PlayerInfo, S2C,
   SmokeSnap, SnapPlayer, SnapProjectile, SnapshotMsg, WeaponSlotState,
 } from '@shared/protocol';
 import { decideMatch, scoreRound } from '@shared/scoring';
-import { fogAt, loudPingActiveAt, phaseAt, timeOfDayAt, zoneAt } from '@shared/timeline';
+import {
+  fogAt, lightingPresetForRound, loudPingActiveAt, phaseAt, timeOfDayAt, zoneAt,
+  type LightingPreset,
+} from '@shared/timeline';
 import { buildHeightGrid, sampleHeight } from '@shared/terrain';
 import { generateWorld, assignSpawnIndices, CrateTier, WorldGen } from '@shared/worldgen';
 import { deriveSeed, mulberry32, pick, Rng } from '@shared/rng';
@@ -180,6 +183,7 @@ export class GameRoom {
   private zoneTierAnnounced = 0;
   private currentSpawns: Record<string, number> = {};
   private currentSuddenDeath = false;
+  private currentLighting: LightingPreset = 'day';
   private matchStats = new Map<string, CombatStats>();
 
   constructor(io: Server, rapier: RapierModule, opts: GameRoomOptions = {}) {
@@ -263,7 +267,8 @@ export class GameRoom {
       if (!this.inMatch || !isInputMsg(msg)) return;
       const p = this.players.get(socket.data.playerId as string);
       if (!p || !p.connected) return;
-      if (enqueueServerInput(p.inputBuffer, msg)) p.lastInputAt = Date.now();
+      const stance = stanceForWeapon(this.activeWeapon(p).type, msg.sneak || msg.prone === true);
+      if (enqueueServerInput(p.inputBuffer, { ...msg, ...stance })) p.lastInputAt = Date.now();
     });
 
     socket.on(C2S.craft, (msg: unknown) => {
@@ -278,6 +283,23 @@ export class GameRoom {
     socket.on(C2S.rematch, () => {
       const c = this.connFor(socket);
       if (c && !this.inMatch) { c.ready = true; this.broadcastLobby(); }
+    });
+
+    socket.on(C2S.leaveGame, (ack: unknown) => {
+      const c = this.connFor(socket);
+      if (c) this.removeConnectionNow(c.id);
+      if (typeof ack === 'function') (ack as () => void)();
+    });
+
+    socket.on(C2S.kickPlayer, (msg: unknown) => {
+      const requester = this.connFor(socket);
+      if (!requester || requester.id !== this.hostId || this.inMatch || !isKickMsg(msg)) return;
+      if (msg.playerId === requester.id) return;
+      const target = this.conns.get(msg.playerId);
+      if (!target) return;
+      target.socket.emit(S2C.kicked, { reason: 'Du wurdest vom Host aus der Lobby entfernt.' });
+      this.removeConnectionNow(target.id);
+      setTimeout(() => target.socket.disconnect(true), 0);
     });
 
     socket.on(C2S.pingProbe, (sent: unknown, ack: unknown) => {
@@ -318,6 +340,32 @@ export class GameRoom {
       this.broadcastLobby();
     }, RECONNECT_GRACE_MS);
     this.disconnectTimers.set(c.id, timer);
+    this.broadcastLobby();
+  }
+
+  /** Explicit leave/kick bypasses the reconnect grace period. */
+  private removeConnectionNow(id: string): void {
+    const c = this.conns.get(id);
+    if (!c) return;
+    const timer = this.disconnectTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.disconnectTimers.delete(id);
+    this.conns.delete(id);
+    c.connected = false;
+
+    const p = this.players.get(id);
+    if (p) {
+      p.connected = false;
+      p.inputBuffer.queue = [];
+      p.lastInput = neutralServerInput(p.lastSeq, p.yaw, p.pitch);
+      if (p.alive && this.roundActive) this.kill(p, null, 'zone');
+    }
+
+    this.migrateHost(id);
+    if (this.inMatch) {
+      const humans = [...this.players.values()].filter((player) => player.connected && !player.isBot).length;
+      if (humans < 1 || (!this.practice && humans < 2)) this.endMatchEarly();
+    }
     this.broadcastLobby();
   }
 
@@ -447,6 +495,7 @@ export class GameRoom {
 
   private startRound(suddenDeath: boolean): void {
     this.round += 1;
+    this.currentLighting = lightingPresetForRound(this.seed, this.round);
     if (suddenDeath) this.suddenDeathRounds += 1;
     this.roundActive = false; // no pickupSpawn events while placing initial loot
     this.t = 0;
@@ -495,7 +544,7 @@ export class GameRoom {
       p.stats = this.freshStats();
       p.cookingSince = null;
       p.blindUntil = 0;
-      this.phys.setPlayerSneaking(id, false, p.move.pos);
+      this.phys.setPlayerStance(id, false, false, p.move.pos);
       this.phys.setPlayerPos(id, p.move.pos);
       if (!p.connected) this.eliminationGroups.push([id]); // disconnected: eliminated at start
       const mem = this.botMems.get(id);
@@ -519,6 +568,7 @@ export class GameRoom {
     this.roundActive = true;
     this.io.emit(S2C.roundStart, {
       round: this.round, suddenDeath, spawns: spawnRecord, totals,
+      lightingPreset: this.currentLighting,
       pickups: [...this.pickups.values()],
     });
     // everyone gets a fresh (empty) inventory
@@ -535,6 +585,7 @@ export class GameRoom {
     for (const [id, value] of this.totals) totals[id] = value;
     conn.socket.emit(S2C.roundStart, {
       round: this.round, suddenDeath: this.currentSuddenDeath,
+      lightingPreset: this.currentLighting,
       spawns: this.currentSpawns, totals, pickups: [...this.pickups.values()],
     });
     const player = this.players.get(conn.id);
@@ -725,7 +776,9 @@ export class GameRoom {
   }
 
   private eyePos(p: MatchPlayer): Vec3 {
-    const height = p.move.sneaking ? PLAYER_SNEAK_EYE_HEIGHT : PLAYER_EYE_HEIGHT;
+    const height = p.move.prone
+      ? PLAYER_PRONE_EYE_HEIGHT
+      : p.move.sneaking ? PLAYER_SNEAK_EYE_HEIGHT : PLAYER_EYE_HEIGHT;
     return { x: p.move.pos.x, y: p.move.pos.y + height, z: p.move.pos.z };
   }
 
@@ -774,7 +827,7 @@ export class GameRoom {
 
   private notifyLoud(p: MatchPlayer, loud: boolean): void {
     // ping-on-loud (§6.2): only while there is still daylight
-    if (loud && loudPingActiveAt(this.t, MATCH_MODE_PACE[this.matchMode])) {
+    if (loud && loudPingActiveAt(this.t, MATCH_MODE_PACE[this.matchMode], this.currentLighting)) {
       this.pings.set(p.id, { x: p.move.pos.x, z: p.move.pos.z, until: this.t + LOUD_PING_SECONDS });
     }
   }
@@ -808,7 +861,7 @@ export class GameRoom {
     const base = this.viewDir(p);
     const pellets = def.pellets ?? 1;
     const moveFactor = Math.min(1, Math.hypot(p.move.velX, p.move.velZ) / SPRINT_SPEED)
-      * (p.move.sneaking ? 0.35 : 1);
+      * (p.move.prone ? 0.12 : p.move.sneaking ? 0.35 : 1);
     const spread = ((p.aiming ? def.aimSpread : def.hipSpread) ?? 0)
       + (def.moveSpread ?? 0) * moveFactor;
     for (let i = 0; i < pellets; i++) {
@@ -839,7 +892,7 @@ export class GameRoom {
             const k = Math.min(1, (hit.dist - fs) / Math.max(0.01, fe - fs));
             dmg *= 1 - 0.65 * k; // down to 35 % at falloffEnd
           }
-          const headshot = isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y);
+          const headshot = isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y, target.move.prone);
           if (headshot) dmg *= 1.65;
           this.applyDamage(target, p, dmg, weapon, 'weapon', events, headshot);
         }
@@ -889,7 +942,7 @@ export class GameRoom {
             if (target?.alive) {
               const owner = this.players.get(pr.owner);
               const def = WEAPONS.bow;
-              const headshot = isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y);
+              const headshot = isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y, target.move.prone);
               const dmg = headshot ? (def.headshotDamage ?? def.damage) : def.damage;
               if (owner) this.applyDamage(target, owner, dmg, 'bow', 'weapon', events, headshot);
             } else {
@@ -1365,10 +1418,13 @@ export class GameRoom {
     const rng = this.lootRng;
     const drops: ItemType[] = [];
     if (tier === 'top') {
+      const guaranteedSniper = this.gen.crates.some(
+        (crate) => crate.id === pk.id && crate.guaranteedItem === 'sniper',
+      );
       // rare marksman roll (§F1): the sniper only ever drops from top crates
-      if (rng() < SNIPER_CRATE_CHANCE) {
+      if (guaranteedSniper || rng() < SNIPER_CRATE_CHANCE) {
         drops.push('sniper');
-        drops.push(rng() < 0.6 ? 'sniperAmmo' : 'bandageItem');
+        drops.push(guaranteedSniper || rng() < 0.6 ? 'sniperAmmo' : 'bandageItem');
       } else {
         drops.push(pick(rng, ['rifle', 'shotgun'] as ItemType[]));
         drops.push(pick(rng, ['rifleAmmo', 'shellAmmo', 'grenade', 'flashGrenade', 'bandageItem'] as ItemType[]));
@@ -1473,7 +1529,7 @@ export class GameRoom {
     const zone = zoneAt(this.t, this.n, pace);
     const diff = BOT_DIFFICULTIES[this.botDifficulty];
     // night + fog shrink bot vision exactly like a human's screen does
-    const detectRange = Math.min(diff.detectRange, fogAt(this.t, pace) * 0.95);
+    const detectRange = Math.min(diff.detectRange, fogAt(this.t, pace, this.currentLighting) * 0.95);
     for (const [id, mem] of this.botMems) {
       const p = this.players.get(id);
       if (!p || !p.alive) continue;
@@ -1602,6 +1658,7 @@ export class GameRoom {
       weapon: this.activeWeapon(p).type, slot: p.inv.active,
       sprinting: p.move.sprinting,
       sneaking: p.move.sneaking,
+      prone: p.move.prone,
       aiming: p.aiming,
       bandaging: p.healRemaining > 0,
       plates: p.inv.plates,
@@ -1627,7 +1684,7 @@ export class GameRoom {
     return {
       t: round3(this.t),
       phase: phaseAt(this.t, pace),
-      timeOfDay: round3(timeOfDayAt(this.t, pace)),
+      timeOfDay: round3(timeOfDayAt(this.t, pace, this.currentLighting)),
       zone: {
         radius: round3(zone.radius), targetRadius: zone.targetRadius, dot: zone.dot,
         tier: zone.tier, shrinking: zone.shrinking, nextShrinkAt: zone.nextShrinkAt,
@@ -1801,6 +1858,6 @@ function normalize(v: Vec3): Vec3 {
 }
 const round3 = (v: number) => Math.round(v * 1000) / 1000;
 
-export function isHeadshotHeight(feetY: number, sneaking: boolean, hitY: number): boolean {
-  return hitY >= feetY + (sneaking ? 0.92 : 1.38);
+export function isHeadshotHeight(feetY: number, sneaking: boolean, hitY: number, prone = false): boolean {
+  return hitY >= feetY + (prone ? 0.55 : sneaking ? 0.92 : 1.38);
 }

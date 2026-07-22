@@ -4,7 +4,9 @@ import {
   FINAL_COLLAPSE_AT, finalRingDiameter, scatterCrateCount, FIXED_POI_CRATES,
   SHRINK1_AT, SHRINK2_AT, SHRINK3_AT, ZONE_RADII, ZONE_START_RADIUS,
 } from '@shared/constants';
-import { fogAt, loudPingActiveAt, phaseAt, timeOfDayAt, zoneAt, zoneSteps } from '@shared/timeline';
+import {
+  fogAt, lightingPresetForRound, loudPingActiveAt, phaseAt, timeOfDayAt, zoneAt, zoneSteps,
+} from '@shared/timeline';
 
 describe('N scaling (§3)', () => {
   it('scatter crates = 3×N', () => {
@@ -27,6 +29,23 @@ describe('N scaling (§3)', () => {
 });
 
 describe('round timeline (§6.1)', () => {
+  it('selects deterministic but different day, dawn, sunset or night moods per round', () => {
+    const allowed = new Set(['day', 'dawn', 'sunset', 'night']);
+    for (const seed of [1, 7, 42, 1337]) {
+      const rounds = [1, 2, 3].map((round) => lightingPresetForRound(seed, round));
+      expect(rounds.every((preset) => allowed.has(preset))).toBe(true);
+      expect(new Set(rounds).size).toBe(3);
+      expect(rounds).toEqual([1, 2, 3].map((round) => lightingPresetForRound(seed, round)));
+    }
+  });
+
+  it('maps fixed lighting presets to readable light and fog levels without rain', () => {
+    expect(timeOfDayAt(100, 1, 'day')).toBe(0);
+    expect(timeOfDayAt(100, 1, 'dawn')).toBeGreaterThan(0);
+    expect(timeOfDayAt(100, 1, 'sunset')).toBeGreaterThan(timeOfDayAt(100, 1, 'dawn'));
+    expect(timeOfDayAt(100, 1, 'night')).toBe(1);
+    expect(fogAt(100, 1, 'day')).toBeGreaterThan(fogAt(100, 1, 'night'));
+  });
   it('phases: 0–3 loot, 3–8 closing, 8+ endgame', () => {
     expect(phaseAt(0)).toBe('loot');
     expect(phaseAt(179)).toBe('loot');

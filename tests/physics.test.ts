@@ -3,7 +3,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { GamePhysics } from '@shared/physics';
-import { freshMoveState, stepMovement } from '@shared/movement';
+import { freshMoveState, stanceForWeapon, stepMovement } from '@shared/movement';
 import { sampleHeight } from '@shared/terrain';
 import { generateWorld } from '@shared/worldgen';
 import type { InputMsg } from '@shared/protocol';
@@ -94,6 +94,45 @@ describe('heightfield collider', () => {
     phys.removePlayer('p3');
   });
 
+  it('walks through the authored watchtower stair opening onto the deck', () => {
+    const tower = gen.pois.find((poi) => poi.id === 'watchtower')!;
+    const baseY = sampleHeight(gen.params, tower.x, tower.z);
+    const towerYaw = tower.structures[0].rotY;
+    const startX = tower.x + Math.sin(towerYaw) * 8.4;
+    const startZ = tower.z + Math.cos(towerYaw) * 8.4;
+    const start = { x: startX, y: sampleHeight(gen.params, startX, startZ) + 0.2, z: startZ };
+    phys.addPlayer('tower-climber', start);
+    const st = freshMoveState(start);
+    for (let i = 0; i < 30; i++) { stepMovement(phys, 'tower-climber', st, idleInput()); phys.step(); }
+    let maxFeetY = st.pos.y;
+    for (let i = 0; i < 150; i++) {
+      stepMovement(phys, 'tower-climber', st, idleInput({ mz: 1, yaw: towerYaw }));
+      phys.step();
+      maxFeetY = Math.max(maxFeetY, st.pos.y);
+    }
+    expect(maxFeetY).toBeGreaterThan(baseY + 5.35);
+    phys.removePlayer('tower-climber');
+  });
+
+  it('walks through the authored bunker entrance instead of hitting the back-wall collider', () => {
+    const bunker = gen.pois.find((poi) => poi.id === 'bunker')!;
+    const bunkerYaw = bunker.structures[0].rotY;
+    const startX = bunker.x + Math.sin(bunkerYaw) * 5.4;
+    const startZ = bunker.z + Math.cos(bunkerYaw) * 5.4;
+    const start = { x: startX, y: sampleHeight(gen.params, startX, startZ) + 0.2, z: startZ };
+    phys.addPlayer('bunker-entry', start);
+    const st = freshMoveState(start);
+    for (let i = 0; i < 30; i++) { stepMovement(phys, 'bunker-entry', st, idleInput()); phys.step(); }
+    for (let i = 0; i < 55; i++) {
+      stepMovement(phys, 'bunker-entry', st, idleInput({ mz: 1, yaw: bunkerYaw }));
+      phys.step();
+    }
+    const localForward = (st.pos.x - bunker.x) * Math.sin(bunkerYaw)
+      + (st.pos.z - bunker.z) * Math.cos(bunkerYaw);
+    expect(localForward).toBeLessThan(1.2);
+    phys.removePlayer('bunker-entry');
+  });
+
   it('accelerates responsively and decelerates to a stable stop', () => {
     const start = { x: 0, y: sampleHeight(gen.params, 0, -118) + 0.2, z: -118 };
     phys.addPlayer('smooth', start);
@@ -139,6 +178,36 @@ describe('heightfield collider', () => {
     );
     expect(highRay?.playerId).not.toBe('sneak');
     phys.removePlayer('sneak');
+  });
+
+  it('maps Ctrl to prone only for the sniper and uses a lower, slower capsule', () => {
+    expect(stanceForWeapon('sniper', true)).toEqual({ sneak: false, prone: true });
+    expect(stanceForWeapon('rifle', true)).toEqual({ sneak: true, prone: false });
+    expect(stanceForWeapon('sniper', false)).toEqual({ sneak: false, prone: false });
+
+    const start = { x: -35, y: sampleHeight(gen.params, -35, -80) + 0.2, z: -80 };
+    phys.addPlayer('prone', start);
+    const st = freshMoveState(start);
+    for (let i = 0; i < 30; i++) { stepMovement(phys, 'prone', st, idleInput()); phys.step(); }
+    const from = { ...st.pos };
+    for (let i = 0; i < 30; i++) {
+      stepMovement(phys, 'prone', st, idleInput({
+        mz: 1, sprint: true, prone: true, yaw: -Math.PI / 2,
+      }));
+      phys.step();
+    }
+    const speed = Math.hypot(st.pos.x - from.x, st.pos.z - from.z) / (30 * 0.033);
+    expect(speed).toBeGreaterThan(1);
+    expect(speed).toBeLessThan(2.5);
+    expect(st.sprinting).toBe(false);
+    expect(st.sneaking).toBe(false);
+    expect(st.prone).toBe(true);
+    const upperBodyRay = phys.raycast(
+      { x: st.pos.x - 2, y: st.pos.y + 1.05, z: st.pos.z },
+      { x: 1, y: 0, z: 0 }, 4,
+    );
+    expect(upperBodyRay?.playerId).not.toBe('prone');
+    phys.removePlayer('prone');
   });
 
   it('raycast can hit a player capsule and reports the id', () => {

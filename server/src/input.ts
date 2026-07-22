@@ -33,6 +33,7 @@ export function neutralServerInput(seq = 0, yaw = 0, pitch = 0): InputMsg {
     pitch,
     sprint: false,
     sneak: false,
+    prone: false,
     aim: false,
     jump: false,
     fire: false,

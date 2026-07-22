@@ -4,6 +4,7 @@ export type BindAction = 'forward' | 'back' | 'left' | 'right' | 'sprint' | 'sne
 
 export interface PlayerSettings {
   mouseSensitivity: number;
+  sniperAimSensitivity: number;
   masterVolume: number;
   effectsVolume: number;
   footstepsVolume: number;
@@ -20,6 +21,7 @@ export const DEFAULT_KEYBINDS: Record<BindAction, string> = {
 
 export const DEFAULT_SETTINGS: PlayerSettings = {
   mouseSensitivity: 1,
+  sniperAimSensitivity: 0.55,
   masterVolume: 0.7,
   effectsVolume: 0.8,
   footstepsVolume: 0.9,
@@ -38,6 +40,8 @@ export function loadSettings(): PlayerSettings {
     const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<PlayerSettings>;
     return {
       mouseSensitivity: Math.max(0.25, clamp(value.mouseSensitivity, 1)),
+      sniperAimSensitivity: Math.max(0.1, Math.min(1.5,
+        clamp(value.sniperAimSensitivity, DEFAULT_SETTINGS.sniperAimSensitivity))),
       masterVolume: Math.min(1, clamp(value.masterVolume, DEFAULT_SETTINGS.masterVolume)),
       effectsVolume: Math.min(1, clamp(value.effectsVolume, DEFAULT_SETTINGS.effectsVolume)),
       footstepsVolume: Math.min(1, clamp(value.footstepsVolume, DEFAULT_SETTINGS.footstepsVolume)),

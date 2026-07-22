@@ -22,6 +22,7 @@ export const PLAYER_MAX_HP = 100;
 export const WALK_SPEED = 6; // m/s
 export const AIM_SPEED = 4.4; // m/s while aiming down sights
 export const SNEAK_SPEED = 3.2; // m/s while crouched
+export const PRONE_SPEED = 1.8; // m/s while lying down with the sniper
 export const SPRINT_SPEED = 9; // m/s
 export const GROUND_ACCEL = 36; // m/s²: responsive, but not an instant velocity snap
 export const GROUND_DECEL = 44; // m/s²: short, readable stopping distance
@@ -33,6 +34,8 @@ export const PLAYER_HEIGHT = 1.8; // capsule total height
 export const PLAYER_EYE_HEIGHT = 1.62;
 export const PLAYER_SNEAK_HEIGHT = 1.22;
 export const PLAYER_SNEAK_EYE_HEIGHT = 1.02;
+export const PLAYER_PRONE_HEIGHT = 0.86;
+export const PLAYER_PRONE_EYE_HEIGHT = 0.48;
 // Sprint stamina (§12 open point — default: with slow regen)
 export const SPRINT_STAMINA_MAX = 6; // seconds of sprint
 export const SPRINT_STAMINA_REGEN = 1.2; // seconds refilled per second not sprinting

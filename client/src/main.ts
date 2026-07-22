@@ -5,17 +5,17 @@
 import * as THREE from 'three';
 import {
   BANDAGE_USE_TIME, GRENADE_FUSE, INTERACT_HOLD_SECS, INTERP_DELAY_MS, MATCH_MODE_PACE,
-  PLAYER_EYE_HEIGHT, PLAYER_SNEAK_EYE_HEIGHT, RECONCILE_SNAP_DIST,
+  PLAYER_EYE_HEIGHT, PLAYER_PRONE_EYE_HEIGHT, PLAYER_SNEAK_EYE_HEIGHT, RECONCILE_SNAP_DIST,
   SCOPE_BREATH_MAX, SCOPE_BREATH_REGEN, SERVER_TICK_HZ, THROW_WEAPON, WEAPONS,
   type BotDifficulty, type MatchMode, type WeaponType,
 } from '@shared/constants';
 import { sampleHeight } from '@shared/terrain';
 import { GamePhysics, type RapierModule } from '@shared/physics';
-import { freshMoveState, stepMovement, type MoveState } from '@shared/movement';
+import { freshMoveState, stanceForWeapon, stepMovement, type MoveState } from '@shared/movement';
 import { bushAt, generateWorld, type WorldGen } from '@shared/worldgen';
 import type {
   GameEvent, InputMsg, InventoryState, LobbyStateMsg, MatchStartMsg, PickupInfo,
-  RoundStartMsg, SessionMsg, SnapPlayer, SnapshotMsg,
+  MatchEndMsg, RoundEndMsg, RoundStartMsg, SessionMsg, SnapPlayer, SnapshotMsg,
 } from '@shared/protocol';
 import { recordProfileMatch, renderProfile } from './profile-ui';
 import { Net } from './net';
@@ -28,6 +28,11 @@ import { OnboardingGuide } from './onboarding';
 import { FREECAM_FAST_SPEED, FREECAM_SPEED, updateFreecam } from './spectator';
 import { AdaptiveResolution } from './performance';
 import { gameAssets } from './game-assets';
+import { adjustSniperScopeFov, DEFAULT_SNIPER_SCOPE_FOV } from './sniper';
+import {
+  computeVictoryCameraPose, REDUCED_MOTION_VICTORY_SECONDS, VICTORY_CINEMATIC_SECONDS,
+  type VictoryCameraPose, type VictorySubject,
+} from './victory-cinematic';
 import {
   DEFAULT_SETTINGS, keyLabel, loadSettings, saveSettings,
   type BindAction, type PlayerSettings,
@@ -125,11 +130,13 @@ let localBushId: number | null = null;
 let localBushDistance = 0;
 let joinedTransportId = '';
 let lastInv: InventoryState | null = null;
+let leavingGame = false;
 // sniper scope (§F1): sway is added to the SENT view direction so it counts
 let swayT = 0;
 let swayYaw = 0;
 let swayPitch = 0;
 let breath = SCOPE_BREATH_MAX;
+let sniperScopeFov = DEFAULT_SNIPER_SCOPE_FOV;
 // flashbang whiteout (§F2)
 let flashLevel = 0;
 let flashDecay = 0;
@@ -147,6 +154,30 @@ let lastReconciliationError = 0;
 let maxReconciliationError = 0;
 let maxPredictionStepsPerFrame = 0;
 
+interface LastElimination {
+  victimId: string;
+  position: THREE.Vector3;
+}
+
+interface VictoryCinematicState {
+  elapsed: number;
+  duration: number;
+  subject: VictorySubject;
+  roundEnd: RoundEndMsg;
+  matchEnd: MatchEndMsg | null;
+  winnerId: string;
+  winnerName: string;
+  resultShown: boolean;
+}
+
+let lastElimination: LastElimination | null = null;
+let victoryCinematic: VictoryCinematicState | null = null;
+const victoryCameraPose: VictoryCameraPose = {
+  position: new THREE.Vector3(),
+  target: new THREE.Vector3(),
+  danceWeight: 0,
+};
+
 function resetRenderMovePosition(): void {
   previousMovePos.set(move.pos.x, move.pos.y, move.pos.z);
   renderMovePos.copy(previousMovePos);
@@ -157,6 +188,7 @@ const specPos = new THREE.Vector3();
 let spectateYaw = 0;
 
 function disposeMatchScene(): void {
+  cancelVictoryCinematic();
   if (world) world.scene.remove(camera);
   entities?.dispose();
   phys?.dispose();
@@ -169,6 +201,94 @@ function disposeMatchScene(): void {
   remoteBufs.clear();
   remoteFootsteps.clear();
   renderer.renderLists.dispose();
+}
+
+function cancelVictoryCinematic(): void {
+  victoryCinematic = null;
+  entities?.endVictoryCelebration();
+  $('hud').classList.remove('victory-cinematic');
+}
+
+function finishMatchEnd(m: MatchEndMsg): void {
+  roundRunning = false;
+  inMatch = false;
+  hud.showMatchEnd(m.standings, m.totals, m.winnerName, myId, m.winnerId === myId, m.stats);
+  document.exitPointerLock?.();
+  recordProfileMatch({
+    name: myName, playerId: myId, seed: matchSeed ?? 0,
+    rounds: roundsThisMatch, deaths: myDeathsThisMatch,
+    practice: practiceMatch || !!m.practice, standings: m.standings, stats: m.stats,
+  });
+  disposeMatchScene();
+}
+
+function showVictoryResult(state: VictoryCinematicState): void {
+  if (state.resultShown) return;
+  state.resultShown = true;
+  hud.showDuelResult(state.winnerId === myId, state.winnerName, state.roundEnd.round);
+}
+
+function finishVictoryCinematic(): void {
+  const state = victoryCinematic;
+  if (!state) return;
+  victoryCinematic = null;
+  $('hud').classList.remove('victory-cinematic');
+  showVictoryResult(state);
+  entities?.endVictoryCelebration();
+  camera.fov = 75;
+  camera.updateProjectionMatrix();
+  if (state.matchEnd) {
+    finishMatchEnd(state.matchEnd);
+    return;
+  }
+  const m = state.roundEnd;
+  hud.showRoundEnd(
+    m.round, m.placements, m.totals,
+    Math.max(0, m.nextRoundIn - state.duration), myId,
+    m.matchOver === false && m.round >= 3, m.stats,
+  );
+  document.exitPointerLock?.();
+}
+
+function startVictoryCinematic(m: RoundEndMsg): void {
+  const winner = m.placements.find((entry) => entry.place === 1) ?? m.placements[0];
+  if (!winner || !entities) {
+    hud.showRoundEnd(m.round, m.placements, m.totals, m.nextRoundIn, myId,
+      m.matchOver === false && m.round >= 3, m.stats);
+    return;
+  }
+  const winnerSnap = lastSnap?.players.find((player) => player.id === winner.id);
+  const localWinner = winner.id === myId;
+  const winnerPosition = localWinner
+    ? renderMovePos.clone()
+    : new THREE.Vector3(winnerSnap?.x ?? 0, winnerSnap?.y ?? 0, winnerSnap?.z ?? 0);
+  const winnerYaw = localWinner ? input.yaw : winnerSnap?.yaw ?? 0;
+  const winnerWeapon = localWinner ? myWeapon : winnerSnap?.weapon ?? 'fists';
+  const victimPosition = lastElimination && lastElimination.victimId !== winner.id
+    ? lastElimination.position.clone()
+    : null;
+
+  entities.startVictoryCelebration(
+    winner.id, localWinner,
+    winnerPosition.x, winnerPosition.y, winnerPosition.z,
+    winnerYaw, colorIndex.get(winner.id) ?? 0, winnerWeapon, reduceMotion,
+  );
+  entities.setViewVisible(false);
+  $('hud').classList.add('victory-cinematic');
+  hud.hideScoreboard();
+  hud.hideDeathRecap();
+  hud.setSpectating(false);
+  world?.updateLocalCover(9999, 9999);
+  victoryCinematic = {
+    elapsed: 0,
+    duration: reduceMotion ? REDUCED_MOTION_VICTORY_SECONDS : VICTORY_CINEMATIC_SECONDS,
+    subject: { winner: winnerPosition, winnerYaw, victim: victimPosition },
+    roundEnd: m,
+    matchEnd: null,
+    winnerId: winner.id,
+    winnerName: winner.name,
+    resultShown: false,
+  };
 }
 
 function rumble(duration: number, strong = 0.5, weak = 0.25): void {
@@ -208,24 +328,24 @@ function updateLocalFootsteps(dt: number): void {
   const speed = Math.hypot(move.velX, move.velZ);
   if (speed < 0.45) return;
   localFootstepDistance += speed * dt;
-  const stride = move.sprinting ? 2.05 : move.sneaking ? 1.65 : 1.8;
+  const stride = move.prone ? 1.4 : move.sprinting ? 2.05 : move.sneaking ? 1.65 : 1.8;
   if (localFootstepDistance < stride) return;
   localFootstepDistance %= stride;
-  sfx.play(footstepSound(move.pos.x, move.pos.z), 0, move.sneaking ? 0.16 : move.sprinting ? 0.9 : 0.55);
+  sfx.play(footstepSound(move.pos.x, move.pos.z), 0, move.prone ? 0.06 : move.sneaking ? 0.16 : move.sprinting ? 0.9 : 0.55);
   const bush = gen ? bushAt(gen, move.pos.x, move.pos.z) : null;
   if (bush?.id !== localBushId) { localBushId = bush?.id ?? null; localBushDistance = 0; }
   if (bush) {
     localBushDistance += stride;
     if (localBushDistance >= 1.15) {
       localBushDistance = 0;
-      sfx.play('bushRustle', 0, move.sneaking ? 0.12 : move.sprinting ? 0.9 : 0.5);
+      sfx.play('bushRustle', 0, move.prone ? 0.07 : move.sneaking ? 0.12 : move.sprinting ? 0.9 : 0.5);
     }
   }
 }
 
 function updateRemoteFootsteps(
   id: string, x: number, z: number,
-  state: { alive: boolean; grounded: boolean; sneaking: boolean; sprinting: boolean },
+  state: { alive: boolean; grounded: boolean; sneaking: boolean; prone: boolean; sprinting: boolean },
 ): void {
   const previous = remoteFootsteps.get(id);
   if (!previous) { remoteFootsteps.set(id, { x, z, distance: 0, bushId: null, bushDistance: 0 }); return; }
@@ -234,17 +354,17 @@ function updateRemoteFootsteps(
   previous.z = z;
   if (!state.alive || !state.grounded || delta > 2) { previous.distance = 0; return; }
   previous.distance += delta;
-  const stride = state.sprinting ? 2.05 : state.sneaking ? 1.65 : 1.8;
+  const stride = state.prone ? 1.4 : state.sprinting ? 2.05 : state.sneaking ? 1.65 : 1.8;
   if (previous.distance < stride) return;
   previous.distance %= stride;
-  playSpatial(footstepSound(x, z), x, move.pos.y, z, state.sneaking ? 0.13 : state.sprinting ? 0.82 : 0.48);
+  playSpatial(footstepSound(x, z), x, move.pos.y, z, state.prone ? 0.05 : state.sneaking ? 0.13 : state.sprinting ? 0.82 : 0.48);
   const bush = gen ? bushAt(gen, x, z) : null;
   if (bush?.id !== previous.bushId) { previous.bushId = bush?.id ?? null; previous.bushDistance = 0; }
   if (bush) {
     previous.bushDistance += stride;
     if (previous.bushDistance >= 1.15) {
       previous.bushDistance = 0;
-      playSpatial('bushRustle', x, move.pos.y, z, state.sneaking ? 0.1 : state.sprinting ? 0.82 : 0.44);
+      playSpatial('bushRustle', x, move.pos.y, z, state.prone ? 0.06 : state.sneaking ? 0.1 : state.sprinting ? 0.82 : 0.44);
     }
   }
 }
@@ -252,7 +372,14 @@ function updateRemoteFootsteps(
 const diagnostics = {
   snapshot: () => ({
     seed: matchSeed,
-    state: { inMatch, roundRunning, alive, pointerLocked: input.pointerLocked },
+    state: {
+      inMatch, roundRunning, alive, pointerLocked: input.pointerLocked,
+      victoryCinematic: victoryCinematic ? {
+        elapsed: victoryCinematic.elapsed,
+        duration: victoryCinematic.duration,
+        winnerId: victoryCinematic.winnerId,
+      } : null,
+    },
     player: {
       position: { ...move.pos },
       renderPosition: { x: renderMovePos.x, y: renderMovePos.y, z: renderMovePos.z },
@@ -272,6 +399,7 @@ const diagnostics = {
       textures: renderer.info.memory.textures,
     },
     entities: entities?.stats() ?? null,
+    environment: world?.stats() ?? null,
     physics: phys?.stats() ?? null,
     network: {
       pendingInputs: pending.length, inboundKbPerSec: bwShown,
@@ -298,11 +426,13 @@ function applyRuntimeSettings(): void {
   renderer.shadowMap.enabled = settings.graphics !== 'low';
   world?.setGraphicsQuality(settings.graphics);
   if (!settings.cameraShake) { damageKick = 0; fireFovKick = 0; }
-  $('controls-hint').textContent = `${keyLabel(settings.keybinds.forward)}/${keyLabel(settings.keybinds.left)}/${keyLabel(settings.keybinds.back)}/${keyLabel(settings.keybinds.right)} Bewegen · ${keyLabel(settings.keybinds.sneak)} Schleichen · ${keyLabel(settings.keybinds.sprint)} Sprint/Atem · RMB Zielen · ${keyLabel(settings.keybinds.reload)} Nachladen · ${keyLabel(settings.keybinds.interact)} Sammeln · ${keyLabel(settings.keybinds.heal)} Heilen · 3×2 Wurf wechseln`;
+  $('controls-hint').textContent = `${keyLabel(settings.keybinds.forward)}/${keyLabel(settings.keybinds.left)}/${keyLabel(settings.keybinds.back)}/${keyLabel(settings.keybinds.right)} Bewegen · ${keyLabel(settings.keybinds.sneak)} Schleichen/Sniper hinlegen · ${keyLabel(settings.keybinds.sprint)} Sprint/Atem · RMB Zielen · Mausrad Scope-Zoom · ${keyLabel(settings.keybinds.reload)} Nachladen · ${keyLabel(settings.keybinds.interact)} Sammeln · ${keyLabel(settings.keybinds.heal)} Heilen`;
 }
 
 function populateSettings(): void {
   range('mouse-sensitivity').value = String(settings.mouseSensitivity);
+  range('sniper-aim-sensitivity').value = String(settings.sniperAimSensitivity);
+  $('sniper-aim-sensitivity-value').textContent = `${settings.sniperAimSensitivity.toFixed(2)}×`;
   $('mouse-sensitivity-value').textContent = `${settings.mouseSensitivity.toFixed(2)}×`;
   range('master-volume').value = String(settings.masterVolume);
   range('effects-volume').value = String(settings.effectsVolume);
@@ -317,12 +447,14 @@ function populateSettings(): void {
 
 function commitSettings(): void {
   settings.mouseSensitivity = Number(range('mouse-sensitivity').value);
+  settings.sniperAimSensitivity = Number(range('sniper-aim-sensitivity').value);
   settings.masterVolume = Number(range('master-volume').value);
   settings.effectsVolume = Number(range('effects-volume').value);
   settings.footstepsVolume = Number(range('footsteps-volume').value);
   settings.graphics = ($('graphics-quality') as HTMLSelectElement).value as PlayerSettings['graphics'];
   settings.cameraShake = ($('camera-shake') as HTMLInputElement).checked;
   $('mouse-sensitivity-value').textContent = `${settings.mouseSensitivity.toFixed(2)}×`;
+  $('sniper-aim-sensitivity-value').textContent = `${settings.sniperAimSensitivity.toFixed(2)}×`;
   saveSettings(settings);
   applyRuntimeSettings();
 }
@@ -333,7 +465,7 @@ function openSettings(): void {
   if (!settingsDialog.open) settingsDialog.showModal();
 }
 
-for (const id of ['mouse-sensitivity', 'master-volume', 'effects-volume', 'footsteps-volume', 'graphics-quality', 'camera-shake']) {
+for (const id of ['mouse-sensitivity', 'sniper-aim-sensitivity', 'master-volume', 'effects-volume', 'footsteps-volume', 'graphics-quality', 'camera-shake']) {
   $(id).addEventListener('input', commitSettings);
 }
 for (const id of ['menu-settings-btn', 'pause-settings-btn']) $(id).addEventListener('click', (event) => {
@@ -403,6 +535,7 @@ async function joinServer(): Promise<void> {
   sfx.unlock();
   $('menu-error').textContent = 'Lade Physik und kompakte Spielmodelle…';
   setJoinBusy(true);
+  leavingGame = false;
 
   try {
     await Promise.all([ensureRapier(), gameAssets.preload(renderer)]);
@@ -430,6 +563,7 @@ async function joinServer(): Promise<void> {
       $('lobby-error').textContent = msg;
       setJoinBusy(false);
     },
+    onKicked: (msg) => { void leaveToMenu(msg.reason, false, nextNet); },
     onMatchStart: (m) => onMatchStart(m),
     onRoundStart: (m) => onRoundStart(m),
     onSnapshot: (m) => onSnapshot(m),
@@ -440,20 +574,13 @@ async function joinServer(): Promise<void> {
       const myPlacement = m.placements.find((entry) => entry.id === myId);
       sfx.play(myPlacement?.place === 1 ? 'roundWin' : 'roundLose');
       if (myPlacement?.place === 1) rumble(180, 0.35, 0.55);
-      hud.showRoundEnd(m.round, m.placements, m.totals, m.nextRoundIn, myId,
-        m.matchOver === false && m.round >= 3, m.stats);
+      startVictoryCinematic(m);
     },
     onMatchEnd: (m) => {
+      if (leavingGame) return;
       roundRunning = false;
-      inMatch = false;
-      hud.showMatchEnd(m.standings, m.totals, m.winnerName, myId, m.winnerId === myId, m.stats);
-      document.exitPointerLock?.();
-      recordProfileMatch({
-        name: myName, playerId: myId, seed: matchSeed ?? 0,
-        rounds: roundsThisMatch, deaths: myDeathsThisMatch,
-        practice: practiceMatch || !!m.practice, standings: m.standings, stats: m.stats,
-      });
-      disposeMatchScene();
+      if (victoryCinematic) victoryCinematic.matchEnd = m;
+      else finishMatchEnd(m);
     },
     onSession: (session: SessionMsg) => {
       myId = session.playerId;
@@ -541,11 +668,52 @@ $('rematch-btn').addEventListener('click', () => {
   myReady = true;
   showScreen('lobby-screen');
 });
+for (const id of ['lobby-leave-btn', 'pause-leave-btn', 'scoreboard-leave-btn']) {
+  $(id).addEventListener('click', (event) => {
+    event.stopPropagation();
+    sfx.play('click');
+    void leaveToMenu('Du hast das Spiel verlassen.', true);
+  });
+}
 
 function showScreen(id: string | null): void {
   for (const s of ['menu-screen', 'lobby-screen', 'scoreboard-screen', 'profile-screen']) {
     $(s).classList.toggle('hidden', s !== id);
   }
+}
+
+async function leaveToMenu(message: string, notifyServer: boolean, targetNet: Net | null = net): Promise<void> {
+  if (leavingGame) return;
+  leavingGame = true;
+  document.exitPointerLock?.();
+  $('pause-hint').style.display = 'none';
+
+  if (notifyServer) await targetNet?.leaveGame();
+  targetNet?.dispose();
+  if (net === targetNet) net = null;
+
+  localStorage.removeItem(`islandResumeToken:${myName.toLocaleLowerCase()}`);
+  resumeToken = '';
+  joinedTransportId = '';
+  networkConnected = false;
+  inMatch = false;
+  roundRunning = false;
+  alive = false;
+  isHost = false;
+  myReady = false;
+  myId = '';
+  names.clear();
+  colorIndex.clear();
+  disposeMatchScene();
+  hud.hideScoreboard();
+  hud.hide();
+  hud.setScoped(false);
+  hud.setScopeZoom(null);
+  hud.setNetworkStatus(null);
+  showScreen('menu-screen');
+  $('menu-error').textContent = message;
+  setJoinBusy(false);
+  leavingGame = false;
 }
 
 function onLobby(m: LobbyStateMsg): void {
@@ -566,10 +734,22 @@ function onLobby(m: LobbyStateMsg): void {
     const li = document.createElement('li');
     const left = document.createElement('span');
     left.textContent = p.name + (p.id === myId ? ' (du)' : '');
+    const actions = document.createElement('span');
+    actions.className = 'lobby-player-actions';
     const right = document.createElement('span');
     right.className = 'tag' + (p.ready ? ' ready' : '');
     right.textContent = (p.isHost ? '👑 Host · ' : '') + (p.ready ? 'bereit ✓' : 'wartet…');
-    li.append(left, right);
+    actions.appendChild(right);
+    if (isHost && p.id !== myId) {
+      const kick = document.createElement('button');
+      kick.type = 'button';
+      kick.className = 'kick-player';
+      kick.textContent = 'Kicken';
+      kick.setAttribute('aria-label', `${p.name} aus der Lobby kicken`);
+      kick.addEventListener('click', () => net?.kickPlayer(p.id));
+      actions.appendChild(kick);
+    }
+    li.append(left, actions);
     ul.appendChild(li);
   }
   $('ready-btn').textContent = myReady ? 'Bereit ✓ (klicken zum Ändern)' : 'Bereit';
@@ -603,6 +783,7 @@ function onMatchStart(m: MatchStartMsg): void {
   practiceMatch = !!m.practice;
   myDeathsThisMatch = 0;
   roundsThisMatch = 0;
+  lastElimination = null;
   lastInv = null;
   m.players.forEach((p, i) => { names.set(p.id, p.name); colorIndex.set(p.id, i); });
 
@@ -626,6 +807,9 @@ function onMatchStart(m: MatchStartMsg): void {
 
 function onRoundStart(m: RoundStartMsg): void {
   if (!gen || !world || !phys || !entities) return;
+  world.setLightingPreset(m.lightingPreset);
+  cancelVictoryCinematic();
+  lastElimination = null;
   hud.hideScoreboard();
   hud.show();
   roundRunning = true;
@@ -651,6 +835,7 @@ function onRoundStart(m: RoundStartMsg): void {
   lastInv = null;
   swayT = 0; swayYaw = 0; swayPitch = 0;
   breath = SCOPE_BREATH_MAX;
+  sniperScopeFov = DEFAULT_SNIPER_SCOPE_FOV;
   flashLevel = 0; flashDecay = 0;
   nextCookBeepAt = 0;
   inputAccumulator = 0;
@@ -662,6 +847,7 @@ function onRoundStart(m: RoundStartMsg): void {
   hud.setFlashWhiteout(0);
   hud.setCooking(null, GRENADE_FUSE);
   hud.setScoped(false);
+  hud.setScopeZoom(null);
   hud.setBreath(null, false);
   entities.clearSmokes();
 
@@ -671,7 +857,7 @@ function onRoundStart(m: RoundStartMsg): void {
   move = freshMoveState({ x: sp.x, y: y + 0.1, z: sp.z });
   resetRenderMovePosition();
   onboardingOrigin = { x: sp.x, z: sp.z };
-  phys.setPlayerSneaking(myId, false, move.pos);
+  phys.setPlayerStance(myId, false, false, move.pos);
   phys.setPlayerPos(myId, move.pos);
   input.yaw = Math.atan2(-(-sp.x), -(-sp.z)); // face island center
   input.pitch = 0;
@@ -679,6 +865,7 @@ function onRoundStart(m: RoundStartMsg): void {
   entities.clearPickups();
   entities.clearProjectiles();
   for (const p of m.pickups) entities.addPickup(p);
+  entities.resetPlayerAnimations();
   entities.setViewWeapon('fists');
   entities.setAiming(false);
   entities.setReloading(false);
@@ -688,11 +875,14 @@ function onRoundStart(m: RoundStartMsg): void {
   hud.setSpectating(false);
   hud.hideDeathRecap();
 
+  const lightingLabel = {
+    day: 'Tag', dawn: 'Morgendämmerung', sunset: 'Sonnenuntergang', night: 'Nacht',
+  }[m.lightingPreset];
   if (m.suddenDeath && !suddenDeathAnnounced) {
     suddenDeathAnnounced = true;
-    hud.announce('⚔ SUDDEN DEATH — eine Runde entscheidet!', 4000);
+    hud.announce(`⚔ SUDDEN DEATH — ${lightingLabel} · eine Runde entscheidet!`, 4000);
   } else {
-    hud.announce(`Runde ${Math.min(m.round, 3)}${m.suddenDeath ? ' (Sudden Death)' : ''}`, 2200);
+    hud.announce(`Runde ${Math.min(m.round, 3)}${m.suddenDeath ? ' (Sudden Death)' : ''} · ${lightingLabel}`, 2600);
   }
   input.requestLock();
 }
@@ -713,7 +903,7 @@ function onSnapshot(m: SnapshotMsg): void {
     buf.push({ at: now, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch });
     while (buf.length > 30) buf.shift();
     entities?.updatePlayer(
-      p.id, p.x, p.y, p.z, p.yaw, p.pitch, p.alive, p.weapon, p.sneaking, p.aiming,
+      p.id, p.x, p.y, p.z, p.yaw, p.pitch, p.alive, p.weapon, p.sneaking, p.prone, p.aiming,
     );
   }
 
@@ -737,8 +927,8 @@ function reconcile(self: SnapPlayer): void {
     move.pos = { x: self.x, y: self.y, z: self.z };
     move.velX = self.vx; move.velY = self.vy; move.velZ = self.vz;
     move.grounded = self.grounded; move.stamina = self.stamina;
-    move.sprinting = self.sprinting; move.sneaking = self.sneaking;
-    phys.setPlayerSneaking(myId, move.sneaking, move.pos);
+    move.sprinting = self.sprinting; move.sneaking = self.sneaking; move.prone = self.prone;
+    phys.setPlayerStance(myId, move.sneaking, move.prone, move.pos);
     phys.setPlayerPos(myId, move.pos);
     pending = [];
     resetRenderMovePosition();
@@ -765,7 +955,8 @@ function reconcile(self: SnapPlayer): void {
   move.stamina = self.stamina;
   move.sprinting = self.sprinting;
   move.sneaking = self.sneaking;
-  phys.setPlayerSneaking(myId, move.sneaking, move.pos);
+  move.prone = self.prone;
+  phys.setPlayerStance(myId, move.sneaking, move.prone, move.pos);
   phys.setPlayerPos(myId, move.pos);
 
   let replayPreviousX = move.pos.x;
@@ -891,6 +1082,14 @@ function onEvent(e: GameEvent): void {
       entities?.flashPlayer(e.target, e.headshot);
       break;
     case 'death': {
+      const victimSnap = lastSnap?.players.find((player) => player.id === e.target);
+      lastElimination = {
+        victimId: e.target,
+        position: e.target === myId
+          ? renderMovePos.clone()
+          : new THREE.Vector3(victimSnap?.x ?? 0, victimSnap?.y ?? 0, victimSnap?.z ?? 0),
+      };
+      entities?.playElimination(e.target, e.attacker === myId);
       if (e.target === myId) {
         myDeathsThisMatch += 1;
         hud.announce('☠ Du bist raus — Zuschauermodus', 3000);
@@ -907,6 +1106,9 @@ function onEvent(e: GameEvent): void {
         sfx.play('death');
         rumble(280, 0.85, 0.5);
       } else if (e.attacker === myId) {
+        const victim = names.get(e.target) ?? 'Gegner';
+        const detail = e.weapon ? weaponName(e.weapon) : e.cause === 'zone' ? 'Zone' : 'Eliminiert';
+        hud.showElimination(victim, `${detail}${e.headshot ? ' · Kopftreffer' : ''}`);
         sfx.play('elimination');
         rumble(120, 0.2, 0.45);
       }
@@ -1041,6 +1243,7 @@ function frame(): void {
   lastFrame = now;
   dt = Math.min(dt, 0.1);
   visualElapsed += dt;
+  let finishVictoryAfterRender = false;
 
   if (input.debugToggled) {
     showDebug = !showDebug;
@@ -1060,6 +1263,10 @@ function frame(): void {
 
   // ---- sniper scope: hard zoom + overlay + breathing sway (§F1) ----
   const scoped = aiming && myWeapon === 'sniper';
+  input.setSniperScoped(scoped);
+  const zoomWheel = input.consumeSniperZoomWheel();
+  if (scoped && zoomWheel !== 0) sniperScopeFov = adjustSniperScopeFov(sniperScopeFov, zoomWheel);
+  entities.setViewVisible(alive && !scoped && !victoryCinematic);
   const holdingBreath = scoped && input.sprint && breath > 0;
   if (scoped) {
     swayT += dt;
@@ -1067,7 +1274,8 @@ function frame(): void {
       ? Math.max(0, breath - dt)
       : Math.min(SCOPE_BREATH_MAX, breath + SCOPE_BREATH_REGEN * dt * 0.35);
     const moveAmp = Math.hypot(move.velX, move.velZ) * 0.0016;
-    const amp = (holdingBreath ? 0.0006 : 0.0034 + moveAmp) * (move.sneaking ? 0.6 : 1);
+    const amp = (holdingBreath ? 0.0006 : 0.0034 + moveAmp)
+      * (move.prone ? 0.32 : move.sneaking ? 0.6 : 1);
     swayYaw = Math.sin(swayT * 1.9) * amp + Math.sin(swayT * 3.1 + 1.3) * amp * 0.5;
     swayPitch = Math.cos(swayT * 1.55) * amp * 0.8 + Math.sin(swayT * 2.6) * amp * 0.35;
     hud.setBreath(breath / SCOPE_BREATH_MAX, holdingBreath);
@@ -1078,8 +1286,9 @@ function frame(): void {
     hud.setBreath(null, false);
   }
   hud.setScoped(scoped);
+  hud.setScopeZoom(scoped ? sniperScopeFov : null);
 
-  const targetFov = (aiming ? (WEAPONS[myWeapon].aimFov ?? 55) : 75) + fireFovKick;
+  const targetFov = (scoped ? sniperScopeFov : aiming ? (WEAPONS[myWeapon].aimFov ?? 55) : 75) + fireFovKick;
   const fovEase = reduceMotion ? 1 : 1 - Math.exp(-dt * 14);
   const nextFov = camera.fov + (targetFov - camera.fov) * fovEase;
   if (Math.abs(nextFov - camera.fov) > 0.01) {
@@ -1101,6 +1310,7 @@ function frame(): void {
     while (inputAccumulator >= inputStep) {
       inputAccumulator -= inputStep;
       predictionStepsThisFrame += 1;
+      const stance = stanceForWeapon(myWeapon, input.pointerLocked && input.sneak);
       const inp: InputMsg = {
         seq: ++seq,
         dt: inputStep,
@@ -1110,7 +1320,7 @@ function frame(): void {
         yaw: input.yaw + swayYaw,
         pitch: input.pitch + swayPitch,
         sprint: input.sprint && !aiming,
-        sneak: input.pointerLocked && input.sneak,
+        ...stance,
         aim: aiming,
         jump: input.pointerLocked && input.jumpHeld,
         fire: input.fire,
@@ -1156,7 +1366,9 @@ function frame(): void {
       renderCorrection.multiplyScalar(remaining / correctionLength);
     }
 
-    const targetEyeHeight = move.sneaking ? PLAYER_SNEAK_EYE_HEIGHT : PLAYER_EYE_HEIGHT;
+    const targetEyeHeight = move.prone
+      ? PLAYER_PRONE_EYE_HEIGHT
+      : move.sneaking ? PLAYER_SNEAK_EYE_HEIGHT : PLAYER_EYE_HEIGHT;
     const eyeEase = reduceMotion ? 1 : 1 - Math.exp(-dt * 13);
     cameraEyeHeight += (targetEyeHeight - cameraEyeHeight) * eyeEase;
     camera.position.set(renderMovePos.x, renderMovePos.y + cameraEyeHeight, renderMovePos.z);
@@ -1221,14 +1433,38 @@ function frame(): void {
       id, renderX, renderY, renderZ,
       a.yaw + yawDiff * k, lerp(a.pitch, b.pitch),
       snapP?.alive ?? true, snapP?.weapon ?? 'fists',
-      snapP?.sneaking ?? false, snapP?.aiming ?? false,
+      snapP?.sneaking ?? false, snapP?.prone ?? false, snapP?.aiming ?? false,
     );
     updateRemoteFootsteps(id, renderX, renderZ, {
       alive: snapP?.alive ?? true,
       grounded: snapP?.grounded ?? false,
       sneaking: snapP?.sneaking ?? false,
+      prone: snapP?.prone ?? false,
       sprinting: snapP?.sprinting ?? false,
     });
+  }
+
+  if (victoryCinematic) {
+    victoryCinematic.elapsed = Math.min(victoryCinematic.duration, victoryCinematic.elapsed + dt);
+    computeVictoryCameraPose(
+      victoryCinematic.elapsed,
+      victoryCinematic.subject,
+      reduceMotion,
+      victoryCameraPose,
+    );
+    camera.position.copy(victoryCameraPose.position);
+    camera.rotation.set(0, 0, 0);
+    camera.lookAt(victoryCameraPose.target);
+    const cinematicFov = reduceMotion ? 64 : 58;
+    if (Math.abs(camera.fov - cinematicFov) > 0.01) {
+      camera.fov = cinematicFov;
+      camera.updateProjectionMatrix();
+    }
+    entities.setVictoryDanceWeight(victoryCameraPose.danceWeight);
+    world.updateLocalCover(9999, 9999);
+    const resultAt = reduceMotion ? 0.6 : 2.45;
+    if (victoryCinematic.elapsed >= resultAt) showVictoryResult(victoryCinematic);
+    finishVictoryAfterRender = victoryCinematic.elapsed >= victoryCinematic.duration;
   }
 
   // --- environment / HUD ---
@@ -1239,7 +1475,7 @@ function frame(): void {
     hud.setFlashWhiteout(flashLevel);
   }
   if (lastSnap) {
-    world.update(t * matchPace, lastSnap.zone.radius, lastSnap.zone.targetRadius);
+    world.update(t * matchPace, lastSnap.zone.radius, lastSnap.zone.targetRadius, lastSnap.timeOfDay);
     entities.syncSmokes(lastSnap.smokes, t);
     hud.setTimer(t, lastSnap.phase);
     hud.setZoneInfo(lastSnap.zone, t);
@@ -1307,6 +1543,7 @@ function frame(): void {
 
   if (!roundRunning || !alive || !inMatch || !networkConnected) input.clearEdges();
   renderer.render(world.scene, camera);
+  if (finishVictoryAfterRender) finishVictoryCinematic();
 }
 
 // pointer-lock pause hint

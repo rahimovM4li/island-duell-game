@@ -6,12 +6,27 @@ import type { PlayerSettings } from './settings';
 const MOUSE_SENS = 0.0023;
 const PITCH_LIMIT = Math.PI / 2 - 0.02;
 
+/**
+ * Browsers such as Edge reserve combinations like Ctrl+D. While pointer lock
+ * is active, keys mapped to gameplay must win over the browser shortcut.
+ */
+export function shouldBlockGameplayKey(
+  code: string, pointerLocked: boolean, settings: PlayerSettings,
+): boolean {
+  if (!pointerLocked) return false;
+  return Object.values(settings.keybinds).includes(code)
+    || /^Digit[1-6]$/.test(code)
+    || code === 'F3';
+}
+
 export class InputState {
   yaw = 0;
   pitch = 0;
   private keys = new Set<string>();
   private fireHeld = false;
   private aimHeld = false;
+  private sniperScoped = false;
+  private sniperZoomWheel = 0;
   pointerLocked = false;
 
   // per-frame edge events
@@ -26,6 +41,7 @@ export class InputState {
 
   constructor(private canvas: HTMLElement, private settings: PlayerSettings) {
     document.addEventListener('keydown', (e) => {
+      if (shouldBlockGameplayKey(e.code, this.pointerLocked, this.settings)) e.preventDefault();
       if (e.repeat) return;
       const k = e.code;
       this.keys.add(k);
@@ -61,16 +77,27 @@ export class InputState {
       if (e.button === 2) this.aimHeld = false;
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    document.addEventListener('wheel', (e) => {
+      if (!this.pointerLocked || !this.sniperScoped) return;
+      e.preventDefault();
+      this.sniperZoomWheel += e.deltaY;
+    }, { passive: false });
 
     document.addEventListener('mousemove', (e) => {
       if (!this.pointerLocked) return;
-      this.yaw -= e.movementX * MOUSE_SENS * this.settings.mouseSensitivity;
-      this.pitch -= e.movementY * MOUSE_SENS * this.settings.mouseSensitivity;
+      const scopeMultiplier = this.sniperScoped ? this.settings.sniperAimSensitivity : 1;
+      this.yaw -= e.movementX * MOUSE_SENS * this.settings.mouseSensitivity * scopeMultiplier;
+      this.pitch -= e.movementY * MOUSE_SENS * this.settings.mouseSensitivity * scopeMultiplier;
       this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch));
     });
     document.addEventListener('pointerlockchange', () => {
       this.pointerLocked = document.pointerLockElement === this.canvas;
-      if (!this.pointerLocked) { this.fireHeld = false; this.aimHeld = false; }
+      if (!this.pointerLocked) {
+        this.keys.clear();
+        this.fireHeld = false;
+        this.aimHeld = false;
+        this.sniperZoomWheel = 0;
+      }
     });
   }
 
@@ -84,6 +111,13 @@ export class InputState {
   }
 
   setSettings(settings: PlayerSettings): void { this.settings = settings; }
+  setSniperScoped(scoped: boolean): void { this.sniperScoped = scoped; }
+
+  consumeSniperZoomWheel(): number {
+    const delta = this.sniperZoomWheel;
+    this.sniperZoomWheel = 0;
+    return delta;
+  }
 
   applyRecoil(pitchKick: number, yawKick: number): void {
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + pitchKick));

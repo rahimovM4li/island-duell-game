@@ -13,6 +13,7 @@ playwright-report/
 test-results/
 .vite/
 *.log
+*.blend1
 
 # Local-only configuration and editor metadata
 .env

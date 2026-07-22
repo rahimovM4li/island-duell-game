@@ -15,14 +15,37 @@ interface PlayerRig {
   body: THREE.Mesh;
   head: THREE.Mesh;
   weapon: THREE.Group;
+  armLeft: THREE.Object3D;
+  armRight: THREE.Object3D;
+  legLeft: THREE.Object3D;
+  legRight: THREE.Object3D;
+  armLeftBase: THREE.Euler;
+  armRightBase: THREE.Euler;
+  legLeftBase: THREE.Euler;
+  legRightBase: THREE.Euler;
+  headBase: THREE.Euler;
   currentWeapon: WeaponType | null;
   crouchTarget: number;
   crouchBlend: number;
+  proneTarget: number;
+  proneBlend: number;
   aiming: boolean;
   flashT: number;
   bodyBaseEmissive: THREE.Color;
   headBaseEmissive: THREE.Color;
+  alive: boolean;
+  forcedDeath: boolean;
+  deathT: number;
+  deathSide: number;
+  baseY: number;
+  celebrating: boolean;
+  celebrationT: number;
+  celebrationWeight: number;
+  celebrationYaw: number;
+  reducedCelebrationMotion: boolean;
 }
+
+const DEATH_ANIMATION_DURATION = 1.35;
 
 interface ItemVisual {
   label: string;
@@ -217,6 +240,8 @@ function proceduralWeaponModel(weapon: WeaponType | 'none'): THREE.Group {
   return g;
 }
 
+type LitPlayerMaterial = THREE.MeshLambertMaterial | THREE.MeshStandardMaterial;
+
 function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
   return gameAssets.cloneWeapon(weapon) ?? proceduralWeaponModel(weapon);
 }
@@ -268,11 +293,26 @@ function ammoModel(color: number, shells = false): THREE.Group {
 
 function pickupModel(p: PickupInfo): THREE.Group {
   if (p.item === 'crate') {
+    const compact = gameAssets.cloneProp(
+      p.tier === 'top' ? 'crate_top' : p.tier === 'good' ? 'crate_good' : 'crate_common',
+    );
+    if (compact) return compact;
     const color = p.tier === 'top' ? 0xc98a2e : p.tier === 'good' ? 0x397f9f : 0x6d604d;
     return crateModel(color);
   }
-  if (p.item === 'care') return crateModel(0xb94739, true);
+  if (p.item === 'care') return gameAssets.cloneProp('care') ?? crateModel(0xb94739, true);
   if (p.item in WEAPON_MODEL_KEYS) return weaponModel(p.item as WeaponType);
+  const compactProp = p.item === 'bandageItem' ? 'bandage'
+    : p.item === 'plateItem' ? 'plate'
+      : p.item === 'arrowBundle' ? 'arrow_bundle'
+        : p.item === 'pistolAmmo' ? 'pistol_ammo'
+          : p.item === 'rifleAmmo' ? 'rifle_ammo'
+            : p.item === 'shellAmmo' ? 'shell_ammo'
+              : p.item === 'sniperAmmo' ? 'sniper_ammo' : null;
+  if (compactProp) {
+    const compact = gameAssets.cloneProp(compactProp);
+    if (compact) return compact;
+  }
   const g = new THREE.Group();
   if (p.item === 'bandageItem') {
     addCylinder(g, 0.22, 0.2, [0, 0.13, 0], 0xf1eee7, [Math.PI / 2, 0, 0], 12); // rolled gauze
@@ -352,9 +392,15 @@ function pickupLabel(p: PickupInfo): THREE.Sprite {
 function viewmodelFor(weapon: WeaponType | 'none'): THREE.Group {
   const g = weaponModel(weapon);
   const scale = weapon === 'rifle' || weapon === 'shotgun' || weapon === 'spear' || weapon === 'sniper'
-    ? 0.36 : weapon === 'bow' || weapon === 'machete' ? 0.46 : 0.54;
+    ? 0.36 : weapon === 'bow' ? 0.48 : 0.54;
   g.scale.setScalar(scale);
-  g.rotation.y = -0.08;
+  const baseRotation = weapon === 'machete'
+    ? { x: 0.06, y: -0.28, z: -0.3 }
+    : weapon === 'bow'
+      ? { x: 0.02, y: 0.18, z: 0.04 }
+      : { x: 0, y: -0.08, z: 0 };
+  g.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
+  g.userData.viewmodelBaseRotation = baseRotation;
   return g;
 }
 
@@ -421,6 +467,10 @@ export class Entities {
   private aimBlend = 0;
   private reloadT = -1;
   private reloadDuration = 1;
+  private victoryPlayerId: string | null = null;
+  private victoryProxyId: string | null = null;
+  private victoryLights: THREE.PointLight[] = [];
+  private victoryBurstPlayed = false;
 
   constructor(private scene: THREE.Scene, private camera: THREE.Camera, seed = 1) {
     this.rng = mulberry32(deriveSeed(seed, 'client-entity-fx'));
@@ -432,6 +482,40 @@ export class Entities {
   ensurePlayer(id: string, colorIndex: number): void {
     if (this.players.has(id)) return;
     const color = PLAYER_COLORS[colorIndex % PLAYER_COLORS.length];
+    const compact = gameAssets.cloneCharacter(color);
+    if (compact) {
+      const bodyMaterial = compact.body.material as LitPlayerMaterial;
+      const headMaterial = compact.head.material as LitPlayerMaterial;
+      this.scene.add(compact.group);
+      this.players.set(id, {
+        group: compact.group,
+        body: compact.body,
+        head: compact.head,
+        weapon: compact.weaponSocket,
+        armLeft: compact.armLeft,
+        armRight: compact.armRight,
+        legLeft: compact.legLeft,
+        legRight: compact.legRight,
+        armLeftBase: compact.armLeft.rotation.clone(),
+        armRightBase: compact.armRight.rotation.clone(),
+        legLeftBase: compact.legLeft.rotation.clone(),
+        legRightBase: compact.legRight.rotation.clone(),
+        headBase: compact.head.rotation.clone(),
+        currentWeapon: null,
+        crouchTarget: 0,
+        crouchBlend: 0,
+        proneTarget: 0,
+        proneBlend: 0,
+        aiming: false,
+        flashT: 0,
+        bodyBaseEmissive: bodyMaterial.emissive.clone(),
+        headBaseEmissive: headMaterial.emissive.clone(),
+        alive: true, forcedDeath: false, deathT: -1, deathSide: 1, baseY: 0,
+        celebrating: false, celebrationT: 0, celebrationWeight: 0,
+        celebrationYaw: 0, reducedCelebrationMotion: false,
+      });
+      return;
+    }
     const group = new THREE.Group();
     const mat = new THREE.MeshLambertMaterial({ color });
     const darkMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(color).multiplyScalar(0.62) });
@@ -489,23 +573,175 @@ export class Entities {
     this.scene.add(group);
     this.players.set(id, {
       group, body, head, weapon, currentWeapon: null,
-      crouchTarget: 0, crouchBlend: 0, aiming: false,
+      armLeft: leftArm, armRight: rightArm, legLeft: leftLeg, legRight: rightLeg,
+      armLeftBase: leftArm.rotation.clone(), armRightBase: rightArm.rotation.clone(),
+      legLeftBase: leftLeg.rotation.clone(), legRightBase: rightLeg.rotation.clone(),
+      headBase: head.rotation.clone(),
+      crouchTarget: 0, crouchBlend: 0, proneTarget: 0, proneBlend: 0, aiming: false,
       flashT: 0,
       bodyBaseEmissive: (body.material as THREE.MeshLambertMaterial).emissive.clone(),
       headBaseEmissive: (head.material as THREE.MeshLambertMaterial).emissive.clone(),
+      alive: true, forcedDeath: false, deathT: -1, deathSide: 1, baseY: 0,
+      celebrating: false, celebrationT: 0, celebrationWeight: 0,
+      celebrationYaw: 0, reducedCelebrationMotion: false,
     });
+  }
+
+  private resetCelebrationPose(rig: PlayerRig): void {
+    rig.celebrating = false;
+    rig.celebrationT = 0;
+    rig.celebrationWeight = 0;
+    rig.group.position.y = rig.baseY;
+    rig.group.rotation.x = 0;
+    rig.group.rotation.y = rig.celebrationYaw;
+    rig.group.rotation.z = 0;
+    rig.group.scale.set(1, 1, 1);
+    rig.armLeft.rotation.copy(rig.armLeftBase);
+    rig.armRight.rotation.copy(rig.armRightBase);
+    rig.legLeft.rotation.copy(rig.legLeftBase);
+    rig.legRight.rotation.copy(rig.legRightBase);
+    rig.head.rotation.copy(rig.headBase);
+  }
+
+  /** Creates a visible third-person winner when the local first-person player wins. */
+  startVictoryCelebration(
+    winnerId: string,
+    localWinner: boolean,
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+    colorIndex: number,
+    weapon: WeaponType,
+    reducedMotion: boolean,
+  ): string {
+    this.endVictoryCelebration();
+    const presentationId = localWinner ? `__victory_${winnerId}` : winnerId;
+    this.ensurePlayer(presentationId, colorIndex);
+    this.updatePlayer(presentationId, x, y, z, yaw, 0, true, weapon, false, false, false);
+    const rig = this.players.get(presentationId)!;
+    rig.forcedDeath = false;
+    rig.deathT = -1;
+    rig.alive = true;
+    rig.group.visible = true;
+    rig.baseY = y;
+    rig.celebrationYaw = yaw;
+    rig.celebrating = true;
+    rig.celebrationT = 0;
+    rig.celebrationWeight = 0;
+    rig.reducedCelebrationMotion = reducedMotion;
+    rig.weapon.visible = false;
+    this.victoryPlayerId = presentationId;
+    this.victoryProxyId = localWinner ? presentationId : null;
+    this.victoryBurstPlayed = false;
+
+    const facingX = -Math.sin(yaw);
+    const facingZ = -Math.cos(yaw);
+    const key = new THREE.PointLight(0xffd08a, 18, 10, 2);
+    key.position.set(x + facingX * 2.2, y + 2.7, z + facingZ * 2.2);
+    const rim = new THREE.PointLight(0x72b8ff, 7, 8, 2);
+    rim.position.set(x - facingX * 1.5, y + 2.15, z - facingZ * 1.5);
+    this.scene.add(key, rim);
+    this.victoryLights.push(key, rim);
+    return presentationId;
+  }
+
+  setVictoryDanceWeight(weight: number): void {
+    const rig = this.victoryPlayerId ? this.players.get(this.victoryPlayerId) : null;
+    if (!rig) return;
+    const nextWeight = THREE.MathUtils.clamp(weight, 0, 1);
+    if (!this.victoryBurstPlayed && nextWeight > 0.08) {
+      this.victoryBurstPlayed = true;
+      if (!rig.reducedCelebrationMotion) this.spawnVictoryBurst(rig);
+    }
+    rig.celebrationWeight = nextWeight;
+  }
+
+  private spawnVictoryBurst(rig: PlayerRig): void {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.72, 0.82, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xffc85b, transparent: true, opacity: 0.82,
+        side: THREE.DoubleSide, depthWrite: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(rig.group.position.x, rig.baseY + 0.035, rig.group.position.z);
+    this.scene.add(ring);
+    this.fx.push({ obj: ring, life: 2.1, maxLife: 2.1, expand: 0.72 });
+
+    for (let i = 0; i < 14; i++) {
+      const confetti = new THREE.Mesh(
+        new THREE.BoxGeometry(0.045, 0.2, 0.035),
+        new THREE.MeshBasicMaterial({
+          color: i % 3 === 0 ? 0xffffff : i % 2 === 0 ? 0xff9f43 : 0xffd866,
+          transparent: true,
+          opacity: 0.92,
+        }),
+      );
+      const angle = (i / 14) * Math.PI * 2;
+      const speed = 1.45 + (i % 4) * 0.18;
+      confetti.position.set(
+        rig.group.position.x + Math.cos(angle) * 0.34,
+        rig.baseY + 1.05,
+        rig.group.position.z + Math.sin(angle) * 0.34,
+      );
+      confetti.rotation.z = angle;
+      this.scene.add(confetti);
+      this.fx.push({
+        obj: confetti, life: 1.85, maxLife: 1.85,
+        velocity: new THREE.Vector3(Math.cos(angle) * speed, 4.1 + (i % 3) * 0.25, Math.sin(angle) * speed),
+        spin: 6 + (i % 4),
+      });
+    }
+  }
+
+  endVictoryCelebration(): void {
+    const playerId = this.victoryPlayerId;
+    const proxyId = this.victoryProxyId;
+    this.victoryPlayerId = null;
+    this.victoryProxyId = null;
+    for (const light of this.victoryLights) this.scene.remove(light);
+    this.victoryLights.length = 0;
+    this.victoryBurstPlayed = false;
+    if (!playerId) return;
+    const rig = this.players.get(playerId);
+    if (rig) this.resetCelebrationPose(rig);
+    if (proxyId) this.removePlayer(proxyId);
+  }
+
+  private beginDeath(rig: PlayerRig): void {
+    if (rig.deathT >= 0) return;
+    rig.alive = false;
+    rig.deathT = 0;
+    rig.deathSide = Math.sin(rig.group.position.x * 1.73 + rig.group.position.z * 2.11) >= 0 ? 1 : -1;
+    rig.group.visible = true;
   }
 
   updatePlayer(
     id: string, x: number, y: number, z: number, yaw: number, pitch: number,
-    alive: boolean, weapon: WeaponType, sneaking: boolean, aiming: boolean,
+    alive: boolean, weapon: WeaponType, sneaking: boolean, prone: boolean, aiming: boolean,
   ): void {
     const rig = this.players.get(id);
     if (!rig) return;
-    rig.group.visible = alive;
+    if (!alive) rig.forcedDeath = false;
+    const effectiveAlive = alive && !rig.forcedDeath;
+    if (rig.alive && !effectiveAlive) this.beginDeath(rig);
+    else if (!rig.alive && effectiveAlive) {
+      rig.alive = true;
+      rig.deathT = -1;
+      rig.group.visible = true;
+      rig.group.rotation.x = 0;
+      rig.group.rotation.z = 0;
+      rig.group.scale.set(1, 1, 1);
+    }
+    rig.alive = effectiveAlive;
+    rig.group.visible = effectiveAlive || (rig.deathT >= 0 && rig.deathT < DEATH_ANIMATION_DURATION);
     rig.group.position.set(x, y, z);
+    rig.baseY = y;
     rig.group.rotation.y = yaw;
     rig.crouchTarget = sneaking ? 1 : 0;
+    rig.proneTarget = prone ? 1 : 0;
     rig.aiming = aiming;
     rig.head.rotation.x = -pitch * 0.8;
     if (rig.currentWeapon !== weapon) {
@@ -514,7 +750,7 @@ export class Entities {
       if (weapon !== 'fists') rig.weapon.add(weaponModel(weapon));
       rig.currentWeapon = weapon;
     }
-    rig.weapon.visible = weapon !== 'fists';
+    rig.weapon.visible = effectiveAlive && weapon !== 'fists';
     rig.weapon.rotation.x = -pitch;
     rig.weapon.position.z = aiming ? -0.28 : -0.18;
   }
@@ -535,6 +771,58 @@ export class Entities {
   flashPlayer(id: string, headshot: boolean): void {
     const rig = this.players.get(id);
     if (rig) rig.flashT = headshot ? 0.16 : 0.11;
+  }
+
+  /** Start the readable remote-player fall immediately and add a short world-space confirmation pulse. */
+  playElimination(id: string, localKill: boolean): void {
+    const rig = this.players.get(id);
+    if (!rig) return;
+    rig.forcedDeath = true;
+    this.beginDeath(rig);
+
+    const color = localKill ? 0xffc45c : 0xf05d62;
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.34, 0.48, 24),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.copy(rig.group.position);
+    ring.position.y += 0.04;
+    this.scene.add(ring);
+    this.fx.push({ obj: ring, life: 0.7, maxLife: 0.7, expand: 2.3 });
+
+    for (let i = 0; i < 7; i++) {
+      const shard = new THREE.Mesh(
+        new THREE.BoxGeometry(0.035, 0.22, 0.035),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.92 }),
+      );
+      const angle = (i / 7) * Math.PI * 2;
+      shard.position.copy(rig.group.position).add(new THREE.Vector3(Math.cos(angle) * 0.22, 0.85, Math.sin(angle) * 0.22));
+      this.scene.add(shard);
+      this.fx.push({
+        obj: shard, life: 0.58, maxLife: 0.58,
+        velocity: new THREE.Vector3(Math.cos(angle) * 1.15, 2.2 + (i % 2) * 0.35, Math.sin(angle) * 1.15),
+        spin: 5,
+      });
+    }
+  }
+
+  resetPlayerAnimations(): void {
+    this.endVictoryCelebration();
+    for (const rig of this.players.values()) {
+      rig.forcedDeath = false;
+      rig.deathT = -1;
+      rig.alive = true;
+      rig.group.visible = true;
+      rig.group.rotation.x = 0;
+      rig.group.rotation.z = 0;
+      rig.group.scale.set(1, 1, 1);
+      rig.armLeft.rotation.copy(rig.armLeftBase);
+      rig.armRight.rotation.copy(rig.armRightBase);
+      rig.legLeft.rotation.copy(rig.legLeftBase);
+      rig.legRight.rotation.copy(rig.legRightBase);
+      rig.head.rotation.copy(rig.headBase);
+    }
   }
 
   // ---------- pickups ----------
@@ -621,6 +909,10 @@ export class Entities {
       let obj = this.projectiles.get(pr.id);
       if (!obj) {
         if (pr.kind === 'arrow') {
+          const compactArrow = gameAssets.cloneProp('projectile_arrow');
+          if (compactArrow) {
+            obj = compactArrow;
+          } else {
           const m = new THREE.Mesh(
             new THREE.CylinderGeometry(0.02, 0.02, 0.7, 4),
             new THREE.MeshLambertMaterial({ color: 0xc9b382 }),
@@ -629,9 +921,18 @@ export class Entities {
           const holder = new THREE.Group();
           holder.add(m);
           obj = holder;
+          }
         } else {
-          const color = pr.kind === 'smoke' ? 0x8d99a3 : pr.kind === 'flash' ? 0xcfc39a : 0x4a7a4a;
-          obj = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), new THREE.MeshLambertMaterial({ color }));
+          const weaponKind = pr.kind === 'smoke' ? 'smoke' : pr.kind === 'flash' ? 'flash' : 'grenade';
+          const compactThrowable = gameAssets.cloneWeapon(weaponKind);
+          if (compactThrowable) {
+            obj = compactThrowable;
+            obj.scale.setScalar(0.68);
+          }
+          else {
+            const color = pr.kind === 'smoke' ? 0x8d99a3 : pr.kind === 'flash' ? 0xcfc39a : 0x4a7a4a;
+            obj = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), new THREE.MeshLambertMaterial({ color }));
+          }
         }
         this.scene.add(obj);
         this.projectiles.set(pr.id, obj);
@@ -815,12 +1116,48 @@ export class Entities {
     for (const rig of this.players.values()) {
       const ease = 1 - Math.exp(-dt * 12);
       rig.crouchBlend += (rig.crouchTarget - rig.crouchBlend) * ease;
-      rig.group.scale.y = THREE.MathUtils.lerp(1, 0.68, rig.crouchBlend);
+      rig.proneBlend += (rig.proneTarget - rig.proneBlend) * ease;
+      if (rig.celebrating) {
+        rig.celebrationT += dt;
+        const weight = rig.celebrationWeight;
+        const beat = rig.reducedCelebrationMotion ? 0 : Math.sin(rig.celebrationT * 7.2);
+        const halfBeat = rig.reducedCelebrationMotion ? 0 : Math.sin(rig.celebrationT * 3.6);
+        const bounce = rig.reducedCelebrationMotion ? 0 : Math.max(0, beat) * 0.105;
+        rig.group.position.y = rig.baseY + bounce * weight;
+        rig.group.rotation.x = 0;
+        rig.group.rotation.y = rig.celebrationYaw + halfBeat * 0.14 * weight;
+        rig.group.rotation.z = beat * 0.055 * weight;
+        rig.group.scale.set(1, 1, 1);
+        rig.armLeft.rotation.x = THREE.MathUtils.lerp(rig.armLeftBase.x, rig.armLeftBase.x + beat * 0.32, weight);
+        rig.armRight.rotation.x = THREE.MathUtils.lerp(rig.armRightBase.x, rig.armRightBase.x - beat * 0.32, weight);
+        rig.armLeft.rotation.z = THREE.MathUtils.lerp(rig.armLeftBase.z, rig.armLeftBase.z - 2.35 - halfBeat * 0.18, weight);
+        rig.armRight.rotation.z = THREE.MathUtils.lerp(rig.armRightBase.z, rig.armRightBase.z + 2.35 + halfBeat * 0.18, weight);
+        rig.legLeft.rotation.x = THREE.MathUtils.lerp(rig.legLeftBase.x, rig.legLeftBase.x + beat * 0.22, weight);
+        rig.legRight.rotation.x = THREE.MathUtils.lerp(rig.legRightBase.x, rig.legRightBase.x - beat * 0.22, weight);
+        rig.head.rotation.x = rig.headBase.x;
+        rig.head.rotation.y = rig.headBase.y - halfBeat * 0.16 * weight;
+        rig.weapon.visible = false;
+      } else if (rig.deathT >= 0) {
+        rig.deathT += dt;
+        const progress = Math.min(1, rig.deathT / DEATH_ANIMATION_DURATION);
+        const fall = 1 - Math.pow(1 - progress, 3);
+        rig.group.rotation.z = rig.deathSide * fall * 1.32;
+        rig.group.rotation.x = -fall * 0.14;
+        rig.group.position.y = rig.baseY + Math.sin(progress * Math.PI) * 0.08 - Math.max(0, progress - 0.72) * 0.32;
+        rig.group.scale.set(1, THREE.MathUtils.lerp(1, 0.82, fall), 1);
+        rig.weapon.visible = rig.deathT < 0.28 && rig.currentWeapon !== 'fists';
+        if (rig.deathT >= DEATH_ANIMATION_DURATION) rig.group.visible = false;
+      } else {
+        const crouchScale = THREE.MathUtils.lerp(1, 0.68, rig.crouchBlend);
+        rig.group.scale.y = THREE.MathUtils.lerp(crouchScale, 1, rig.proneBlend);
+        rig.group.rotation.x = THREE.MathUtils.lerp(0, -Math.PI * 0.43, rig.proneBlend);
+        rig.group.position.y = rig.baseY + rig.proneBlend * 0.43;
+      }
       rig.weapon.position.y = THREE.MathUtils.lerp(1.22, 1.3, rig.aiming ? 1 : 0);
       rig.flashT = Math.max(0, rig.flashT - dt);
       const flash = Math.min(1, rig.flashT / 0.08);
-      const bodyMat = rig.body.material as THREE.MeshLambertMaterial;
-      const headMat = rig.head.material as THREE.MeshLambertMaterial;
+      const bodyMat = rig.body.material as LitPlayerMaterial;
+      const headMat = rig.head.material as LitPlayerMaterial;
       bodyMat.emissive.copy(rig.bodyBaseEmissive).lerp(HIT_FLASH_BODY, flash * 0.72);
       headMat.emissive.copy(rig.headBaseEmissive).lerp(HIT_FLASH_HEAD, flash * 0.78);
     }
@@ -833,6 +1170,9 @@ export class Entities {
       THREE.MathUtils.lerp(-0.72, -0.57, this.aimBlend),
     );
     if (this.viewWeapon) {
+      const baseRotation = this.viewWeapon.userData.viewmodelBaseRotation as {
+        x: number; y: number; z: number;
+      } | undefined;
       const swing = Math.sin(this.swingT * Math.PI) * 1.1;
       const kick = Math.sin(this.kickT * Math.PI) * 0.06;
       let reloadDrop = 0;
@@ -844,8 +1184,9 @@ export class Entities {
         reloadRoll = Math.sin(progress * Math.PI * 2) * 0.18 - reloadDrop * 0.55;
         if (progress >= 1) this.reloadT = -1;
       }
-      this.viewWeapon.rotation.x = -swing * 0.9 + reloadDrop * 0.35;
-      this.viewWeapon.rotation.z = reloadRoll;
+      this.viewWeapon.rotation.x = (baseRotation?.x ?? 0) - swing * 0.9 + reloadDrop * 0.35;
+      this.viewWeapon.rotation.y = baseRotation?.y ?? -0.08;
+      this.viewWeapon.rotation.z = (baseRotation?.z ?? 0) + reloadRoll;
       this.viewWeapon.position.x = reloadDrop * 0.08;
       this.viewWeapon.position.z = swing * -0.25 + kick + reloadDrop * 0.04;
       this.viewWeapon.position.y = Math.sin(time * 1.7) * 0.008 - reloadDrop * 0.16;
@@ -886,6 +1227,7 @@ export class Entities {
   }
 
   dispose(): void {
+    this.endVictoryCelebration();
     this.clearPlayers();
     this.clearPickups();
     this.clearProjectiles();

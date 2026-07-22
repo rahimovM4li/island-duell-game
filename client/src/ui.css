@@ -84,6 +84,13 @@ button.secondary:hover:not(:disabled) { background: #31505e; }
 
 #lobby-players li { align-items: center; padding: 10px 12px; background: #12232c; border-radius: 8px; }
 #lobby-players .tag { color: var(--muted); }
+#lobby-players .lobby-player-actions { display: flex; align-items: center; gap: 8px; }
+#lobby-players .kick-player {
+  width: auto; margin: 0; padding: 5px 8px; border: 1px solid rgba(255, 125, 130, .35);
+  background: rgba(125, 42, 48, .35); color: #ffb3b6; font-size: 11px;
+}
+.danger-button { border: 1px solid rgba(255, 125, 130, .3); color: #ffb3b6 !important; }
+.danger-button:hover:not(:disabled) { background: #5b2930 !important; }
 
 #crosshair { --crosshair-gap: 5px; width: 2px; height: 2px; background: rgba(255,255,255,0.95); border-radius: 50%; box-shadow: 0 1px 2px #000; filter: none; }
 #crosshair i {
@@ -99,6 +106,11 @@ button.secondary:hover:not(:disabled) { background: #31505e; }
 #crosshair .west { right: calc(var(--crosshair-gap) + 1px); }
 #crosshair .east { left: calc(var(--crosshair-gap) + 1px); }
 #hud.aiming #crosshair { opacity: 0.48; }
+#scope-zoom {
+  position: absolute; left: 50%; top: calc(50% + 27vmin); transform: translateX(-50%);
+  padding: 4px 9px; border-radius: 999px; background: rgba(4, 10, 13, .68);
+  color: rgba(232, 242, 239, .82); font-size: 11px; font-weight: 700; letter-spacing: .04em;
+}
 #hitmarker { font-size: 26px; font-weight: 900; text-shadow: 0 1px 3px #000; }
 
 #damage-flash { transition: opacity 220ms ease-out; }
@@ -213,6 +225,25 @@ button.secondary:hover:not(:disabled) { background: #31505e; }
 #killfeed { width: 330px; }
 #killfeed div { display: inline-block; clear: both; float: right; padding: 5px 9px; background: rgba(4, 10, 14, 0.82); border-radius: 6px; }
 #announce { max-width: min(760px, 84vw); color: var(--accent); font-size: 25px; font-weight: 800; text-shadow: 0 2px 6px #000; white-space: normal; text-wrap: balance; transition: opacity 220ms ease-out; }
+#elimination-confirm {
+  position: absolute; left: 50%; top: 34%; display: flex; flex-direction: column; align-items: center;
+  min-width: 260px; padding: 12px 20px; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent);
+  background: linear-gradient(90deg, transparent, rgba(8,16,22,.92) 18% 82%, transparent);
+  opacity: 0; transform: translate(-50%, 14px) scale(.94); text-align: center;
+}
+#elimination-confirm span { color: var(--accent); font-size: 10px; font-weight: 900; letter-spacing: .22em; }
+#elimination-confirm strong { margin-top: 3px; color: var(--ink); font-size: 24px; line-height: 1; }
+#elimination-confirm small { margin-top: 5px; color: var(--muted); font-size: 11px; }
+
+#duel-result {
+  position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: none; opacity: 0; text-align: center;
+  background: radial-gradient(circle at center, rgba(7,17,22,.84) 0 22%, rgba(7,17,22,.22) 46%, transparent 68%);
+}
+#duel-result span { color: var(--accent); font-size: 12px; font-weight: 900; letter-spacing: .28em; }
+#duel-result strong { margin-top: 8px; color: var(--ink); font-size: clamp(38px, 7vw, 78px); line-height: .95; text-shadow: 0 5px 28px #000; }
+#duel-result small { margin-top: 13px; color: #dbe6eb; font-size: 15px; }
+#duel-result.lose span { color: #ff8a8e; }
 #interact-hint { min-width: 210px; padding: 8px 13px; background: var(--surface); border-radius: 8px; font-weight: 650; text-align: center; }
 #interact-progress { height: 5px; margin-top: 7px; background: #243844; }
 #heal-progress { background: #243844; }

@@ -4,7 +4,7 @@
 // so predicted movement matches the authority almost exactly.
 import type RAPIER from '@dimforge/rapier3d-compat';
 import {
-  PLAYER_HEIGHT, PLAYER_RADIUS, PLAYER_SNEAK_HEIGHT, TERRAIN_VERTS, WORLD_SIZE,
+  PLAYER_HEIGHT, PLAYER_PRONE_HEIGHT, PLAYER_RADIUS, PLAYER_SNEAK_HEIGHT, TERRAIN_VERTS, WORLD_SIZE,
 } from './constants';
 import { buildHeightGrid, sampleHeight, TerrainParams } from './terrain';
 import type { WorldGen } from './worldgen';
@@ -16,6 +16,8 @@ export interface Vec3 { x: number; y: number; z: number }
 const CAPSULE_HALF = (PLAYER_HEIGHT - 2 * PLAYER_RADIUS) / 2; // 0.5
 const SNEAK_CAPSULE_HALF = (PLAYER_SNEAK_HEIGHT - 2 * PLAYER_RADIUS) / 2;
 const SNEAK_CAPSULE_CENTER_Y = SNEAK_CAPSULE_HALF + PLAYER_RADIUS;
+const PRONE_CAPSULE_HALF = (PLAYER_PRONE_HEIGHT - 2 * PLAYER_RADIUS) / 2;
+const PRONE_CAPSULE_CENTER_Y = PRONE_CAPSULE_HALF + PLAYER_RADIUS;
 export const CAPSULE_CENTER_Y = CAPSULE_HALF + PLAYER_RADIUS; // feet → capsule center
 
 /** Rapier heightfields are column-major (col = x index, row = z index). */
@@ -46,6 +48,18 @@ export interface PhysicsStats {
   sensors: number;
 }
 
+interface WalkSurface {
+  x: number;
+  z: number;
+  baseY: number;
+  w: number;
+  h: number;
+  d: number;
+  centerY: number;
+  yaw: number;
+  pitch: number;
+}
+
 export class GamePhysics {
   readonly R: RapierModule;
   readonly world: RAPIER.World;
@@ -53,6 +67,8 @@ export class GamePhysics {
   private players = new Map<string, RAPIER.Collider>();
   private handleToPlayer = new Map<number, string>();
   private sneakingPlayers = new Set<string>();
+  private pronePlayers = new Set<string>();
+  private walkSurfaces: WalkSurface[] = [];
 
   constructor(R: RapierModule, gen: WorldGen, grid?: Float32Array) {
     this.R = R;
@@ -82,13 +98,22 @@ export class GamePhysics {
       );
     }
     for (const poi of gen.pois) {
+      const poiBaseY = sampleHeight(gen.params, poi.x, poi.z);
       for (const s of poi.structures) {
         if (!s.collider) continue;
-        const y = sampleHeight(gen.params, s.x, s.z);
+        if (s.walkSurface) {
+          this.walkSurfaces.push({
+            x: s.x, z: s.z, baseY: poiBaseY,
+            w: s.w, h: s.h, d: s.d,
+            centerY: (s.yOffset ?? 0) + s.h / 2,
+            yaw: s.rotY, pitch: s.rotX ?? 0,
+          });
+          continue;
+        }
         this.world.createCollider(
           R.ColliderDesc.cuboid(s.w / 2, s.h / 2, s.d / 2)
-            .setTranslation(s.x, y + (s.yOffset ?? 0) + s.h / 2, s.z)
-            .setRotation(quatFromYaw(s.rotY)),
+            .setTranslation(s.x, poiBaseY + (s.yOffset ?? 0) + s.h / 2, s.z)
+            .setRotation(quatFromYawPitch(s.rotY, s.rotX ?? 0)),
         );
       }
     }
@@ -116,23 +141,38 @@ export class GamePhysics {
       this.world.removeCollider(col, false);
       this.players.delete(id);
       this.sneakingPlayers.delete(id);
+      this.pronePlayers.delete(id);
     }
   }
 
   setPlayerPos(id: string, feet: Vec3): void {
     const col = this.players.get(id);
-    const center = this.sneakingPlayers.has(id) ? SNEAK_CAPSULE_CENTER_Y : CAPSULE_CENTER_Y;
+    const center = this.playerCapsuleCenter(id);
     col?.setTranslation({ x: feet.x, y: feet.y + center, z: feet.z });
   }
 
   /** Keep the collision capsule aligned with the current standing/crouched pose. */
   setPlayerSneaking(id: string, sneaking: boolean, feet: Vec3): void {
+    this.setPlayerStance(id, sneaking, false, feet);
+  }
+
+  setPlayerStance(id: string, sneaking: boolean, prone: boolean, feet: Vec3): void {
     const col = this.players.get(id);
-    if (!col || sneaking === this.sneakingPlayers.has(id)) return;
-    if (sneaking) this.sneakingPlayers.add(id);
+    if (!col) return;
+    const nextSneaking = sneaking && !prone;
+    if (nextSneaking === this.sneakingPlayers.has(id) && prone === this.pronePlayers.has(id)) return;
+    if (nextSneaking) this.sneakingPlayers.add(id);
     else this.sneakingPlayers.delete(id);
-    col.setHalfHeight(sneaking ? SNEAK_CAPSULE_HALF : CAPSULE_HALF);
+    if (prone) this.pronePlayers.add(id);
+    else this.pronePlayers.delete(id);
+    col.setHalfHeight(prone ? PRONE_CAPSULE_HALF : nextSneaking ? SNEAK_CAPSULE_HALF : CAPSULE_HALF);
     this.setPlayerPos(id, feet);
+  }
+
+  private playerCapsuleCenter(id: string): number {
+    return this.pronePlayers.has(id)
+      ? PRONE_CAPSULE_CENTER_Y
+      : this.sneakingPlayers.has(id) ? SNEAK_CAPSULE_CENTER_Y : CAPSULE_CENTER_Y;
   }
 
   playerIdForHandle(handle: number): string | null {
@@ -153,8 +193,25 @@ export class GamePhysics {
     );
     const mv = this.controller.computedMovement();
     const cur = col.translation();
-    const center = this.sneakingPlayers.has(id) ? SNEAK_CAPSULE_CENTER_Y : CAPSULE_CENTER_Y;
+    const center = this.playerCapsuleCenter(id);
     let nx = cur.x + mv.x, ny = cur.y + mv.y, nz = cur.z + mv.z;
+    let onWalkSurface = false;
+    for (const surface of this.walkSurfaces) {
+      const c = Math.cos(surface.yaw), s = Math.sin(surface.yaw);
+      const dx = nx - surface.x, dz = nz - surface.z;
+      const localX = c * dx - s * dz;
+      const localZ = s * dx + c * dz;
+      const cp = Math.cos(surface.pitch), sp = Math.sin(surface.pitch);
+      const halfProjectedLength = surface.d * cp / 2 + surface.h * sp / 2;
+      if (Math.abs(localX) > surface.w / 2 || Math.abs(localZ) > halfProjectedLength) continue;
+      const floorY = surface.baseY + surface.centerY
+        + surface.h / (2 * cp) - Math.tan(surface.pitch) * localZ;
+      const currentFeetY = cur.y - center;
+      if (Math.abs(currentFeetY - floorY) > 1.15) continue;
+      ny = floorY + center;
+      onWalkSurface = true;
+      break;
+    }
     // hard world bound: don't swim off the map
     const r = Math.hypot(nx, nz);
     const maxR = WORLD_SIZE / 2 - 6;
@@ -162,7 +219,7 @@ export class GamePhysics {
     col.setTranslation({ x: nx, y: ny, z: nz });
     return {
       pos: { x: nx, y: ny - center, z: nz },
-      grounded: this.controller.computedGrounded(),
+      grounded: onWalkSurface || this.controller.computedGrounded(),
     };
   }
 
@@ -210,12 +267,21 @@ export class GamePhysics {
     this.players.clear();
     this.handleToPlayer.clear();
     this.sneakingPlayers.clear();
+    this.pronePlayers.clear();
+    this.walkSurfaces.length = 0;
     this.world.free();
   }
 }
 
 export function quatFromYaw(yaw: number): { x: number; y: number; z: number; w: number } {
   return { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) };
+}
+
+/** Compose world yaw with a local X pitch (used by authored stair ramps). */
+export function quatFromYawPitch(yaw: number, pitch: number): { x: number; y: number; z: number; w: number } {
+  const sy = Math.sin(yaw / 2), cy = Math.cos(yaw / 2);
+  const sx = Math.sin(pitch / 2), cx = Math.cos(pitch / 2);
+  return { x: cy * sx, y: sy * cx, z: -sy * sx, w: cy * cx };
 }
 
 // ruins walls sit on the flattened pad

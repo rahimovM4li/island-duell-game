@@ -7,15 +7,18 @@ import {
 } from './constants';
 import { deriveSeed, mulberry32, pick, randRange, Rng } from './rng';
 import {
-  isOnLand, plateauCenter, sampleHeight, terrainParams, TerrainParams, RUINS_RADIUS,
+  bunkerCenter, isOnLand, plateauCenter, sampleHeight, terrainParams, TerrainParams, RUINS_RADIUS,
 } from './terrain';
+import landmarkColliderManifest from './landmark-colliders.json';
 
 export type CrateTier = 'common' | 'good' | 'top';
 export type VegKind = 'tree' | 'rock' | 'bush';
+export type VegVariant = 'pine' | 'broadleaf' | 'palm' | 'boulder' | 'slab' | 'cluster' | 'bush';
 
 export interface Veg {
   id: number;
   kind: VegKind;
+  variant: VegVariant;
   x: number; z: number; y: number;
   scale: number;
   rot: number;
@@ -29,6 +32,8 @@ export interface Crate {
   x: number; z: number;
   tier: CrateTier;
   poi: PoiKind | 'forest' | 'scatter';
+  /** Optional landmark reward that is guaranteed for this cache. */
+  guaranteedItem?: ItemType;
 }
 
 export interface GroundItem {
@@ -47,6 +52,8 @@ export interface PoiStructure extends RuinWall {
   material: 'wood' | 'metal' | 'stone';
   collider: boolean;
   yOffset?: number;
+  rotX?: number;
+  walkSurface?: boolean;
 }
 
 export interface LandmarkPoi {
@@ -59,6 +66,41 @@ export interface LandmarkPoi {
 }
 
 export interface SpawnPoi { index: number; x: number; z: number; angle: number }
+
+interface LocalBoxCollider {
+  center: [number, number, number];
+  size: [number, number, number];
+  yaw: number;
+  pitch?: number;
+  walkSurface?: boolean;
+}
+
+const LANDMARK_COLLIDERS = landmarkColliderManifest.landmarks as unknown as Record<
+  'wreck' | 'watchtower' | 'bunker', { colliders: LocalBoxCollider[] }
+>;
+
+/** Convert Blender-authored local box proxies into deterministic world colliders. */
+function landmarkStructures(
+  id: keyof typeof LANDMARK_COLLIDERS, x: number, z: number, rootYaw: number,
+): PoiStructure[] {
+  const material: PoiStructure['material'] = id === 'wreck' || id === 'watchtower' ? 'wood' : 'stone';
+  const c = Math.cos(rootYaw), s = Math.sin(rootYaw);
+  return LANDMARK_COLLIDERS[id].colliders.map((collider) => {
+    const [lx, cy, lz] = collider.center;
+    const [w, h, d] = collider.size;
+    return {
+      x: x + c * lx + s * lz,
+      z: z - s * lx + c * lz,
+      w, h, d,
+      yOffset: cy - h / 2,
+      rotY: rootYaw + collider.yaw,
+      rotX: collider.pitch ?? 0,
+      walkSurface: collider.walkSurface ?? false,
+      material,
+      collider: true,
+    };
+  });
+}
 
 export interface WorldGen {
   seed: number;
@@ -109,41 +151,24 @@ export function generateWorld(seed: number, n: number): WorldGen {
   const wreckAngle = baseAngle + Math.PI * 0.34;
   const wreck = { x: Math.cos(wreckAngle) * 88, z: Math.sin(wreckAngle) * 88 };
   const wreckRot = wreckAngle + Math.PI / 2;
-  const bunkerAngle = baseAngle + Math.PI * 1.22;
-  const bunker = { x: Math.cos(bunkerAngle) * 55, z: Math.sin(bunkerAngle) * 55 };
-  const bunkerRot = bunkerAngle + Math.PI / 2;
+  const bunkerAngle = params.bunkerAngle;
+  const bunker = bunkerCenter(params);
+  // Authored stairs/entrances face local +Z. In Three.js that direction maps
+  // to (sin(yaw), cos(yaw)), so pi/2-angle points radially away from the hill.
+  const watchtowerRot = Math.PI / 2 - params.plateauAngle;
+  const bunkerRot = Math.PI / 2 - bunkerAngle;
   const pois: LandmarkPoi[] = [
     {
       id: 'wreck', name: 'Strandwrack', x: wreck.x, z: wreck.z, risk: 'high',
-      structures: [
-        { x: wreck.x, z: wreck.z, w: 10, d: 3.2, h: 1.6, rotY: wreckRot, material: 'wood', collider: true },
-        { x: wreck.x + Math.cos(wreckAngle) * 0.8, z: wreck.z + Math.sin(wreckAngle) * 0.8, w: 0.55, d: 0.55, h: 8.5, rotY: wreckRot, material: 'wood', collider: true },
-        { x: wreck.x + Math.cos(wreckRot) * 3.6, z: wreck.z + Math.sin(wreckRot) * 3.6, w: 5.5, d: 0.45, h: 2.6, rotY: wreckRot + 0.3, material: 'wood', collider: true },
-      ],
+      structures: landmarkStructures('wreck', wreck.x, wreck.z, wreckRot),
     },
     {
       id: 'watchtower', name: 'Aussichtsposten', x: plateau.x, z: plateau.z, risk: 'high',
-      structures: [
-        ...[-1, 1].flatMap((sx) => [-1, 1].map((sz): PoiStructure => ({
-          x: plateau.x + sx * 2.1, z: plateau.z + sz * 2.1, w: 0.45, d: 0.45, h: 5.5,
-          rotY: 0, material: 'wood', collider: true,
-        }))),
-        ...Array.from({ length: 12 }, (_, i): PoiStructure => ({
-          x: plateau.x, z: plateau.z + 7.5 - i * 0.58, w: 1.8, d: 0.62, h: (i + 1) * 0.42,
-          rotY: 0, material: 'wood', collider: true,
-        })),
-        { x: plateau.x, z: plateau.z, w: 5.6, d: 5.6, h: 0.45, yOffset: 5.04, rotY: 0, material: 'wood', collider: true },
-        { x: plateau.x, z: plateau.z, w: 6.4, d: 6.4, h: 0.3, yOffset: 7.2, rotY: 0, material: 'metal', collider: false },
-      ],
+      structures: landmarkStructures('watchtower', plateau.x, plateau.z, watchtowerRot),
     },
     {
       id: 'bunker', name: 'Waldbunker', x: bunker.x, z: bunker.z, risk: 'medium',
-      structures: [
-        { x: bunker.x, z: bunker.z, w: 8.5, d: 6.5, h: 0.45, yOffset: 2.4, rotY: bunkerRot, material: 'stone', collider: false },
-        { x: bunker.x + Math.cos(bunkerRot) * 3.9, z: bunker.z + Math.sin(bunkerRot) * 3.9, w: 0.7, d: 6.5, h: 2.4, rotY: bunkerRot, material: 'stone', collider: true },
-        { x: bunker.x - Math.cos(bunkerRot) * 3.9, z: bunker.z - Math.sin(bunkerRot) * 3.9, w: 0.7, d: 6.5, h: 2.4, rotY: bunkerRot, material: 'stone', collider: true },
-        { x: bunker.x + Math.sin(bunkerRot) * 2.9, z: bunker.z + Math.cos(bunkerRot) * 2.9, w: 8.5, d: 0.7, h: 2.4, rotY: bunkerRot, material: 'stone', collider: true },
-      ],
+      structures: landmarkStructures('bunker', bunker.x, bunker.z, bunkerRot),
     },
   ];
 
@@ -169,8 +194,9 @@ export function generateWorld(seed: number, n: number): WorldGen {
   const crateRng = mulberry32(deriveSeed(seed, 'crates'));
   const crates: Crate[] = [];
   let crateId = 0;
-  const addCrate = (x: number, z: number, tier: CrateTier, poi: Crate['poi']) =>
-    crates.push({ id: `crate-${crateId++}`, x, z, tier, poi });
+  const addCrate = (
+    x: number, z: number, tier: CrateTier, poi: Crate['poi'], guaranteedItem?: ItemType,
+  ) => crates.push({ id: `crate-${crateId++}`, x, z, tier, poi, ...(guaranteedItem ? { guaranteedItem } : {}) });
 
   for (let i = 0; i < 3; i++) { // ruins: top loot, contested center
     const a = crateRng() * Math.PI * 2;
@@ -181,11 +207,19 @@ export function generateWorld(seed: number, n: number): WorldGen {
     const side = (i - 1) * 2.3;
     addCrate(wreck.x + Math.cos(wreckRot) * side, wreck.z + Math.sin(wreckRot) * side, 'top', 'wreck');
   }
+  const localPoint = (origin: { x: number; z: number }, yaw: number, lx: number, lz: number) => ({
+    x: origin.x + Math.cos(yaw) * lx + Math.sin(yaw) * lz,
+    z: origin.z - Math.sin(yaw) * lx + Math.cos(yaw) * lz,
+  });
   for (let i = 0; i < 2; i++) { // watchtower: strong visibility but exposed
-    addCrate(plateau.x + (i ? 3.3 : -3.3), plateau.z + (i ? -1.2 : 1.2), i === 0 ? 'top' : 'good', 'watchtower');
+    const point = localPoint(plateau, watchtowerRot, i ? 3.3 : -3.3, i ? -1.2 : 1.2);
+    // The exposed tower cache is the reliable marksman objective. Other top
+    // crates retain their random sniper chance, so the weapon stays special.
+    addCrate(point.x, point.z, i === 0 ? 'top' : 'good', 'watchtower', i === 0 ? 'sniper' : undefined);
   }
   for (let i = 0; i < 2; i++) { // bunker: good loot in tight sightlines
-    addCrate(bunker.x + Math.cos(bunkerRot) * (i ? 1.9 : -1.9), bunker.z + Math.sin(bunkerRot) * (i ? 1.9 : -1.9), 'good', 'bunker');
+    const point = localPoint(bunker, bunkerRot, i ? 1.9 : -1.9, 0.8);
+    addCrate(point.x, point.z, 'good', 'bunker');
   }
   for (let i = 0; i < 2; i++) { // forest: common recovery route
     const s = landSpot(crateRng, params, (x, z) =>
@@ -229,7 +263,7 @@ export function generateWorld(seed: number, n: number): WorldGen {
     for (const sp of spawns) if (Math.hypot(x - sp.x, z - sp.z) < 5) return false;
     for (const c of crates) if (Math.hypot(x - c.x, z - c.z) < 2.5) return false;
     for (const poi of pois) {
-      const clearRadius = poi.id === 'wreck' ? 8 : 7;
+      const clearRadius = poi.id === 'wreck' ? 8 : poi.id === 'watchtower' ? 12 : 10.5;
       if (Math.hypot(x - poi.x, z - poi.z) < clearRadius) return false;
     }
     return true;
@@ -238,9 +272,20 @@ export function generateWorld(seed: number, n: number): WorldGen {
     for (let i = 0; i < count; i++) {
       const s = landSpot(vegRng, params, clearOfPois);
       const scale = randRange(vegRng, minScale, maxScale);
+      let variant: VegVariant = 'bush';
+      if (kind === 'tree') {
+        if (i === 0) variant = 'pine';
+        else if (i === 1) variant = 'broadleaf';
+        else if (i === 2) variant = 'palm';
+        else if (Math.hypot(s.x, s.z) > 77 && vegRng() < 0.72) variant = 'palm';
+        else variant = vegRng() < 0.52 ? 'pine' : 'broadleaf';
+      } else if (kind === 'rock') {
+        const rockVariants = ['boulder', 'slab', 'cluster'] as const;
+        variant = rockVariants[i < 3 ? i : Math.floor(vegRng() * rockVariants.length)];
+      }
       vegetation.push({
         id: vegId++,
-        kind,
+        kind, variant,
         x: s.x, z: s.z, y: sampleHeight(params, s.x, s.z),
         scale,
         rot: vegRng() * Math.PI * 2,

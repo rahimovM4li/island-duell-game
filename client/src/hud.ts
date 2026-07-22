@@ -31,6 +31,8 @@ export class Hud {
   private islandImg: HTMLCanvasElement | null = null;
   private announceTimer: ReturnType<typeof setTimeout> | null = null;
   private damageDirectionTimer: ReturnType<typeof setTimeout> | null = null;
+  private eliminationTimer: ReturnType<typeof setTimeout> | null = null;
+  private duelResultTimer: ReturnType<typeof setTimeout> | null = null;
   private spawns: SpawnPoi[] = [];
   private pois: LandmarkPoi[] = [];
   private reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -201,6 +203,12 @@ export class Hud {
     $('scope-overlay').style.display = scoped ? 'block' : 'none';
   }
 
+  setScopeZoom(fov: number | null): void {
+    const label = $('scope-zoom');
+    label.style.display = fov === null ? 'none' : 'block';
+    if (fov !== null) label.textContent = `${(75 / fov).toFixed(1)}× · Mausrad Zoom`;
+  }
+
   setBreath(fraction: number | null, holding: boolean): void {
     const wrap = $('breath-wrap');
     wrap.style.display = fraction === null ? 'none' : 'block';
@@ -231,6 +239,44 @@ export class Hud {
     const label = $('spectate-label');
     label.style.display = v ? 'block' : 'none';
     if (v) label.textContent = 'Freecam \u00b7 WASD fliegen \u00b7 Leertaste hoch \u00b7 Strg runter \u00b7 Shift schneller';
+  }
+
+  showElimination(victim: string, detail: string): void {
+    const el = $('elimination-confirm');
+    $('elimination-name').textContent = victim;
+    $('elimination-detail').textContent = detail;
+    if (this.eliminationTimer) clearTimeout(this.eliminationTimer);
+    el.getAnimations().forEach((animation) => animation.cancel());
+    const animation = el.animate(
+      [
+        { opacity: 0, transform: 'translate(-50%, 14px) scale(.94)' },
+        { opacity: 1, transform: 'translate(-50%, 0) scale(1)', offset: .18 },
+        { opacity: 1, transform: 'translate(-50%, 0) scale(1)', offset: .76 },
+        { opacity: 0, transform: 'translate(-50%, -8px) scale(.99)' },
+      ],
+      { duration: this.reduceMotion ? 80 : 1750, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' },
+    );
+    this.eliminationTimer = setTimeout(() => animation.cancel(), this.reduceMotion ? 100 : 1800);
+  }
+
+  showDuelResult(iWon: boolean, winnerName: string, round: number): void {
+    const el = $('duel-result');
+    el.classList.toggle('lose', !iWon);
+    $('duel-result-kicker').textContent = iWon ? `RUNDE ${round} GEWONNEN` : `RUNDE ${round} BEENDET`;
+    $('duel-result-title').textContent = iWon ? 'DU GEWINNST' : `${winnerName} GEWINNT`;
+    $('duel-result-detail').textContent = iWon ? 'Letzter Überlebender' : 'Der Sieger steht fest';
+    if (this.duelResultTimer) clearTimeout(this.duelResultTimer);
+    el.getAnimations().forEach((animation) => animation.cancel());
+    const animation = el.animate(
+      [
+        { opacity: 0, transform: 'scale(1.08)' },
+        { opacity: 1, transform: 'scale(1)', offset: .18 },
+        { opacity: 1, transform: 'scale(1)', offset: .72 },
+        { opacity: 0, transform: 'scale(.98)' },
+      ],
+      { duration: this.reduceMotion ? 120 : 2400, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' },
+    );
+    this.duelResultTimer = setTimeout(() => animation.cancel(), this.reduceMotion ? 140 : 2450);
   }
 
   showDeathRecap(text: string): void {
@@ -366,7 +412,10 @@ export class Hud {
     round: number, placements: PlacementEntry[], totals: Record<string, number>,
     nextRoundIn: number, myId: string, suddenDeathNext: boolean, stats: Record<string, CombatStats>,
   ): void {
-    $('scoreboard-title').textContent = `Runde ${round} beendet`;
+    const winner = placements.find((entry) => entry.place === 1) ?? placements[0];
+    $('scoreboard-title').textContent = winner?.id === myId
+      ? `🏆 Runde ${round} gewonnen`
+      : `${winner?.name ?? 'Unbekannt'} gewinnt Runde ${round}`;
     $('scoreboard-sub').textContent = 'Platzierungspunkte: 3 / 2 / 1 / 0 / 0';
     this.fillScores(placements, totals, myId, true, stats);
     $('rematch-btn').style.display = 'none';

@@ -2,7 +2,7 @@
 import { io, Socket } from 'socket.io-client';
 import { C2S, S2C, PROTOCOL_VERSION } from '@shared/protocol';
 import type {
-  GameEvent, InputMsg, LobbyStateMsg, MatchEndMsg, MatchStartMsg,
+  GameEvent, InputMsg, KickedMsg, LobbyStateMsg, MatchEndMsg, MatchStartMsg,
   RoundEndMsg, RoundStartMsg, SessionMsg, SnapshotMsg,
 } from '@shared/protocol';
 import type { BotDifficulty, MatchMode, Recipe } from '@shared/constants';
@@ -10,6 +10,7 @@ import type { BotDifficulty, MatchMode, Recipe } from '@shared/constants';
 export interface NetHandlers {
   onLobby(m: LobbyStateMsg): void;
   onJoinError(msg: string): void;
+  onKicked(msg: KickedMsg): void;
   onMatchStart(m: MatchStartMsg): void;
   onRoundStart(m: RoundStartMsg): void;
   onSnapshot(m: SnapshotMsg): void;
@@ -47,6 +48,7 @@ export class Net {
     this.socket.on(S2C.session, (m: SessionMsg) => { this.playerId = m.playerId; h.onSession(m); });
     this.socket.on(S2C.connectionNotice, (m) => h.onConnectionNotice(m));
     this.socket.on(S2C.joinError, (m) => h.onJoinError(typeof m === 'string' ? m : m?.reason ?? 'Beitritt abgelehnt'));
+    this.socket.on(S2C.kicked, (m: KickedMsg) => h.onKicked(m));
     this.socket.on(S2C.matchStart, (m) => h.onMatchStart(m));
     this.socket.on(S2C.roundStart, (m) => h.onRoundStart(m));
     this.socket.on(S2C.snapshot, (m) => { this.bytesIn += JSON.stringify(m).length; h.onSnapshot(m); });
@@ -73,6 +75,17 @@ export class Net {
   craft(recipe: Recipe): void { this.socket.emit(C2S.craft, { recipe }); }
   useBandage(): void { this.socket.emit(C2S.useBandage); }
   rematch(): void { this.socket.emit(C2S.rematch); }
+  kickPlayer(playerId: string): void { this.socket.emit(C2S.kickPlayer, { playerId }); }
+
+  leaveGame(): Promise<void> {
+    if (!this.socket.connected) return Promise.resolve();
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      const timer = setTimeout(finish, 800);
+      this.socket.emit(C2S.leaveGame, () => { clearTimeout(timer); finish(); });
+    });
+  }
 
   /** Stop reconnects, probes and event delivery before replacing this session. */
   dispose(): void {

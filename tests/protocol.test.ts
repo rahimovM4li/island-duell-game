@@ -1,7 +1,7 @@
 // §8 message type guards (defensive server parsing).
 import { describe, expect, it } from 'vitest';
 import {
-  isCraftMsg, isInputMsg, isJoinMsg, isReadyMsg, isStartMatchMsg,
+  isCraftMsg, isInputMsg, isJoinMsg, isKickMsg, isReadyMsg, isStartMatchMsg,
   isStartPracticeMsg, PROTOCOL_VERSION,
 } from '@shared/protocol';
 
@@ -24,7 +24,7 @@ describe('isJoinMsg', () => {
 describe('isInputMsg', () => {
   const valid = {
     seq: 1, dt: 0.016, mx: 0, mz: 1, yaw: 0.5, pitch: -0.1,
-    sprint: false, sneak: false, aim: false,
+    sprint: false, sneak: false, prone: false, aim: false,
     jump: false, fire: false, interact: false,
   };
   it('accepts a valid input', () => {
@@ -39,6 +39,7 @@ describe('isInputMsg', () => {
     expect(isInputMsg({ ...valid, slot: 4 })).toBe(false);
     expect(isInputMsg({ ...valid, fire: 1 })).toBe(false);
     expect(isInputMsg({ ...valid, sneak: 'yes' })).toBe(false);
+    expect(isInputMsg({ ...valid, prone: 'yes' })).toBe(false);
     expect(isInputMsg({ ...valid, aim: undefined })).toBe(false);
   });
 });
@@ -54,6 +55,15 @@ describe('isCraftMsg / isReadyMsg', () => {
   it('validates ready flag', () => {
     expect(isReadyMsg({ ready: true })).toBe(true);
     expect(isReadyMsg({ ready: 'yes' })).toBe(false);
+  });
+});
+
+describe('isKickMsg', () => {
+  it('accepts only a bounded player id', () => {
+    expect(isKickMsg({ playerId: '0123456789abcdef' })).toBe(true);
+    expect(isKickMsg({ playerId: '' })).toBe(false);
+    expect(isKickMsg({ playerId: 'x'.repeat(65) })).toBe(false);
+    expect(isKickMsg({ playerId: 42 })).toBe(false);
   });
 });
 

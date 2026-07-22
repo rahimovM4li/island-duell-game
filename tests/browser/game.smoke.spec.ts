@@ -2,7 +2,20 @@ import { expect, test } from '@playwright/test';
 
 test('host can enter a quick solo match and render the 3D scene', async ({ page }) => {
   const pageErrors: string[] = [];
+  const assetResponses = new Map<string, number>();
+  const assetWarnings: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'warning' && message.text().includes('Compact game assets unavailable')) {
+      assetWarnings.push(message.text());
+    }
+  });
+  page.on('response', (response) => {
+    const name = new URL(response.url()).pathname.split('/').pop();
+    if (name && ['weapons.glb', 'props.glb', 'environment.glb', 'landmarks.glb', 'character.glb', 'island-atlas.png'].includes(name)) {
+      assetResponses.set(name, response.status());
+    }
+  });
 
   await page.goto('/');
   await expect(page).toHaveTitle('Island Duell');
@@ -37,6 +50,31 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
     }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().state.pointerLocked ?? false
   ))).toBe(true);
 
+  await page.evaluate(() => {
+    (window as Window & { __CTRL_D_DEFAULT_PREVENTED__?: boolean }).__CTRL_D_DEFAULT_PREVENTED__ = false;
+    window.addEventListener('keydown', (event) => {
+      if (event.code === 'KeyD' && event.ctrlKey) {
+        (window as Window & { __CTRL_D_DEFAULT_PREVENTED__?: boolean }).__CTRL_D_DEFAULT_PREVENTED__ = event.defaultPrevented;
+      }
+    });
+  });
+  await page.keyboard.down('Control');
+  await page.keyboard.press('d');
+  await page.keyboard.up('Control');
+  expect(await page.evaluate(() => (
+    (window as Window & { __CTRL_D_DEFAULT_PREVENTED__?: boolean }).__CTRL_D_DEFAULT_PREVENTED__
+  ))).toBe(true);
+
+  const environment = await page.evaluate(() => (
+    (window as Window & {
+      __ISLAND_DUELL_DIAGNOSTICS__?: {
+        snapshot(): { environment: { nightTorches: { count: number; lights: number } } | null };
+      };
+    }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().environment
+  ));
+  expect(environment?.nightTorches.count).toBeGreaterThanOrEqual(12);
+  expect(environment?.nightTorches.lights).toBe(6);
+
   await page.keyboard.down('w');
   await page.keyboard.down('Shift');
   const movementSamples = await page.evaluate(async () => {
@@ -51,6 +89,7 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
           network: {
             reconciliationHardSnaps: number;
             reconciliationSmoothCorrections: number;
+            maxReconciliationError: number;
             maxPredictionStepsPerFrame: number;
           };
         };
@@ -88,7 +127,22 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
   expect(stationaryRatio).toBeLessThan(0.25);
   expect(movementSamples.network?.maxPredictionStepsPerFrame).toBeGreaterThan(1);
   expect(movementSamples.network?.reconciliationHardSnaps).toBe(0);
-  expect(movementSamples.network?.reconciliationSmoothCorrections).toBeGreaterThan(0);
+  expect(movementSamples.network?.maxReconciliationError).toBeLessThan(1.5);
 
+  expect(Object.fromEntries(assetResponses)).toEqual({
+    'island-atlas.png': 200,
+    'weapons.glb': 200,
+    'props.glb': 200,
+    'environment.glb': 200,
+    'landmarks.glb': 200,
+    'character.glb': 200,
+  });
+  expect(assetWarnings).toEqual([]);
   expect(pageErrors).toEqual([]);
+
+  await page.evaluate(() => document.exitPointerLock());
+  await expect(page.locator('#pause-hint')).toBeVisible();
+  await page.locator('#pause-leave-btn').click();
+  await expect(page.locator('#menu-screen')).not.toHaveClass(/hidden/);
+  await expect(page.locator('#menu-error')).toContainText('verlassen');
 });

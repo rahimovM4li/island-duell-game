@@ -9,7 +9,8 @@
     "client"
   ],
   "scripts": {
-    "assets:build": "node scripts/build-game-assets.mjs",
+    "assets:build": "node scripts/optimize-game-assets.mjs",
+    "assets:validate": "node scripts/optimize-game-assets.mjs --validate-only",
     "dev": "concurrently -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
     "build": "npm run build -w client",
     "start": "node --import tsx server/src/index.ts",

@@ -2,9 +2,9 @@
 // snapshot (20 Hz), event, roundEnd, matchEnd — plus round bookkeeping.
 import type { BotDifficulty, ItemType, MatchMode, Recipe, ThrowKind, WeaponType } from './constants';
 import type { CrateTier, VegKind } from './worldgen';
-import type { Phase } from './timeline';
+import type { LightingPreset, Phase } from './timeline';
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 7;
 
 // ---------- lobby ----------
 export interface JoinMsg { v: number; name: string; resumeToken?: string }
@@ -21,6 +21,8 @@ export interface LobbyStateMsg {
   inMatch: boolean; // lobby locked (§0 B3)
   canStart: boolean;
 }
+export interface KickMsg { playerId: string }
+export interface KickedMsg { reason: string }
 
 // ---------- match / round ----------
 export interface MatchStartMsg {
@@ -34,6 +36,7 @@ export interface MatchStartMsg {
 export interface RoundStartMsg {
   round: number;         // 1-based; > ROUNDS_PER_MATCH ⇒ sudden death
   suddenDeath: boolean;
+  lightingPreset: LightingPreset;
   spawns: Record<string, number>; // playerId → spawn POI index
   totals: Record<string, number>;
   pickups: PickupInfo[]; // initial ground loot + crates
@@ -75,6 +78,7 @@ export interface InputMsg {
   yaw: number; pitch: number;
   sprint: boolean;
   sneak: boolean;
+  prone?: boolean;
   aim: boolean;
   jump: boolean;
   fire: boolean;         // held
@@ -96,6 +100,7 @@ export interface SnapPlayer {
   slot: 1 | 2 | 3;
   sprinting: boolean;
   sneaking: boolean;
+  prone: boolean;
   aiming: boolean;
   bandaging: boolean;
   plates: number;
@@ -199,6 +204,8 @@ export const C2S = {
   craft: 'craft',
   useBandage: 'useBandage',
   rematch: 'rematch',
+  leaveGame: 'leaveGame',
+  kickPlayer: 'kickPlayer',
   pingProbe: 'pingProbe',
 } as const;
 
@@ -210,6 +217,7 @@ export const S2C = {
   session: 'session',
   connectionNotice: 'connectionNotice',
   joinError: 'joinError',
+  kicked: 'kicked',
   matchStart: 'matchStart',
   roundStart: 'roundStart',
   snapshot: 'snapshot',
@@ -232,7 +240,7 @@ export function isInputMsg(m: unknown): m is InputMsg {
   const x = m as InputMsg;
   return !!x && isNum(x.seq) && isNum(x.dt) && isNum(x.mx) && isNum(x.mz)
     && isNum(x.yaw) && isNum(x.pitch)
-    && isBool(x.sprint) && isBool(x.sneak) && isBool(x.aim)
+    && isBool(x.sprint) && isBool(x.sneak) && (x.prone === undefined || isBool(x.prone)) && isBool(x.aim)
     && isBool(x.jump) && isBool(x.fire) && isBool(x.interact)
     && (x.slot === undefined || x.slot === 1 || x.slot === 2 || x.slot === 3)
     && (x.reload === undefined || isBool(x.reload))
@@ -259,4 +267,9 @@ export function isCraftMsg(m: unknown): m is { recipe: Recipe } {
 export function isReadyMsg(m: unknown): m is { ready: boolean } {
   const x = m as { ready: boolean };
   return !!x && isBool(x.ready);
+}
+
+export function isKickMsg(m: unknown): m is KickMsg {
+  const x = m as KickMsg;
+  return !!x && typeof x.playerId === 'string' && x.playerId.length >= 1 && x.playerId.length <= 64;
 }

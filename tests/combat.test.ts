@@ -8,6 +8,8 @@ describe('combat readability and hit regions', () => {
     expect(isHeadshotHeight(4, false, 5.38)).toBe(true);
     expect(isHeadshotHeight(4, true, 4.91)).toBe(false);
     expect(isHeadshotHeight(4, true, 4.92)).toBe(true);
+    expect(isHeadshotHeight(4, false, 4.54, true)).toBe(false);
+    expect(isHeadshotHeight(4, false, 4.55, true)).toBe(true);
   });
 
   it('defines authoritative hip, aim, movement spread and recoil for every firearm', () => {

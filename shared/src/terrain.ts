@@ -4,7 +4,7 @@ import {
   BEACH_INNER_RADIUS, ISLAND_LAND_RADIUS, MAX_TERRAIN_HEIGHT, TERRAIN_CELL,
   TERRAIN_VERTS, WORLD_HALF,
 } from './constants';
-import { deriveSeed } from './rng';
+import { deriveSeed, mulberry32 } from './rng';
 
 function hash2(seed: number, xi: number, zi: number): number {
   let h = (seed ^ Math.imul(xi, 374761393) ^ Math.imul(zi, 668265263)) | 0;
@@ -44,12 +44,26 @@ function fbm(seed: number, x: number, z: number, octaves = 4): number {
 export interface TerrainParams {
   seed: number;
   plateauAngle: number; // where the highground POI sits
+  bunkerAngle: number; // deterministic pad + entrance orientation
 }
 
 export function terrainParams(seed: number): TerrainParams {
   // plateau direction derived from seed, stable across clients
   const a = (deriveSeed(seed, 'plateau') / 4294967296) * Math.PI * 2;
-  return { seed: deriveSeed(seed, 'terrain'), plateauAngle: a };
+  const spawnRing = mulberry32(deriveSeed(seed, 'spawn-ring'))() * Math.PI * 2;
+  let bunkerAngle = spawnRing + Math.PI * 1.22;
+  let separation = ((bunkerAngle - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  // Both landmarks occupy the same 55 m ring. Keep their graded pads and
+  // combat spaces from overlapping on unlucky seeds.
+  if (Math.abs(separation) < 0.72) {
+    separation = separation < 0 ? -0.72 : 0.72;
+    bunkerAngle = a + separation;
+  }
+  return {
+    seed: deriveSeed(seed, 'terrain'),
+    plateauAngle: a,
+    bunkerAngle,
+  };
 }
 
 export function plateauCenter(p: TerrainParams): { x: number; z: number } {
@@ -57,13 +71,18 @@ export function plateauCenter(p: TerrainParams): { x: number; z: number } {
   return { x: Math.cos(p.plateauAngle) * r, z: Math.sin(p.plateauAngle) * r };
 }
 
+export function bunkerCenter(p: TerrainParams): { x: number; z: number } {
+  const r = 55;
+  return { x: Math.cos(p.bunkerAngle) * r, z: Math.sin(p.bunkerAngle) * r };
+}
+
 export const RUINS_RADIUS = 20;
 export const RUINS_FLOOR_HEIGHT = 5.5;
 export const PLATEAU_RADIUS = 16;
 export const PLATEAU_EXTRA_HEIGHT = 7;
 
-/** World-space terrain height at (x, z). Water level is y = 0. */
-export function sampleHeight(p: TerrainParams, x: number, z: number): number {
+/** Terrain before landmark construction pads are cut into the rolling hills. */
+function naturalHeight(p: TerrainParams, x: number, z: number): number {
   const d = Math.hypot(x, z);
   // base rolling hills
   const n = fbm(p.seed, x / 48 + 100, z / 48 + 100);
@@ -78,8 +97,31 @@ export function sampleHeight(p: TerrainParams, x: number, z: number): number {
   const pd = Math.hypot(x - pc.x, z - pc.z);
   h += (1 - smoothstep(PLATEAU_RADIUS * 0.4, PLATEAU_RADIUS, pd)) * PLATEAU_EXTRA_HEIGHT * landMask;
   // flatten central ruins pad
-  const ruinBlend = 1 - smoothstep(RUINS_RADIUS * 0.55, RUINS_RADIUS, d);
+  // The visible plaza has an 18 m radius. Keep its complete footprint level;
+  // otherwise the outer ring can visibly float above low terrain sectors.
+  const ruinBlend = 1 - smoothstep(RUINS_RADIUS * 0.92, RUINS_RADIUS + 4, d);
   h = lerp(h, RUINS_FLOOR_HEIGHT, ruinBlend);
+  return h;
+}
+
+/** World-space terrain height at (x, z). Water level is y = 0. */
+export function sampleHeight(p: TerrainParams, x: number, z: number): number {
+  let h = naturalHeight(p, x, z);
+
+  // Construction pads are part of the analytic terrain function so render,
+  // Rapier and both peers agree exactly. The inner radii cover the complete
+  // authored footprints; the outer bands blend back into the natural hill.
+  const tower = plateauCenter(p);
+  const towerDistance = Math.hypot(x - tower.x, z - tower.z);
+  // Extra two metres around the authored geometry keep a 2 m heightfield cell
+  // from straddling the flat pad and creating an invisible step at the stairs.
+  const towerBlend = 1 - smoothstep(11, 16, towerDistance);
+  h = lerp(h, naturalHeight(p, tower.x, tower.z), towerBlend);
+
+  const bunker = bunkerCenter(p);
+  const bunkerDistance = Math.hypot(x - bunker.x, z - bunker.z);
+  const bunkerBlend = 1 - smoothstep(7.5, 12, bunkerDistance);
+  h = lerp(h, naturalHeight(p, bunker.x, bunker.z), bunkerBlend);
   return h;
 }
 
