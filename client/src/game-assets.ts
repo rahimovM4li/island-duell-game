@@ -19,7 +19,7 @@ const ENVIRONMENT_NAMES = [
   'bush', 'grass', 'stump', 'rock_chips', 'rubble', 'barrel',
   'brazier', 'torch', 'spawn_marker', 'ruin_wall', 'ruin_cap',
 ] as const;
-const ASSET_REVISION = '2026-07-22-night-and-melee-v3';
+const ASSET_REVISION = '2026-07-28-middle-island-v1';
 
 type AssetWeapon = (typeof WEAPON_NAMES)[number];
 type AssetLandmark = (typeof LANDMARK_NAMES)[number];
@@ -78,6 +78,7 @@ class GameAssetLibrary {
   private props = new Map<AssetProp, THREE.Object3D>();
   private environment = new Map<AssetEnvironment, THREE.Object3D>();
   private character: THREE.Object3D | null = null;
+  private middleIsland: THREE.Object3D | null = null;
   private atlasMaterial: THREE.MeshStandardMaterial | null = null;
 
   preload(renderer: THREE.WebGLRenderer): Promise<boolean> {
@@ -102,12 +103,15 @@ class GameAssetLibrary {
 
       const loader = new GLTFLoader();
       loader.setMeshoptDecoder(MeshoptDecoder);
-      const [weaponGltf, propGltf, environmentGltf, landmarkGltf, characterGltf] = await Promise.all([
+      const [
+        weaponGltf, propGltf, environmentGltf, landmarkGltf, characterGltf, middleIslandGltf,
+      ] = await Promise.all([
         loader.loadAsync(publicAsset('weapons.glb')),
         loader.loadAsync(publicAsset('props.glb')),
         loader.loadAsync(publicAsset('environment.glb')),
         loader.loadAsync(publicAsset('landmarks.glb')),
         loader.loadAsync(publicAsset('character.glb')),
+        loader.loadAsync(publicAsset('middle-island.glb')),
       ]);
 
       const baseMaterial = new THREE.MeshStandardMaterial({
@@ -123,12 +127,15 @@ class GameAssetLibrary {
       this.prepareTemplates(environmentGltf.scene, baseMaterial);
       this.prepareTemplates(landmarkGltf.scene, baseMaterial);
       this.prepareTemplates(characterGltf.scene, baseMaterial);
+      this.prepareStandaloneTemplate(middleIslandGltf.scene);
       this.weapons = collectTemplates(weaponGltf.scene, WEAPON_NAMES, 'weapon');
       this.props = collectTemplates(propGltf.scene, PROP_NAMES, 'prop');
       this.environment = collectTemplates(environmentGltf.scene, ENVIRONMENT_NAMES, 'env');
       this.landmarks = collectTemplates(landmarkGltf.scene, LANDMARK_NAMES, 'poi');
       this.character = characterGltf.scene.getObjectByName('player_survivor') ?? null;
       if (!this.character) throw new Error('Asset template missing: player_survivor');
+      this.middleIsland = middleIslandGltf.scene.getObjectByName('middle_island') ?? null;
+      if (!this.middleIsland) throw new Error('Asset template missing: middle_island');
       baseMaterial.userData.assetShared = true;
       this.atlasMaterial = baseMaterial;
       return true;
@@ -139,6 +146,7 @@ class GameAssetLibrary {
       this.environment.clear();
       this.landmarks.clear();
       this.character = null;
+      this.middleIsland = null;
       console.warn('Compact game assets unavailable; using procedural fallback.', error);
       return false;
     }
@@ -163,6 +171,27 @@ class GameAssetLibrary {
     });
     oldMaterials.forEach((old) => old.dispose());
     oldTextures.forEach((old) => old.dispose());
+  }
+
+  /**
+   * The arena uses a small Blender-authored material palette rather than the
+   * shared atlas. Its geometry/materials are immutable and shared by the one
+   * match-scoped clone, so world disposal must not release loader templates.
+   */
+  private prepareStandaloneTemplate(root: THREE.Object3D): void {
+    root.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry.userData.assetShared = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        material.userData.assetShared = true;
+        const withMap = material as THREE.Material & { map?: THREE.Texture };
+        if (withMap.map) withMap.map.userData.assetShared = true;
+      }
+    });
   }
 
   private clone(template: THREE.Object3D | undefined): THREE.Group | null {
@@ -208,6 +237,14 @@ class GameAssetLibrary {
     model.addLevel(prepare(lod0), 0);
     model.addLevel(prepare(lod1), 55);
     model.userData.compactAsset = true;
+    return model;
+  }
+
+  cloneMiddleIsland(): THREE.Object3D | null {
+    if (!this.middleIsland) return null;
+    const model = this.middleIsland.clone(true);
+    model.userData.compactAsset = true;
+    model.userData.middleIsland = true;
     return model;
   }
 

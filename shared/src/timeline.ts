@@ -4,13 +4,11 @@ import {
   PHASE_CLOSING_END, PHASE_LOOT_END, SHRINK1_AT, SHRINK2_AT, SHRINK3_AT,
   SHRINK_DURATION, ZONE_DOT, ZONE_RADII, ZONE_START_RADIUS, finalRingDiameter,
 } from './constants';
-import { deriveSeed } from './rng';
 import { clamp } from './terrain';
 
 export type Phase = 'loot' | 'closing' | 'endgame';
 export type LightingPreset = 'day' | 'dawn' | 'sunset' | 'night';
 
-const LIGHTING_PRESETS: readonly LightingPreset[] = ['day', 'dawn', 'sunset', 'night'];
 const LIGHTING_LEVEL: Record<LightingPreset, number> = {
   day: 0,
   dawn: 0.22,
@@ -18,13 +16,9 @@ const LIGHTING_LEVEL: Record<LightingPreset, number> = {
   night: 1,
 };
 
-/** Stable per seed and round; all moods occur once before a repeat. */
-export function lightingPresetForRound(seed: number, round: number): LightingPreset {
-  const offset = deriveSeed(seed, 'lighting-preset') % LIGHTING_PRESETS.length;
-  const direction = (deriveSeed(seed, 'lighting-direction') & 1) === 0 ? 1 : -1;
-  const index = (offset + Math.max(0, round - 1) * direction + LIGHTING_PRESETS.length * 8)
-    % LIGHTING_PRESETS.length;
-  return LIGHTING_PRESETS[index];
+/** Every round uses the normal daylight preset. */
+export function lightingPresetForRound(_seed: number, _round: number): LightingPreset {
+  return 'day';
 }
 
 export function phaseAt(t: number, pace = 1): Phase {

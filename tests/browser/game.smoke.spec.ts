@@ -12,7 +12,10 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
   });
   page.on('response', (response) => {
     const name = new URL(response.url()).pathname.split('/').pop();
-    if (name && ['weapons.glb', 'props.glb', 'environment.glb', 'landmarks.glb', 'character.glb', 'island-atlas.png'].includes(name)) {
+    if (name && [
+      'weapons.glb', 'props.glb', 'environment.glb', 'landmarks.glb',
+      'character.glb', 'middle-island.glb', 'island-atlas.png',
+    ].includes(name)) {
       assetResponses.set(name, response.status());
     }
   });
@@ -68,12 +71,18 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
   const environment = await page.evaluate(() => (
     (window as Window & {
       __ISLAND_DUELL_DIAGNOSTICS__?: {
-        snapshot(): { environment: { nightTorches: { count: number; lights: number } } | null };
+        snapshot(): {
+          environment: {
+            nightTorches: { count: number; lights: number };
+            middleIsland: { authored: boolean; fallback: boolean };
+          } | null;
+        };
       };
     }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().environment
   ));
   expect(environment?.nightTorches.count).toBeGreaterThanOrEqual(12);
   expect(environment?.nightTorches.lights).toBe(6);
+  expect(environment?.middleIsland).toEqual({ authored: true, fallback: false });
 
   await page.keyboard.down('w');
   await page.keyboard.down('Shift');
@@ -136,6 +145,7 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
     'environment.glb': 200,
     'landmarks.glb': 200,
     'character.glb': 200,
+    'middle-island.glb': 200,
   });
   expect(assetWarnings).toEqual([]);
   expect(pageErrors).toEqual([]);

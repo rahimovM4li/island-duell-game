@@ -120,6 +120,7 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
     const rs = bots[0].roundStarts[0];
     expect(rs.round).toBe(1);
     expect(rs.suddenDeath).toBe(false);
+    expect(rs.lightingPreset).toBe('day');
     // every player has a spawn POI, all distinct (§5.3)
     expect(Object.keys(rs.spawns)).toHaveLength(5);
     expect(new Set(Object.values(rs.spawns)).size).toBe(5);
@@ -175,6 +176,8 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
 
     const rounds = bots[0].roundEnds.length;
     expect(rounds).toBeGreaterThanOrEqual(3); // 3 scheduled + possible sudden death
+    expect(bots[0].roundStarts.slice(0, rounds).every((start) =>
+      start.lightingPreset === 'day')).toBe(true);
     const end = bots[0].matchEnd!;
     expect(end.winnerId).toBeTruthy();
     expect(end.standings).toHaveLength(5);
@@ -215,6 +218,7 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
       () => bots.every((b) => b.roundStarts.length > priorRoundStarts),
       5000, 'rematch roundStart',
     );
+    expect(bots[0].roundStarts.at(-1)?.lightingPreset).toBe('day');
     expect(bots[0].matchStart!.seed).not.toBe(firstSeed);
   }, 150_000);
 });

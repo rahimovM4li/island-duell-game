@@ -69,3 +69,31 @@ describe('recognisable weapon GLB silhouettes', () => {
     expect(triangleCount('weapon_bow_visual_mesh')).toBeGreaterThanOrEqual(360);
   });
 });
+
+describe('middle-island GLB budget', () => {
+  it('keeps the authored arena compact, compressed and draw-call bounded', () => {
+    const buffer = readFileSync(path.resolve('client/public/assets/middle-island.glb'));
+    const jsonLength = buffer.readUInt32LE(12);
+    const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLength)) as {
+      nodes?: Array<{ name?: string }>;
+      meshes?: Array<{ primitives?: Array<{ indices?: number; attributes?: { POSITION?: number } }> }>;
+      accessors?: Array<{ count?: number }>;
+      materials?: unknown[];
+      extensionsRequired?: string[];
+    };
+    const triangles = (gltf.meshes ?? []).reduce((sum, mesh) =>
+      sum + (mesh.primitives ?? []).reduce((meshSum, primitive) => {
+        const accessor = primitive.indices ?? primitive.attributes?.POSITION;
+        return meshSum + Math.floor(
+          (accessor === undefined ? 0 : gltf.accessors?.[accessor]?.count ?? 0) / 3,
+        );
+      }, 0), 0);
+
+    expect(gltf.nodes?.some((node) => node.name === 'middle_island')).toBe(true);
+    expect(gltf.meshes?.length).toBeLessThanOrEqual(17);
+    expect(gltf.materials?.length).toBeLessThanOrEqual(17);
+    expect(triangles).toBeLessThanOrEqual(15_000);
+    expect(buffer.byteLength).toBeLessThan(350_000);
+    expect(gltf.extensionsRequired).toContain('EXT_meshopt_compression');
+  });
+});

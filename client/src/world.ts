@@ -7,7 +7,7 @@ import {
 } from '@shared/constants';
 import { sampleHeight, RUINS_FLOOR_HEIGHT } from '@shared/terrain';
 import { fogAt, timeOfDayAt, type LightingPreset } from '@shared/timeline';
-import { bushAt, type WorldGen } from '@shared/worldgen';
+import { bushAt, MIDDLE_ISLAND_ROOT_Y, type WorldGen } from '@shared/worldgen';
 import { deriveSeed, mulberry32 } from '@shared/rng';
 import { gameAssets, isSharedAssetResource } from './game-assets';
 
@@ -194,30 +194,11 @@ export class World {
    * used so the feature stays inexpensive on integrated laptop GPUs.
    */
   private buildNightTorches(): void {
-    const positions: Array<{ x: number; y: number; z: number }> = [];
-    for (let i = 0; i < 4; i++) {
-      const angle = Math.PI * 0.25 + i * Math.PI * 0.5;
-      const x = Math.cos(angle) * 14.8, z = Math.sin(angle) * 14.8;
-      positions.push({ x, y: sampleHeight(this.gen.params, x, z), z });
-    }
-    for (const poi of this.gen.pois) {
-      const length = Math.max(1, Math.hypot(poi.x, poi.z));
-      const outwardX = poi.x / length, outwardZ = poi.z / length;
-      const tangentX = -outwardZ, tangentZ = outwardX;
-      const forward = poi.id === 'watchtower' ? 7 : poi.id === 'bunker' ? 4.4 : 0;
-      const spread = poi.id === 'wreck' ? 4.6 : 2.25;
-      for (const side of [-1, 1]) {
-        const x = poi.x + outwardX * forward + tangentX * spread * side;
-        const z = poi.z + outwardZ * forward + tangentZ * spread * side;
-        positions.push({ x, y: sampleHeight(this.gen.params, x, z), z });
-      }
-    }
-    for (const spawn of this.gen.spawns) {
-      const length = Math.max(1, Math.hypot(spawn.x, spawn.z));
-      const x = spawn.x - (spawn.x / length) * 2.2;
-      const z = spawn.z - (spawn.z / length) * 2.2;
-      positions.push({ x, y: sampleHeight(this.gen.params, x, z), z });
-    }
+    const positions = this.gen.navigationLights.map(({ x, z }) => ({
+      x,
+      y: sampleHeight(this.gen.params, x, z),
+      z,
+    }));
 
     const root = this.nightTorches;
     root.name = 'night-torches';
@@ -568,78 +549,50 @@ export class World {
   }
 
   private buildRuins(): void {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xa79c88, flatShading: true });
-    const trimMat = new THREE.MeshLambertMaterial({ color: 0x8a7f6c, flatShading: true });
-    const mossMat = new THREE.MeshLambertMaterial({ color: 0x5d7440, flatShading: true });
-    const y = RUINS_FLOOR_HEIGHT - 0.3;
-    const plaza = new THREE.Mesh(
-      new THREE.CylinderGeometry(17, 18, 0.35, 18),
-      new THREE.MeshLambertMaterial({ color: 0x817b70, flatShading: true }),
-    );
-    plaza.position.y = RUINS_FLOOR_HEIGHT - 0.12;
-    plaza.receiveShadow = true;
-    this.scene.add(plaza);
-    const ruinRng = mulberry32(deriveSeed(this.gen.seed, 'ruin-detail'));
-    for (const w of this.gen.ruinWalls) {
-      const compactWall = gameAssets.cloneEnvironment('ruin_wall');
-      const m = compactWall ?? new THREE.Mesh(new THREE.BoxGeometry(w.w, w.h, w.d), mat);
-      if (compactWall) compactWall.scale.set(w.w, w.h, w.d / 0.8);
-      m.position.set(w.x, y + (compactWall ? 0 : w.h / 2), w.z);
-      m.rotation.y = w.rotY;
-      m.castShadow = true;
-      m.receiveShadow = true;
-      this.scene.add(m);
-      // broken top course: a couple of loose blocks sitting on the wall crown
-      const blocks = 1 + Math.floor(ruinRng() * 2);
-      for (let b = 0; b < blocks; b++) {
-        const bw = w.w * (0.18 + ruinRng() * 0.22);
-        const compactCap = gameAssets.cloneEnvironment('ruin_cap');
-        const cap = compactCap ?? new THREE.Mesh(new THREE.BoxGeometry(bw, 0.4, w.d * 1.05), ruinRng() < 0.4 ? mossMat : trimMat);
-        if (compactCap) compactCap.scale.set(bw, 1, w.d / 0.8);
-        const along = (ruinRng() - 0.5) * (w.w - bw);
-        cap.position.set(w.x + Math.cos(w.rotY) * along, y + w.h + (compactCap ? 0 : 0.2), w.z + Math.sin(w.rotY) * along);
-        cap.rotation.y = w.rotY + (ruinRng() - 0.5) * 0.3;
-        cap.castShadow = true;
-        this.scene.add(cap);
+    const authored = gameAssets.cloneMiddleIsland();
+    if (authored) {
+      authored.name = 'middle-island';
+      authored.position.y = MIDDLE_ISLAND_ROOT_Y;
+      this.scene.add(authored);
+    } else {
+      // Asset-loading failure remains playable: the exact shared collider
+      // proxies become a cheap greybox instead of restoring mismatched ruins.
+      const stone = new THREE.MeshLambertMaterial({ color: 0x7890a0, flatShading: true });
+      const low = new THREE.MeshLambertMaterial({ color: 0x93a9b4, flatShading: true });
+      const nature = new THREE.MeshLambertMaterial({ color: 0x6f8f72, flatShading: true });
+      const fallback = new THREE.Group();
+      fallback.name = 'middle-island-fallback';
+      for (const structure of this.gen.centralStructures) {
+        const material = structure.name.startsWith('Nature_') ? nature
+          : structure.h < 0.9 ? low : stone;
+        const mesh = structure.shape === 'cylinder'
+          ? new THREE.Mesh(
+            new THREE.CylinderGeometry(structure.radius, structure.radius, structure.h, 12),
+            material,
+          )
+          : new THREE.Mesh(
+            new THREE.BoxGeometry(structure.w, structure.h, structure.d),
+            material,
+          );
+        mesh.name = `fallback-${structure.name}`;
+        mesh.position.set(structure.x, structure.y, structure.z);
+        if (structure.shape === 'box') {
+          mesh.rotation.order = 'YXZ';
+          mesh.rotation.y = structure.rotY;
+          mesh.rotation.x = structure.rotX;
+        }
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        fallback.add(mesh);
       }
+      this.scene.add(fallback);
     }
-    // scattered rubble around the plaza edge for a weathered, lived-in look
-    for (let i = 0; i < 14; i++) {
-      const a = ruinRng() * Math.PI * 2;
-      const r = 6 + ruinRng() * 10;
-      const rx = Math.cos(a) * r, rz = Math.sin(a) * r;
-      const chunk = gameAssets.cloneEnvironment('rubble') ?? new THREE.Mesh(
-        new THREE.IcosahedronGeometry(0.3 + ruinRng() * 0.4, 0),
-        ruinRng() < 0.3 ? mossMat : trimMat,
-      );
-      const rubbleScale = 0.7 + ruinRng() * 0.65;
-      if (chunk.userData.compactAsset) chunk.scale.setScalar(rubbleScale);
-      else chunk.scale.y = 0.6;
-      chunk.position.set(rx, sampleHeight(this.gen.params, rx, rz) + (chunk.userData.compactAsset ? 0 : 0.15), rz);
-      chunk.rotation.set(ruinRng(), ruinRng() * Math.PI, ruinRng());
-      chunk.castShadow = true;
-      this.scene.add(chunk);
-    }
-    // Central signal brazier makes the contested ruins readable from a distance.
-    const compactBrazier = gameAssets.cloneEnvironment('brazier');
-    const brazier = compactBrazier ?? new THREE.Group();
-    if (!compactBrazier) {
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.7, 0.8, 8), mat);
-    base.position.y = 0.4;
-    const bowl = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.7, 1.1, 0.5, 8),
-      new THREE.MeshLambertMaterial({ color: 0x31383b }),
-    );
-    bowl.position.y = 1.05;
-    const flame = new THREE.Mesh(
-      new THREE.ConeGeometry(0.45, 1.5, 7),
-      new THREE.MeshBasicMaterial({ color: 0xff9e42, transparent: true, opacity: 0.88 }),
-    );
-    flame.position.y = 2;
-    brazier.add(base, bowl, flame);
-    }
-    brazier.position.set(0, y + 0.2, 0);
-    this.scene.add(brazier);
+
+    const fireLight = new THREE.PointLight(0xff9a63, 4.2, 13, 2);
+    fireLight.name = 'middle-island-fire-light';
+    fireLight.position.set(0, RUINS_FLOOR_HEIGHT + 2.35, 0);
+    fireLight.castShadow = false;
+    this.scene.add(fireLight);
   }
 
   private buildLandmarks(): void {
@@ -655,8 +608,9 @@ export class World {
     const rustMat = needsFallback
       ? new THREE.MeshLambertMaterial({ color: 0x8a5a3a, flatShading: true })
       : null;
-    const propRng = mulberry32(deriveSeed(this.gen.seed, 'poi-props'));
     for (const poi of this.gen.pois) {
+      const barrels = this.gen.decorations.filter((entry) =>
+        entry.kind === 'barrel' && entry.owner === poi.id);
       const compactModel = compactModels.get(poi.id);
       if (compactModel) {
         compactModel.name = `poi-${poi.id}`;
@@ -666,13 +620,17 @@ export class World {
           poi.z,
         );
         compactModel.rotation.y = poi.structures[0]?.rotY ?? 0;
-        for (let b = 0; b < 2 + Math.floor(propRng() * 2); b++) {
+        for (const detail of barrels) {
           const barrel = gameAssets.cloneEnvironment('barrel');
           if (!barrel) break;
-          const a = propRng() * Math.PI * 2;
-          const radius = 3.2 + propRng() * 1.6;
-          const bx = poi.x + Math.cos(a) * radius, bz = poi.z + Math.sin(a) * radius;
-          barrel.position.set(bx, sampleHeight(this.gen.params, bx, bz), bz);
+          barrel.name = detail.id;
+          barrel.position.set(
+            detail.x,
+            sampleHeight(this.gen.params, detail.x, detail.z),
+            detail.z,
+          );
+          barrel.rotation.y = detail.rot;
+          barrel.scale.setScalar(detail.scale);
           this.scene.add(barrel);
         }
         this.scene.add(compactModel);
@@ -692,21 +650,26 @@ export class World {
         group.add(mesh);
       }
       // a couple of weathered barrels beside each landmark
-      for (let b = 0; b < 2 + Math.floor(propRng() * 2); b++) {
-        const a = propRng() * Math.PI * 2;
-        const r = 3.2 + propRng() * 1.6;
-        const bx = poi.x + Math.cos(a) * r, bz = poi.z + Math.sin(a) * r;
+      for (const detail of barrels) {
         const barrel = new THREE.Mesh(
           new THREE.CylinderGeometry(0.36, 0.36, 0.95, 10),
-          propRng() < 0.5 ? rustMat : materials.metal,
+          Number(detail.id.slice(-1)) % 2 === 0 ? rustMat : materials.metal,
         );
-        barrel.position.set(bx, sampleHeight(this.gen.params, bx, bz) + 0.48, bz);
+        barrel.name = detail.id;
+        barrel.position.set(
+          detail.x,
+          sampleHeight(this.gen.params, detail.x, detail.z) + 0.48 * detail.scale,
+          detail.z,
+        );
+        barrel.rotation.y = detail.rot;
+        barrel.scale.setScalar(detail.scale);
         barrel.castShadow = true;
         barrel.receiveShadow = true;
         group.add(barrel);
         const rim = new THREE.Mesh(new THREE.TorusGeometry(0.37, 0.03, 6, 12), materials.metal);
         rim.rotation.x = Math.PI / 2;
-        rim.position.set(bx, barrel.position.y + 0.28, bz);
+        rim.position.set(detail.x, barrel.position.y + 0.28 * detail.scale, detail.z);
+        rim.scale.setScalar(detail.scale);
         group.add(rim);
       }
       if (poi.id === 'wreck') {
@@ -919,12 +882,19 @@ export class World {
     this.zoneTargetMesh.visible = zoneTarget < zoneRadius - 0.5;
   }
 
-  stats(): { nightTorches: { count: number; lights: number; visible: boolean } } {
+  stats(): {
+    nightTorches: { count: number; lights: number; visible: boolean };
+    middleIsland: { authored: boolean; fallback: boolean };
+  } {
     return {
       nightTorches: {
         count: this.nightTorches.userData.torchCount as number,
         lights: this.torchLights.length,
         visible: this.nightTorches.visible,
+      },
+      middleIsland: {
+        authored: this.scene.getObjectByName('middle-island') !== undefined,
+        fallback: this.scene.getObjectByName('middle-island-fallback') !== undefined,
       },
     };
   }

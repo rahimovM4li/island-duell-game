@@ -4,7 +4,9 @@ import {
   FIXED_POI_CRATES, ISLAND_LAND_RADIUS, SPAWN_RING_RADIUS, scatterCrateCount,
 } from '@shared/constants';
 import { buildHeightGrid, sampleHeight, terrainParams, RUINS_FLOOR_HEIGHT, RUINS_RADIUS } from '@shared/terrain';
-import { assignSpawnIndices, generateWorld } from '@shared/worldgen';
+import {
+  assignSpawnIndices, generateWorld, MIDDLE_ISLAND_LOOT_SPOTS,
+} from '@shared/worldgen';
 import { World } from '../client/src/world';
 
 const SEED = 123456789;
@@ -71,19 +73,96 @@ describe('crates (§3, §5.2)', () => {
     }
   });
 
-  it('risk-coupled tiers: ruins & beach = top, plateau = good, forest = common (§5.2)', () => {
+  it('keeps current POI loot tiers coupled to risk', () => {
     const gen = generateWorld(SEED, 3);
-    for (const c of gen.crates) {
-      if (c.poi === 'ruins' || c.poi === 'beach') expect(c.tier).toBe('top');
-      if (c.poi === 'plateau') expect(c.tier).toBe('good');
-      if (c.poi === 'forest') expect(c.tier).toBe('common');
-    }
+    expect(gen.crates.filter((c) => c.poi === 'ruins').every((c) => c.tier === 'top')).toBe(true);
+    expect(gen.crates.filter((c) => c.poi === 'wreck').every((c) => c.tier === 'top')).toBe(true);
+    expect(gen.crates.filter((c) => c.poi === 'watchtower').map((c) => c.tier).sort())
+      .toEqual(['good', 'top']);
+    expect(gen.crates.filter((c) => c.poi === 'bunker').every((c) => c.tier === 'good')).toBe(true);
+    expect(gen.crates.filter((c) => c.poi === 'forest').every((c) => c.tier === 'common')).toBe(true);
   });
 
   it('crates are on the island', () => {
     const gen = generateWorld(SEED, 5);
     for (const c of gen.crates) {
       expect(Math.hypot(c.x, c.z)).toBeLessThan(ISLAND_LAND_RADIUS);
+    }
+  });
+
+  it('keeps care, crates and spawn loot clear of generated objects across many seeds', () => {
+    const circleClearOfBox = (
+      x: number, z: number, radius: number,
+      box: { x: number; z: number; w: number; d: number; rotY: number },
+    ) => {
+      const dx = x - box.x, dz = z - box.z;
+      const c = Math.cos(box.rotY), s = Math.sin(box.rotY);
+      const localX = c * dx - s * dz;
+      const localZ = s * dx + c * dz;
+      const nearestX = Math.max(-box.w / 2, Math.min(box.w / 2, localX));
+      const nearestZ = Math.max(-box.d / 2, Math.min(box.d / 2, localZ));
+      return Math.hypot(localX - nearestX, localZ - nearestZ) >= radius;
+    };
+
+    for (let seed = 1; seed <= 1_000; seed++) {
+      const gen = generateWorld(seed, 5);
+      expect(Math.hypot(gen.carePackagePos.x, gen.carePackagePos.z), `care seed ${seed}`)
+        .toBeGreaterThan(3);
+
+      const solidStructures = gen.pois.flatMap((poi) => poi.structures.filter((part) =>
+          (part.yOffset ?? 0) + part.h / 2
+            - Math.abs(Math.cos(part.rotX ?? 0)) * part.h / 2
+            - Math.abs(Math.sin(part.rotX ?? 0)) * part.d / 2 < 1.25));
+      const loot = [
+        ...gen.crates.map((entry) => ({ ...entry, radius: 0.8, label: entry.id })),
+        ...gen.spawnFloorItems.map((entry) => ({ ...entry, radius: 0.5, label: entry.id })),
+        { ...gen.carePackagePos, radius: 1.2, label: 'care' },
+      ];
+
+      for (const entry of loot) {
+        expect(
+          Math.hypot(entry.x, entry.z),
+          `${entry.label} overlaps central brazier at seed ${seed}`,
+        ).toBeGreaterThanOrEqual(entry.radius + 1.8);
+        expect(
+          solidStructures.every((part) => circleClearOfBox(entry.x, entry.z, entry.radius, part)),
+          `${entry.label} overlaps structure at seed ${seed}`,
+        ).toBe(true);
+        expect(
+          gen.centralStructures.every((part) => part.shape === 'cylinder'
+            ? Math.hypot(entry.x - part.x, entry.z - part.z) >= entry.radius + part.radius
+            : circleClearOfBox(entry.x, entry.z, entry.radius, part)),
+          `${entry.label} overlaps middle-island structure at seed ${seed}`,
+        ).toBe(true);
+        expect(
+          gen.vegetation.every((plant) => {
+            const plantRadius = plant.kind === 'bush' ? 0.95 * plant.scale : plant.colliderRadius;
+            return Math.hypot(entry.x - plant.x, entry.z - plant.z) >= entry.radius + plantRadius;
+          }),
+          `${entry.label} overlaps vegetation at seed ${seed}`,
+        ).toBe(true);
+        expect(
+          gen.decorations.every((detail) => {
+            const detailRadius = (detail.kind === 'rubble' ? 0.48 : 0.42) * detail.scale;
+            return Math.hypot(entry.x - detail.x, entry.z - detail.z)
+              >= entry.radius + detailRadius;
+          }),
+          `${entry.label} overlaps decoration at seed ${seed}`,
+        ).toBe(true);
+        expect(
+          gen.navigationLights.every((light) =>
+            Math.hypot(entry.x - light.x, entry.z - light.z) >= entry.radius + 0.32),
+          `${entry.label} overlaps navigation light at seed ${seed}`,
+        ).toBe(true);
+      }
+      for (let i = 0; i < loot.length; i++) {
+        for (let j = i + 1; j < loot.length; j++) {
+          expect(
+            Math.hypot(loot[i].x - loot[j].x, loot[i].z - loot[j].z),
+            `${loot[i].label} overlaps ${loot[j].label} at seed ${seed}`,
+          ).toBeGreaterThanOrEqual(loot[i].radius + loot[j].radius);
+        }
+      }
     }
   });
 });
@@ -111,6 +190,28 @@ describe('terrain features (§5.1)', () => {
   it('sea floor is below water level, land above', () => {
     expect(sampleHeight(p, 120, 0)).toBeLessThan(0);
     expect(sampleHeight(p, 0, 40)).toBeGreaterThan(0.6);
+  });
+});
+
+describe('authored middle island', () => {
+  const gen = generateWorld(SEED, 3);
+
+  it('loads Blender-authored primitive colliders and two walkable ramps', () => {
+    expect(gen.centralStructures).toHaveLength(91);
+    expect(gen.centralStructures.filter((part) => part.shape === 'cylinder')).toHaveLength(3);
+    expect(gen.centralStructures.filter((part) =>
+      part.shape === 'box' && part.walkSurface)).toHaveLength(2);
+    expect(gen.centralStructures.some((part) => part.name === 'Cover_High_Ruins_01')).toBe(true);
+    expect(gen.centralStructures.some((part) => part.name === 'Brazier_StoneBase')).toBe(true);
+  });
+
+  it('places the three contested top crates on the authored loot pads', () => {
+    const crates = gen.crates.filter((crate) => crate.poi === 'ruins');
+    expect(crates).toHaveLength(3);
+    for (const [x, z] of MIDDLE_ISLAND_LOOT_SPOTS) {
+      expect(crates.some((crate) =>
+        Math.hypot(crate.x - x, crate.z - z) < 0.001)).toBe(true);
+    }
   });
 });
 

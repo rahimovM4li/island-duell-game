@@ -6,7 +6,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import {
   PLAYER_HEIGHT, PLAYER_PRONE_HEIGHT, PLAYER_RADIUS, PLAYER_SNEAK_HEIGHT, TERRAIN_VERTS, WORLD_SIZE,
 } from './constants';
-import { buildHeightGrid, sampleHeight, TerrainParams } from './terrain';
+import { buildHeightGrid, sampleHeight } from './terrain';
 import type { WorldGen } from './worldgen';
 
 export type RapierModule = typeof RAPIER;
@@ -89,12 +89,27 @@ export class GamePhysics {
         R.ColliderDesc.cylinder(h / 2, v.colliderRadius).setTranslation(v.x, v.y + h / 2, v.z),
       );
     }
-    for (const w of gen.ruinWalls) {
-      const y = RUINS_WALL_BASE(gen.params);
+    for (const structure of gen.centralStructures) {
+      if (structure.shape === 'cylinder') {
+        this.world.createCollider(
+          R.ColliderDesc.cylinder(structure.h / 2, structure.radius)
+            .setTranslation(structure.x, structure.y, structure.z),
+        );
+        continue;
+      }
+      if (structure.walkSurface) {
+        this.walkSurfaces.push({
+          x: structure.x, z: structure.z, baseY: 0,
+          w: structure.w, h: structure.h, d: structure.d,
+          centerY: structure.y,
+          yaw: structure.rotY, pitch: structure.rotX,
+        });
+        continue;
+      }
       this.world.createCollider(
-        R.ColliderDesc.cuboid(w.w / 2, w.h / 2, w.d / 2)
-          .setTranslation(w.x, y + w.h / 2, w.z)
-          .setRotation(quatFromYaw(w.rotY)),
+        R.ColliderDesc.cuboid(structure.w / 2, structure.h / 2, structure.d / 2)
+          .setTranslation(structure.x, structure.y, structure.z)
+          .setRotation(quatFromYawPitch(structure.rotY, structure.rotX)),
       );
     }
     for (const poi of gen.pois) {
@@ -282,10 +297,4 @@ export function quatFromYawPitch(yaw: number, pitch: number): { x: number; y: nu
   const sy = Math.sin(yaw / 2), cy = Math.cos(yaw / 2);
   const sx = Math.sin(pitch / 2), cx = Math.cos(pitch / 2);
   return { x: cy * sx, y: sy * cx, z: -sy * sx, w: cy * cx };
-}
-
-// ruins walls sit on the flattened pad
-import { RUINS_FLOOR_HEIGHT } from './terrain';
-function RUINS_WALL_BASE(_p: TerrainParams): number {
-  return RUINS_FLOOR_HEIGHT - 0.3;
 }

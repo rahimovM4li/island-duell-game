@@ -16,6 +16,7 @@
 | `environment.glb` | tree, rock, bush, grass, remnants, ruins props | 180 KB | 600 triangles per LOD0 asset |
 | `landmarks.glb` | wreck, watchtower, bunker with LODs/proxies | 300 KB | 8,000 triangles per LOD0 POI |
 | `character.glb` | modular survivor with named sockets | 150 KB | 2,500 triangles LOD0 |
+| `middle-island.glb` | complete central combat arena | 350 KB | 15,000 triangles |
 | Atlas + all GLBs | complete initial art payload | **1 MB maximum** | Meshopt-compressed |
 
 The atlas is a single power-of-two `512×256` sRGB PNG. Geometry reuses one matte atlas material. Normal, metallic and roughness maps are deliberately omitted; form, UV colour blocks and lighting provide readability.
@@ -27,6 +28,7 @@ The atlas is a single power-of-two `512×256` sRGB PNG. Geometry reuses one matt
 - Environment: `env_<type>` with children `visual_lod0` and `visual_lod1` where useful.
 - Landmarks: `poi_<type>` with `visual_lod0`, `visual_lod1`, and `COL_*` proxy empties.
 - Character: `player_survivor`, with `player_body`, `player_head`, `player_gear`, and `player_weapon_socket`.
+- Middle island: `middle_island`; its Blender ground surface at `Z=1.08` is placed on the deterministic ruins floor at game `Y=5.5`.
 - Character transform rig: `player_arm_l_pivot`, `player_arm_r_pivot`, `player_leg_l_pivot`, and `player_leg_r_pivot`. These are lightweight Empty pivots, not a skinned armature.
 - Landmark LOD1 switches at 55 m. The survivor LOD1 is authored but kept hidden until component-aware character switching is added; instanced vegetation uses its compact LOD0 because it is already below the mobile-safe triangle target.
 
@@ -41,7 +43,7 @@ Blender object names are unique across the complete master scene. Repeated seman
 - The survivor faces Blender `+Y`: goggles and weapon socket are forward, backpack and bedroll are behind. Head pitch pivots at the neck and feet contact ground at `Z=0`.
 - The shared atlas adds tile-local wood grain, foliage mottling, metal highlights and hazard bands without adding another texture request.
 
-The current optimized payload is 337.9 KiB: 3,734 weapon triangles, 3,432 prop triangles, 1,774 environment triangles, 2,766 landmark triangles and 1,208 character triangles. This leaves substantial headroom below the 1 MB browser cap.
+The current optimized payload is 685.0 KiB. The middle island contributes 254.8 KB and 11,298 triangles while rendering as only 17 material-group meshes. The complete initial art payload remains below the 1 MB browser cap.
 
 ## Collision policy
 
@@ -50,15 +52,16 @@ The current optimized payload is 337.9 KiB: 3,734 weapon triangles, 3,432 prop t
 - Vegetation uses cylinders; bushes and grass remain walk-through cover.
 - POIs use authored box proxies matching the `COL_*` nodes. Detailed GLB triangles never become colliders.
 - The watchtower platform is split around a stair opening. A 13-step proxy ramp reaches the opening without a low ceiling, so a standing capsule can reach the deck.
+- The middle island uses `shared/src/middle-island.json`: boxes for cover/steps/rocks, three cylinders for the central ring and brazier, and two thin authored ramp walk surfaces. Loot and care-package placement reserve the same footprints.
 
 ## Required validation
 
 1. Blender scene contains every named asset and saves as `art/island-duell-assets.blend`.
-2. Each GLB contains the expected roots and no missing UVs.
+2. Each GLB contains the expected roots and no missing UVs where a texture is used. The color-only middle island intentionally permits untextured primitives.
 3. Optimized GLBs use Meshopt and the total payload stays below 1 MB.
 4. Runtime loading, fallback paths, typecheck, unit tests and production build pass.
 5. Browser smoke test has no page/console error and visually renders the imported assets.
-6. Automated physics traversal proves the watchtower stair route reaches deck height.
+6. Automated physics traversal proves the watchtower stair route and both middle-island ramps reach their platforms.
 
 ## Rebuild workflow
 
@@ -66,6 +69,12 @@ The current optimized payload is 337.9 KiB: 3,734 weapon triangles, 3,432 prop t
 
    ```powershell
    blender --background --python scripts/blender/build_island_assets.py
+   ```
+
+   Export the reviewed middle-island scene separately:
+
+   ```powershell
+   blender --background art/concepts/middle-island-v1/middle-island-v2.blend --python scripts/blender/export_middle_island.py
    ```
 
 2. Compress and validate the raw exports:
@@ -80,4 +89,4 @@ The current optimized payload is 337.9 KiB: 3,734 weapon triangles, 3,432 prop t
    npm run assets:validate
    ```
 
-The Blender step writes the editable master, atlas, five raw GLBs and the shared collider manifest. The Node step welds and Meshopt-compresses the GLBs, checks all required root names/UVs, enforces triangle and payload budgets, and rejects an invalid atlas size.
+The Blender steps write the editable masters, atlas, six raw GLBs and both shared collider manifests. The Node step welds and Meshopt-compresses the GLBs, checks required roots/UV policy, enforces triangle and payload budgets, and rejects an invalid atlas size.

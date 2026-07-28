@@ -29,13 +29,11 @@ describe('N scaling (§3)', () => {
 });
 
 describe('round timeline (§6.1)', () => {
-  it('selects deterministic but different day, dawn, sunset or night moods per round', () => {
-    const allowed = new Set(['day', 'dawn', 'sunset', 'night']);
-    for (const seed of [1, 7, 42, 1337]) {
-      const rounds = [1, 2, 3].map((round) => lightingPresetForRound(seed, round));
-      expect(rounds.every((preset) => allowed.has(preset))).toBe(true);
-      expect(new Set(rounds).size).toBe(3);
-      expect(rounds).toEqual([1, 2, 3].map((round) => lightingPresetForRound(seed, round)));
+  it('uses normal daylight in every round for every seed', () => {
+    for (let seed = 1; seed <= 1_000; seed++) {
+      const rounds = Array.from({ length: 10 }, (_, index) =>
+        lightingPresetForRound(seed, index + 1));
+      expect(rounds).toEqual(Array(10).fill('day'));
     }
   });
 

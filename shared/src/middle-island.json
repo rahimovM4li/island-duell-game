@@ -1,0 +1,1380 @@
+{
+  "version": 1,
+  "coordinateSystem": "three-y-up",
+  "groundSurfaceZ": 1.08,
+  "gameFloorY": 5.5,
+  "rootYOffset": 4.42,
+  "colliders": [
+    {
+      "name": "Cover_Low_Path_East_01",
+      "shape": "box",
+      "center": [
+        14.5092,
+        1.66,
+        0.4431
+      ],
+      "size": [
+        3.15,
+        1.12,
+        0.68
+      ],
+      "yaw": 0.16444
+    },
+    {
+      "name": "Cover_Low_Path_North_01",
+      "shape": "box",
+      "center": [
+        2.9558,
+        1.66,
+        -14.2118
+      ],
+      "size": [
+        3.15,
+        1.12,
+        0.68
+      ],
+      "yaw": 1.560703
+    },
+    {
+      "name": "Cover_Medium_Path_East_02",
+      "shape": "box",
+      "center": [
+        13.0746,
+        1.84,
+        -6.3062
+      ],
+      "size": [
+        3.15,
+        1.48,
+        0.68
+      ],
+      "yaw": 0.24444
+    },
+    {
+      "name": "Cover_Medium_Path_North_02",
+      "shape": "box",
+      "center": [
+        -3.94,
+        1.84,
+        -13.971
+      ],
+      "size": [
+        3.15,
+        1.48,
+        0.68
+      ],
+      "yaw": 1.640703
+    },
+    {
+      "name": "Cover_Low_Path_West_01",
+      "shape": "box",
+      "center": [
+        -14.4926,
+        1.66,
+        0.8232
+      ],
+      "size": [
+        3.15,
+        1.12,
+        0.68
+      ],
+      "yaw": 3.393299
+    },
+    {
+      "name": "Cover_Low_Path_South_01",
+      "shape": "box",
+      "center": [
+        -2.208,
+        1.66,
+        14.347
+      ],
+      "size": [
+        3.15,
+        1.12,
+        0.68
+      ],
+      "yaw": 4.754655
+    },
+    {
+      "name": "Cover_Medium_Path_West_02",
+      "shape": "box",
+      "center": [
+        -12.4752,
+        1.84,
+        7.4217
+      ],
+      "size": [
+        3.15,
+        1.48,
+        0.68
+      ],
+      "yaw": 3.473299
+    },
+    {
+      "name": "Cover_Medium_Path_South_02",
+      "shape": "box",
+      "center": [
+        4.6658,
+        1.84,
+        13.7457
+      ],
+      "size": [
+        3.15,
+        1.48,
+        0.68
+      ],
+      "yaw": 4.834655
+    },
+    {
+      "name": "Cover_High_Path_East_Marker",
+      "shape": "box",
+      "center": [
+        12.0329,
+        2.08,
+        -5.6758
+      ],
+      "size": [
+        0.82,
+        1.96,
+        0.82
+      ],
+      "yaw": 0.23944
+    },
+    {
+      "name": "Cover_High_Path_West_Marker",
+      "shape": "box",
+      "center": [
+        -11.4924,
+        2.08,
+        6.7029
+      ],
+      "size": [
+        0.82,
+        1.96,
+        0.82
+      ],
+      "yaw": 3.468299
+    },
+    {
+      "name": "Cover_High_Path_North_Marker",
+      "shape": "box",
+      "center": [
+        -3.5001,
+        2.08,
+        -12.8357
+      ],
+      "size": [
+        0.82,
+        1.96,
+        0.82
+      ],
+      "yaw": 1.635703
+    },
+    {
+      "name": "Cover_High_Path_South_Marker",
+      "shape": "box",
+      "center": [
+        4.1671,
+        2.08,
+        12.6349
+      ],
+      "size": [
+        0.82,
+        1.96,
+        0.82
+      ],
+      "yaw": 4.829656
+    },
+    {
+      "name": "Cover_High_Training_01",
+      "shape": "box",
+      "center": [
+        8.135,
+        2.195,
+        -7.0113
+      ],
+      "size": [
+        1.8,
+        2.35,
+        0.72
+      ],
+      "yaw": 2.390461
+    },
+    {
+      "name": "Cover_Low_Training_01",
+      "shape": "box",
+      "center": [
+        6.488,
+        1.645,
+        -8.3933
+      ],
+      "size": [
+        2.1,
+        1.25,
+        0.72
+      ],
+      "yaw": 2.443461
+    },
+    {
+      "name": "Cover_Medium_Training_01",
+      "shape": "box",
+      "center": [
+        5.0133,
+        1.945,
+        -9.6306
+      ],
+      "size": [
+        1.35,
+        1.85,
+        0.72
+      ],
+      "yaw": 2.496461
+    },
+    {
+      "name": "Cover_Low_Training_02",
+      "shape": "box",
+      "center": [
+        4.6437,
+        1.595,
+        -9.1901
+      ],
+      "size": [
+        1.45,
+        1.15,
+        0.72
+      ],
+      "yaw": 3.961257
+    },
+    {
+      "name": "Cover_Medium_Training_02",
+      "shape": "box",
+      "center": [
+        3.6153,
+        1.895,
+        -7.9645
+      ],
+      "size": [
+        1.35,
+        1.75,
+        0.72
+      ],
+      "yaw": 4.014257
+    },
+    {
+      "name": "Cover_High_Ruins_01",
+      "shape": "box",
+      "center": [
+        -8.3174,
+        2.195,
+        -6.7939
+      ],
+      "size": [
+        1.8,
+        2.35,
+        0.72
+      ],
+      "yaw": 4.13579
+    },
+    {
+      "name": "Cover_Low_Ruins_01",
+      "shape": "box",
+      "center": [
+        -9.3924,
+        1.645,
+        -4.9319
+      ],
+      "size": [
+        2.1,
+        1.25,
+        0.72
+      ],
+      "yaw": 4.18879
+    },
+    {
+      "name": "Cover_Medium_Ruins_01",
+      "shape": "box",
+      "center": [
+        -10.3549,
+        1.945,
+        -3.2648
+      ],
+      "size": [
+        1.35,
+        1.85,
+        0.72
+      ],
+      "yaw": 4.24179
+    },
+    {
+      "name": "Cover_Low_Ruins_02",
+      "shape": "box",
+      "center": [
+        -9.8569,
+        1.595,
+        -2.9773
+      ],
+      "size": [
+        1.45,
+        1.15,
+        0.72
+      ],
+      "yaw": 5.706586
+    },
+    {
+      "name": "Cover_Medium_Ruins_02",
+      "shape": "box",
+      "center": [
+        -8.4713,
+        1.895,
+        -2.1773
+      ],
+      "size": [
+        1.35,
+        1.75,
+        0.72
+      ],
+      "yaw": 5.759586
+    },
+    {
+      "name": "Cover_High_Supply_01",
+      "shape": "box",
+      "center": [
+        -8.2561,
+        2.195,
+        6.8682
+      ],
+      "size": [
+        1.8,
+        2.35,
+        0.72
+      ],
+      "yaw": 5.514601
+    },
+    {
+      "name": "Cover_Low_Supply_01",
+      "shape": "box",
+      "center": [
+        -6.6335,
+        1.645,
+        8.2787
+      ],
+      "size": [
+        2.1,
+        1.25,
+        0.72
+      ],
+      "yaw": 5.567601
+    },
+    {
+      "name": "Cover_Medium_Supply_01",
+      "shape": "box",
+      "center": [
+        -5.1807,
+        1.945,
+        9.5417
+      ],
+      "size": [
+        1.35,
+        1.85,
+        0.72
+      ],
+      "yaw": 5.620601
+    },
+    {
+      "name": "Cover_Low_Supply_02",
+      "shape": "box",
+      "center": [
+        -4.8034,
+        1.595,
+        9.1077
+      ],
+      "size": [
+        1.45,
+        1.15,
+        0.72
+      ],
+      "yaw": 7.085397
+    },
+    {
+      "name": "Cover_Medium_Supply_02",
+      "shape": "box",
+      "center": [
+        -3.7537,
+        1.895,
+        7.9002
+      ],
+      "size": [
+        1.35,
+        1.75,
+        0.72
+      ],
+      "yaw": 7.138397
+    },
+    {
+      "name": "Cover_Low_Central_01_01",
+      "shape": "box",
+      "center": [
+        4.075,
+        1.545,
+        -5.2164
+      ],
+      "size": [
+        1.55,
+        1.05,
+        0.72
+      ],
+      "yaw": 1.552796
+    },
+    {
+      "name": "Cover_Low_Central_01_02",
+      "shape": "box",
+      "center": [
+        4.075,
+        1.66,
+        -7.0914
+      ],
+      "size": [
+        1.8,
+        1.28,
+        0.72
+      ],
+      "yaw": 1.570796
+    },
+    {
+      "name": "Cover_Low_Central_01_03",
+      "shape": "box",
+      "center": [
+        4.075,
+        1.48,
+        -8.8664
+      ],
+      "size": [
+        1.35,
+        0.92,
+        0.72
+      ],
+      "yaw": 1.588796
+    },
+    {
+      "name": "Cover_Low_Central_02_01",
+      "shape": "box",
+      "center": [
+        -5.8715,
+        1.545,
+        -3.233
+      ],
+      "size": [
+        1.55,
+        1.05,
+        0.72
+      ],
+      "yaw": 3.367939
+    },
+    {
+      "name": "Cover_Low_Central_02_02",
+      "shape": "box",
+      "center": [
+        -7.6908,
+        1.66,
+        -2.7794
+      ],
+      "size": [
+        1.8,
+        1.28,
+        0.72
+      ],
+      "yaw": 3.385939
+    },
+    {
+      "name": "Cover_Low_Central_02_03",
+      "shape": "box",
+      "center": [
+        -9.4131,
+        1.48,
+        -2.35
+      ],
+      "size": [
+        1.35,
+        0.92,
+        0.72
+      ],
+      "yaw": 3.403939
+    },
+    {
+      "name": "Cover_Low_Central_03_01",
+      "shape": "box",
+      "center": [
+        4.4617,
+        1.545,
+        4.5326
+      ],
+      "size": [
+        1.55,
+        1.05,
+        0.72
+      ],
+      "yaw": 5.741586
+    },
+    {
+      "name": "Cover_Low_Central_03_02",
+      "shape": "box",
+      "center": [
+        6.0855,
+        1.66,
+        5.4701
+      ],
+      "size": [
+        1.8,
+        1.28,
+        0.72
+      ],
+      "yaw": 5.759586
+    },
+    {
+      "name": "Cover_Low_Central_03_03",
+      "shape": "box",
+      "center": [
+        7.6227,
+        1.48,
+        6.3576
+      ],
+      "size": [
+        1.35,
+        0.92,
+        0.72
+      ],
+      "yaw": 5.777586
+    },
+    {
+      "name": "Cover_Medium_Platform_NorthWest",
+      "shape": "box",
+      "center": [
+        -7.072,
+        2.36,
+        -12.8398
+      ],
+      "size": [
+        2.65,
+        1.16,
+        0.58
+      ],
+      "yaw": 3.777551
+    },
+    {
+      "name": "Cover_Medium_Platform_SouthEast",
+      "shape": "box",
+      "center": [
+        8.0222,
+        2.5,
+        11.4798
+      ],
+      "size": [
+        2.65,
+        1.16,
+        0.58
+      ],
+      "yaw": 7.023864
+    },
+    {
+      "name": "Cover_Low_Supply_Outer_02",
+      "shape": "box",
+      "center": [
+        -8.8655,
+        1.65,
+        11.3474
+      ],
+      "size": [
+        3.0,
+        1.1,
+        0.62
+      ],
+      "yaw": 5.53996
+    },
+    {
+      "name": "Cover_Low_Training_Outer_01",
+      "shape": "box",
+      "center": [
+        8.4317,
+        1.58,
+        -6.5876
+      ],
+      "size": [
+        2.65,
+        0.96,
+        0.6
+      ],
+      "yaw": 2.314021
+    },
+    {
+      "name": "Cover_Low_Training_Outer_02",
+      "shape": "box",
+      "center": [
+        3.7643,
+        1.58,
+        -10.8849
+      ],
+      "size": [
+        2.65,
+        0.96,
+        0.6
+      ],
+      "yaw": 2.80234
+    },
+    {
+      "name": "Cover_Medium_Ruins_Return_01",
+      "shape": "box",
+      "center": [
+        -10.1653,
+        1.96,
+        -7.942
+      ],
+      "size": [
+        3.15,
+        1.72,
+        0.68
+      ],
+      "yaw": 4.189164
+    },
+    {
+      "name": "Cover_Low_Ruins_Return_02",
+      "shape": "box",
+      "center": [
+        -8.5153,
+        1.62,
+        -7.592
+      ],
+      "size": [
+        1.45,
+        1.04,
+        0.62
+      ],
+      "yaw": 2.678368
+    },
+    {
+      "name": "Platform_NorthWest",
+      "shape": "box",
+      "center": [
+        -7.0258,
+        1.44,
+        -10.8188
+      ],
+      "size": [
+        5.9,
+        0.68,
+        4.2
+      ],
+      "yaw": 3.717551
+    },
+    {
+      "name": "Platform_NorthWest_Step_01",
+      "shape": "box",
+      "center": [
+        -10.8837,
+        1.2133,
+        -8.3135
+      ],
+      "size": [
+        2.35,
+        0.2267,
+        0.62
+      ],
+      "yaw": 2.146755
+    },
+    {
+      "name": "Platform_NorthWest_Step_02",
+      "shape": "box",
+      "center": [
+        -10.4225,
+        1.3267,
+        -8.6131
+      ],
+      "size": [
+        2.35,
+        0.4533,
+        0.62
+      ],
+      "yaw": 2.146755
+    },
+    {
+      "name": "Platform_NorthWest_Step_03",
+      "shape": "box",
+      "center": [
+        -9.9612,
+        1.44,
+        -8.9126
+      ],
+      "size": [
+        2.35,
+        0.68,
+        0.62
+      ],
+      "yaw": 2.146755
+    },
+    {
+      "name": "Platform_SouthEast",
+      "shape": "box",
+      "center": [
+        7.7721,
+        1.51,
+        9.5978
+      ],
+      "size": [
+        5.5,
+        0.82,
+        4.0
+      ],
+      "yaw": 6.963864
+    },
+    {
+      "name": "Platform_SouthEast_Step_01",
+      "shape": "box",
+      "center": [
+        11.1915,
+        1.2367,
+        6.8287
+      ],
+      "size": [
+        2.35,
+        0.2733,
+        0.62
+      ],
+      "yaw": 5.393067
+    },
+    {
+      "name": "Platform_SouthEast_Step_02",
+      "shape": "box",
+      "center": [
+        10.7641,
+        1.3733,
+        7.1749
+      ],
+      "size": [
+        2.35,
+        0.5467,
+        0.62
+      ],
+      "yaw": 5.393067
+    },
+    {
+      "name": "Platform_SouthEast_Step_03",
+      "shape": "box",
+      "center": [
+        10.3367,
+        1.51,
+        7.521
+      ],
+      "size": [
+        2.35,
+        0.82,
+        0.62
+      ],
+      "yaw": 5.393067
+    },
+    {
+      "name": "Prop_Crate_01",
+      "shape": "box",
+      "center": [
+        -8.7596,
+        1.51,
+        9.019
+      ],
+      "size": [
+        1.16,
+        0.82,
+        0.96
+      ],
+      "yaw": 3.969164
+    },
+    {
+      "name": "Prop_Crate_02",
+      "shape": "box",
+      "center": [
+        -7.6342,
+        1.51,
+        9.7713
+      ],
+      "size": [
+        1.16,
+        0.82,
+        0.96
+      ],
+      "yaw": 4.049164
+    },
+    {
+      "name": "Prop_Crate_03",
+      "shape": "box",
+      "center": [
+        -6.8339,
+        1.51,
+        10.7773
+      ],
+      "size": [
+        1.16,
+        0.82,
+        0.96
+      ],
+      "yaw": 4.129164
+    },
+    {
+      "name": "Prop_Crate_04",
+      "shape": "box",
+      "center": [
+        -8.7106,
+        2.33,
+        9.07
+      ],
+      "size": [
+        1.16,
+        0.82,
+        0.96
+      ],
+      "yaw": 4.209164
+    },
+    {
+      "name": "Training_Target_01",
+      "shape": "box",
+      "center": [
+        9.783,
+        2.65,
+        -9.4474
+      ],
+      "size": [
+        1.05,
+        1.22,
+        0.14
+      ],
+      "yaw": 2.338741
+    },
+    {
+      "name": "Training_Target_02",
+      "shape": "box",
+      "center": [
+        5.1067,
+        2.65,
+        -13.3035
+      ],
+      "size": [
+        1.05,
+        1.22,
+        0.14
+      ],
+      "yaw": 2.775074
+    },
+    {
+      "name": "Nature_EdgeRock_1_Rock_1",
+      "shape": "box",
+      "center": [
+        7.9827,
+        1.57,
+        -16.4711
+      ],
+      "size": [
+        2.0572,
+        1.36,
+        1.395
+      ],
+      "yaw": 1.252104
+    },
+    {
+      "name": "Nature_EdgeRock_1_Rock_2",
+      "shape": "box",
+      "center": [
+        8.8327,
+        1.3775,
+        -16.2211
+      ],
+      "size": [
+        1.3372,
+        0.884,
+        0.9068
+      ],
+      "yaw": 1.952104
+    },
+    {
+      "name": "Nature_EdgeRock_1_Rock_3",
+      "shape": "box",
+      "center": [
+        7.3827,
+        1.3225,
+        -16.9211
+      ],
+      "size": [
+        1.1314,
+        0.748,
+        0.7673
+      ],
+      "yaw": 2.652104
+    },
+    {
+      "name": "Nature_EdgeRock_2_Rock_1",
+      "shape": "box",
+      "center": [
+        -18.1534,
+        1.57,
+        -5.8047
+      ],
+      "size": [
+        2.0572,
+        1.36,
+        1.395
+      ],
+      "yaw": 3.516499
+    },
+    {
+      "name": "Nature_EdgeRock_2_Rock_2",
+      "shape": "box",
+      "center": [
+        -17.3034,
+        1.3775,
+        -5.5547
+      ],
+      "size": [
+        1.3372,
+        0.884,
+        0.9068
+      ],
+      "yaw": 4.216499
+    },
+    {
+      "name": "Nature_EdgeRock_2_Rock_3",
+      "shape": "box",
+      "center": [
+        -18.7534,
+        1.3225,
+        -6.2547
+      ],
+      "size": [
+        1.1314,
+        0.748,
+        0.7673
+      ],
+      "yaw": 4.9165
+    },
+    {
+      "name": "Nature_EdgeRock_3_Rock_1",
+      "shape": "box",
+      "center": [
+        -3.3045,
+        1.57,
+        18.3349
+      ],
+      "size": [
+        2.0572,
+        1.36,
+        1.395
+      ],
+      "yaw": 5.780895
+    },
+    {
+      "name": "Nature_EdgeRock_3_Rock_2",
+      "shape": "box",
+      "center": [
+        -2.4545,
+        1.3775,
+        18.5849
+      ],
+      "size": [
+        1.3372,
+        0.884,
+        0.9068
+      ],
+      "yaw": 6.480895
+    },
+    {
+      "name": "Nature_EdgeRock_3_Rock_3",
+      "shape": "box",
+      "center": [
+        -3.9045,
+        1.3225,
+        17.8849
+      ],
+      "size": [
+        1.1314,
+        0.748,
+        0.7673
+      ],
+      "yaw": 7.180894
+    },
+    {
+      "name": "Nature_Rock_01",
+      "shape": "box",
+      "center": [
+        9.9581,
+        1.4864,
+        8.9664
+      ],
+      "size": [
+        1.942,
+        1.2512,
+        1.3774
+      ],
+      "yaw": 5.980147
+    },
+    {
+      "name": "Nature_Rock_02",
+      "shape": "box",
+      "center": [
+        15.3845,
+        1.4024,
+        1.889
+      ],
+      "size": [
+        1.5198,
+        0.9792,
+        1.0779
+      ],
+      "yaw": 7.021012
+    },
+    {
+      "name": "Nature_Rock_03",
+      "shape": "box",
+      "center": [
+        16.2009,
+        1.4444,
+        6.8769
+      ],
+      "size": [
+        1.7309,
+        1.1152,
+        1.2276
+      ],
+      "yaw": 7.17176
+    },
+    {
+      "name": "Nature_EdgeStone_01",
+      "shape": "box",
+      "center": [
+        12.2772,
+        1.3108,
+        -14.6314
+      ],
+      "size": [
+        1.3087,
+        0.8184,
+        0.8649
+      ],
+      "yaw": 1.382665
+    },
+    {
+      "name": "Nature_EdgeStone_02",
+      "shape": "box",
+      "center": [
+        -12.5127,
+        1.3788,
+        -13.8968
+      ],
+      "size": [
+        1.7309,
+        1.0824,
+        1.1439
+      ],
+      "yaw": 3.323835
+    },
+    {
+      "name": "Nature_EdgeStone_03",
+      "shape": "box",
+      "center": [
+        -19.1943,
+        1.2836,
+        -2.0174
+      ],
+      "size": [
+        1.1399,
+        0.7128,
+        0.7533
+      ],
+      "yaw": 4.566873
+    },
+    {
+      "name": "Nature_EdgeStone_04",
+      "shape": "box",
+      "center": [
+        -7.6873,
+        1.3516,
+        17.266
+      ],
+      "size": [
+        1.562,
+        0.9768,
+        1.0323
+      ],
+      "yaw": 6.33351
+    },
+    {
+      "name": "Nature_EdgeStone_05",
+      "shape": "box",
+      "center": [
+        15.5331,
+        1.3312,
+        11.2855
+      ],
+      "size": [
+        1.4354,
+        0.8976,
+        0.9486
+      ],
+      "yaw": 8.204866
+    },
+    {
+      "name": "Central_Ring_Block_01",
+      "shape": "box",
+      "center": [
+        3.35,
+        1.55,
+        -0.0
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 1.570796
+    },
+    {
+      "name": "Central_Ring_Block_05",
+      "shape": "box",
+      "center": [
+        -1.675,
+        1.55,
+        -2.9012
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 3.665191
+    },
+    {
+      "name": "Central_Ring_Block_06",
+      "shape": "box",
+      "center": [
+        -2.9012,
+        1.55,
+        -1.675
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 4.18879
+    },
+    {
+      "name": "Central_Ring_Block_07",
+      "shape": "box",
+      "center": [
+        -3.35,
+        1.55,
+        -0.0
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 4.712389
+    },
+    {
+      "name": "Central_Ring_Block_08",
+      "shape": "box",
+      "center": [
+        -2.9012,
+        1.55,
+        1.675
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 5.235988
+    },
+    {
+      "name": "Central_Ring_Block_09",
+      "shape": "box",
+      "center": [
+        -1.675,
+        1.55,
+        2.9012
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 5.759586
+    },
+    {
+      "name": "Central_Ring_Block_10",
+      "shape": "box",
+      "center": [
+        -0.0,
+        1.55,
+        3.35
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 6.283185
+    },
+    {
+      "name": "Central_Ring_Block_11",
+      "shape": "box",
+      "center": [
+        1.675,
+        1.55,
+        2.9012
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 6.806784
+    },
+    {
+      "name": "Central_Ring_Block_12",
+      "shape": "box",
+      "center": [
+        2.9012,
+        1.55,
+        1.675
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 7.330383
+    },
+    {
+      "name": "Central_Ring_Block_02",
+      "shape": "box",
+      "center": [
+        2.9012,
+        1.55,
+        -1.675
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 2.094395
+    },
+    {
+      "name": "Central_Ring_Block_03",
+      "shape": "box",
+      "center": [
+        1.675,
+        1.55,
+        -2.9012
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 2.617994
+    },
+    {
+      "name": "Central_Ring_Block_04",
+      "shape": "box",
+      "center": [
+        0.0,
+        1.55,
+        -3.35
+      ],
+      "size": [
+        1.25,
+        0.34,
+        0.64
+      ],
+      "yaw": 3.141593
+    },
+    {
+      "name": "Central_Ring_Base",
+      "shape": "cylinder",
+      "center": [
+        0.0,
+        1.2,
+        -0.0
+      ],
+      "radius": 3.74,
+      "height": 0.36
+    },
+    {
+      "name": "Central_Ring_Upper",
+      "shape": "cylinder",
+      "center": [
+        0.0,
+        1.44,
+        -0.0
+      ],
+      "radius": 2.79,
+      "height": 0.2
+    },
+    {
+      "name": "Brazier_StoneBase",
+      "shape": "cylinder",
+      "center": [
+        0.0,
+        1.8,
+        -0.0
+      ],
+      "radius": 1.29,
+      "height": 0.82
+    },
+    {
+      "name": "Platform_NorthWest_Ramp",
+      "shape": "box",
+      "center": [
+        -8.9865,
+        1.4087,
+        -13.8381
+      ],
+      "size": [
+        2.35,
+        0.1,
+        3.0761
+      ],
+      "yaw": -2.565633,
+      "pitch": 0.2229,
+      "walkSurface": true
+    },
+    {
+      "name": "Platform_SouthEast_Ramp",
+      "shape": "box",
+      "center": [
+        9.9747,
+        1.4782,
+        12.3178
+      ],
+      "size": [
+        2.35,
+        0.1,
+        3.11
+      ],
+      "yaw": 0.68068,
+      "pitch": 0.266816,
+      "walkSurface": true
+    }
+  ],
+  "lootSpots": [
+    [
+      4.4523,
+      -3.4785
+    ],
+    [
+      -5.2386,
+      -2.1165
+    ],
+    [
+      0.7863,
+      5.595
+    ]
+  ]
+}

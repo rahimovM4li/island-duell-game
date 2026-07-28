@@ -1579,7 +1579,7 @@ export class GameRoom {
     }
   }
 
-  /** Pick a point on the far side of nearby solid vegetation from the enemy. */
+  /** Pick a point on the far side of nearby natural or authored cover. */
   private pickBotCover(
     p: MatchPlayer, enemies: BotEnemy[], zoneRadius: number,
   ): { x: number; z: number } | null {
@@ -1589,18 +1589,34 @@ export class GameRoom {
 
     let best: { x: number; z: number } | null = null;
     let bestScore = Infinity;
-    for (const obstacle of this.gen.vegetation) {
-      if (obstacle.colliderRadius <= 0) continue;
+    const obstacles = [
+      ...this.gen.vegetation
+        .filter((obstacle) => obstacle.colliderRadius > 0)
+        .map((obstacle) => ({
+          x: obstacle.x,
+          z: obstacle.z,
+          radius: obstacle.colliderRadius,
+        })),
+      ...this.gen.centralStructures
+        .filter((obstacle) => obstacle.h >= 0.9 && !obstacle.walkSurface)
+        .map((obstacle) => ({
+          x: obstacle.x,
+          z: obstacle.z,
+          radius: obstacle.shape === 'cylinder'
+            ? obstacle.radius : Math.max(obstacle.w, obstacle.d) / 2,
+        })),
+    ];
+    for (const obstacle of obstacles) {
       const distance = dist2d(p.move.pos.x, p.move.pos.z, obstacle.x, obstacle.z);
       if (distance > 28) continue;
       const awayX = obstacle.x - enemy.pos.x;
       const awayZ = obstacle.z - enemy.pos.z;
       const awayLength = Math.hypot(awayX, awayZ) || 1;
-      const clearance = obstacle.colliderRadius + 0.75;
+      const clearance = obstacle.radius + 0.75;
       const x = obstacle.x + awayX / awayLength * clearance;
       const z = obstacle.z + awayZ / awayLength * clearance;
       if (Math.hypot(x, z) > zoneRadius - 2) continue;
-      const score = distance - obstacle.colliderRadius * 1.5;
+      const score = distance - obstacle.radius * 1.5;
       if (score < bestScore) { bestScore = score; best = { x, z }; }
     }
     return best;

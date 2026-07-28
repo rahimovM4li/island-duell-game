@@ -5,13 +5,17 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const assetDir = join(root, 'client', 'public', 'assets');
-const files = ['weapons.glb', 'props.glb', 'environment.glb', 'landmarks.glb', 'character.glb'];
+const files = [
+  'weapons.glb', 'props.glb', 'environment.glb', 'landmarks.glb', 'character.glb',
+  'middle-island.glb',
+];
 const requiredRoots = {
   'weapons.glb': ['weapon_fists', 'weapon_machete', 'weapon_spear', 'weapon_bow', 'weapon_pistol', 'weapon_rifle', 'weapon_shotgun', 'weapon_sniper', 'weapon_grenade', 'weapon_smoke', 'weapon_flash'],
   'props.glb': ['prop_crate_common', 'prop_crate_good', 'prop_crate_top', 'prop_care', 'prop_bandage', 'prop_plate', 'prop_arrow_bundle', 'prop_pistol_ammo', 'prop_rifle_ammo', 'prop_shell_ammo', 'prop_sniper_ammo', 'prop_projectile_arrow'],
   'environment.glb': ['env_tree_pine', 'env_tree_broadleaf', 'env_tree_palm', 'env_rock_boulder', 'env_rock_slab', 'env_rock_cluster', 'env_bush', 'env_grass', 'env_stump', 'env_rock_chips', 'env_rubble', 'env_barrel', 'env_brazier', 'env_torch', 'env_spawn_marker', 'env_ruin_wall', 'env_ruin_cap'],
   'landmarks.glb': ['poi_wreck', 'poi_watchtower', 'poi_bunker'],
   'character.glb': ['player_survivor', 'player_body', 'player_head', 'player_gear', 'player_weapon_socket'],
+  'middle-island.glb': ['middle_island'],
 };
 const triangleBudgets = {
   'weapons.glb': 20_000,
@@ -19,6 +23,7 @@ const triangleBudgets = {
   'environment.glb': 20_000,
   'landmarks.glb': 25_000,
   'character.glb': 5_000,
+  'middle-island.glb': 15_000,
 };
 
 function glbJson(buffer) {
@@ -54,8 +59,12 @@ async function validate() {
     if (!json.extensionsRequired?.includes('EXT_meshopt_compression')) {
       throw new Error(`${file}: Meshopt compression is required`);
     }
-    const missingUvs = meshes.filter((mesh) => mesh.primitives?.some((p) => p.attributes?.TEXCOORD_0 === undefined));
-    if (missingUvs.length) throw new Error(`${file}: ${missingUvs.length} meshes lack TEXCOORD_0`);
+    // The middle island uses plain PBR colors and deliberately has no texture
+    // dependency; its few custom meshes therefore do not need synthetic UVs.
+    if (file !== 'middle-island.glb') {
+      const missingUvs = meshes.filter((mesh) => mesh.primitives?.some((p) => p.attributes?.TEXCOORD_0 === undefined));
+      if (missingUvs.length) throw new Error(`${file}: ${missingUvs.length} meshes lack TEXCOORD_0`);
+    }
     bytes += buffer.byteLength;
     report.push({ file, bytes: buffer.byteLength, nodes: names.size, meshes: meshes.length, triangles });
   }

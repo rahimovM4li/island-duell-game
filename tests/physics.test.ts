@@ -28,7 +28,7 @@ describe('heightfield collider', () => {
 
   it('raycast down hits terrain at sampleHeight (orientation check, incl. x≠z asymmetric points)', () => {
     // asymmetric sample points would expose a transposed heightfield immediately
-    const points = [[10, 60], [60, 10], [-40, 25], [25, -40], [0, 0], [-70, -12]];
+    const points = [[10, 60], [60, 10], [-40, 25], [25, -40], [24, 0], [-70, -12]];
     for (const [x, z] of points) {
       const hit = phys.raycast({ x, y: 60, z }, { x: 0, y: -1, z: 0 }, 200);
       expect(hit, `no hit at ${x},${z}`).not.toBeNull();
@@ -75,7 +75,7 @@ describe('heightfield collider', () => {
   });
 
   it('jump lifts off and lands again (no double jump: velY only set when grounded)', () => {
-    const start = { x: 2, y: sampleHeight(gen.params, 2, 2) + 0.2, z: 2 };
+    const start = { x: 24, y: sampleHeight(gen.params, 24, 2) + 0.2, z: 2 };
     phys.addPlayer('p3', start);
     const st = freshMoveState(start);
     for (let i = 0; i < 30; i++) { stepMovement(phys, 'p3', st, idleInput()); phys.step(); }
@@ -131,6 +131,49 @@ describe('heightfield collider', () => {
       + (st.pos.z - bunker.z) * Math.cos(bunkerYaw);
     expect(localForward).toBeLessThan(1.2);
     phys.removePlayer('bunker-entry');
+  });
+
+  it('blocks shots on Blender-authored middle-island cover', () => {
+    const cover = gen.centralStructures.find((part) =>
+      part.name === 'Cover_High_Ruins_01' && part.shape === 'box');
+    expect(cover?.shape).toBe('box');
+    if (!cover || cover.shape !== 'box') return;
+    const hit = phys.raycast(
+      { x: cover.x, y: cover.y, z: cover.z - 5 },
+      { x: 0, y: 0, z: 1 },
+      10,
+    );
+    expect(hit).not.toBeNull();
+    expect(hit!.dist).toBeLessThan(6);
+  });
+
+  it('walks up both authored middle-island ramps', () => {
+    const ramps = gen.centralStructures.filter((part) =>
+      part.shape === 'box' && part.walkSurface);
+    expect(ramps).toHaveLength(2);
+    ramps.forEach((ramp, index) => {
+      if (ramp.shape !== 'box') return;
+      const startDistance = ramp.d / 2 + 0.85;
+      const startX = ramp.x + Math.sin(ramp.rotY) * startDistance;
+      const startZ = ramp.z + Math.cos(ramp.rotY) * startDistance;
+      const start = {
+        x: startX,
+        y: sampleHeight(gen.params, startX, startZ) + 0.2,
+        z: startZ,
+      };
+      const id = `middle-ramp-${index}`;
+      phys.addPlayer(id, start);
+      const st = freshMoveState(start);
+      for (let i = 0; i < 30; i++) { stepMovement(phys, id, st, idleInput()); phys.step(); }
+      let maxFeetY = st.pos.y;
+      for (let i = 0; i < 65; i++) {
+        stepMovement(phys, id, st, idleInput({ mz: 1, yaw: ramp.rotY }));
+        phys.step();
+        maxFeetY = Math.max(maxFeetY, st.pos.y);
+      }
+      expect(maxFeetY).toBeGreaterThan(6.05);
+      phys.removePlayer(id);
+    });
   });
 
   it('accelerates responsively and decelerates to a stable stop', () => {
