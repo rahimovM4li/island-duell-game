@@ -604,6 +604,15 @@ def build_props(collection):
                       .125, (0, -.01, .09), T["teal"]),
         box(r, collection, (.42, .025, .035), (0, -.075, .39), T["white"]),
     ]; finish_mesh(r, p, "visual")
+    r = root(collection, "prop_helmet"); p = [
+        ico(r, collection, .29, (0, 0, .31), T["dark"], (1.08, 1.0, .72), 2),
+        beveled_box(r, collection, (.43, .22, .065), (0, .14, .33), T["plate"], bevel=.018),
+        beveled_box(r, collection, (.12, .24, .19), (-.22, 0, .22), T["gun"], bevel=.025),
+        beveled_box(r, collection, (.12, .24, .19), (.22, 0, .22), T["gun"], bevel=.025),
+        box(r, collection, (.34, .035, .055), (0, .255, .25), T["teal"]),
+        segment(r, collection, (-.2,.08,.25), (-.15,.12,.04), .018, T["grip"], 5),
+        segment(r, collection, (.2,.08,.25), (.15,.12,.04), .018, T["grip"], 5),
+    ]; finish_mesh(r, p, "visual")
     r = root(collection, "prop_arrow_bundle"); p = []
     for x in (-.09, 0, .09):
         p += [cylinder(r, collection, .025, .9, (x, 0, .45), T["rope"], vertices=5),
@@ -852,7 +861,12 @@ def build_landmarks(collection):
           cylinder(r, collection, .07, 1.2, (0, 0, 8.15), T["wood"], vertices=7),
           cone(r, collection, .48, 1.25, (0, 0, 8.95), T["hazard"], vertices=7)]
     finish_mesh(r, p, "visual_lod0")
-    q = [box(r, collection, (5.6, 5.6, .45), (0, 0, 5.265), T["wood"]),
+    # Keep the same three-part deck in the distance LOD. A single 5.6 m box
+    # visually sealed the hatch while the physics opening remained passable,
+    # making players appear to walk through the floor near the LOD boundary.
+    q = [box(r, collection, (1.55, 5.6, .45), (-2.025, 0, 5.265), T["wood"]),
+         box(r, collection, (1.55, 5.6, .45), (2.025, 0, 5.265), T["wood"]),
+         box(r, collection, (2.5, 2.3, .45), (0, 1.65, 5.265), T["wood"]),
          beveled_box(r, collection, (6.4, 6.4, .32), (0, 0, 7.48), T["gun"], bevel=.05)]
     for x in (-2.1, 2.1):
         for y in (-2.1, 2.1): q.append(cylinder(r, collection, .23, 5.5, (x, y, 2.75), T["wood"], vertices=6))
@@ -877,7 +891,11 @@ def build_landmarks(collection):
     ))
     cols += [collider(r, collection, "tower_deck_left", (-2.025, 5.265, 0), (1.55, .45, 5.6)),
              collider(r, collection, "tower_deck_right", (2.025, 5.265, 0), (1.55, .45, 5.6)),
-             collider(r, collection, "tower_deck_back", (0, 5.265, -1.65), (2.5, .45, 2.3))]
+             collider(r, collection, "tower_deck_back", (0, 5.265, -1.65), (2.5, .45, 2.3)),
+             # Thin gameplay planes follow the two visible rope railings. They
+             # start at deck height so players cannot slip underneath them.
+             collider(r, collection, "tower_railing_left", (-2.7, 6.08, 0), (.22, 1.25, 5.4)),
+             collider(r, collection, "tower_railing_right", (2.7, 6.08, 0), (.22, 1.25, 5.4))]
     manifest["landmarks"]["watchtower"] = {"colliders": cols}
 
     # Bunker: readable recessed entrance, roof lip, vents and firing slits.
@@ -930,16 +948,24 @@ def build_character(collection):
     head_parts = [
         cylinder(r, collection, .14, .15, (0, 0, 1.53), T["skin"], vertices=10, radius_top=.12),
         ico(r, collection, .235, (0, .015, 1.72), T["skin"], (1, .94, 1.08), 2),
-        ico(r, collection, .255, (0, -.005, 1.82), T["dark"], (1.05, 1.02, .67), 2),
-        beveled_box(r, collection, (.36, .065, .075), (0, .235, 1.76), T["teal"], bevel=.018),
         beveled_box(r, collection, (.075, .065, .07), (0, .245, 1.68), T["skin"], bevel=.015),
+    ]
+    helmet_parts = [
+        ico(r, collection, .255, (0, -.005, 1.82), T["dark"], (1.05, 1.02, .67), 2),
+        beveled_box(r, collection, (.39, .20, .065), (0, .12, 1.79), T["plate"], bevel=.018),
+        beveled_box(r, collection, (.11, .19, .18), (-.205, .015, 1.69), T["gun"], bevel=.022),
+        beveled_box(r, collection, (.11, .19, .18), (.205, .015, 1.69), T["gun"], bevel=.022),
+        beveled_box(r, collection, (.36, .065, .075), (0, .235, 1.76), T["teal"], bevel=.018),
         segment(r, collection, (-.20,.10,1.78), (-.18,.12,1.58), .018, T["grip"], 5),
         segment(r, collection, (.20,.10,1.78), (.18,.12,1.58), .018, T["grip"], 5),
     ]
     head = finish_mesh(r, head_parts, "player_head")
+    helmet = finish_mesh(r, helmet_parts, "player_helmet")
     # Pitch around the neck, not around the feet or the centre of the helmet.
     head.data.transform(Matrix.Translation((0, 0, -1.54)))
     head.location.z = 1.54
+    helmet.data.transform(Matrix.Translation((0, 0, -1.54)))
+    helmet.location.z = 1.54
     gear = [
         beveled_box(r, collection, (.53, .43, .49), (0, .015, 1.16), T["gun"], bevel=.055),
         beveled_box(r, collection, (.58, .445, .12), (0, .015, .94), T["plate"], bevel=.03),

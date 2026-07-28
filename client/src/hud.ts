@@ -1,7 +1,8 @@
 // DOM HUD + canvas minimap (§6.2: minimap shows island, zone, self and
 // loud-shot pings — never enemy positions).
 import {
-  PLAYER_MAX_HP, SPRINT_STAMINA_MAX, WEAPONS, WORLD_SIZE, type WeaponType,
+  MAX_PLATES, MAX_SHIELD, PLAYER_MAX_HP, SPRINT_STAMINA_MAX, WEAPONS, WORLD_SIZE,
+  type WeaponType,
 } from '@shared/constants';
 import { sampleHeight, type TerrainParams } from '@shared/terrain';
 import type {
@@ -33,6 +34,7 @@ export class Hud {
   private damageDirectionTimer: ReturnType<typeof setTimeout> | null = null;
   private eliminationTimer: ReturnType<typeof setTimeout> | null = null;
   private duelResultTimer: ReturnType<typeof setTimeout> | null = null;
+  private equipmentNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   private spawns: SpawnPoi[] = [];
   private pois: LandmarkPoi[] = [];
   private reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -105,7 +107,9 @@ export class Hud {
       .join(' ');
     $('slot3').querySelector('.ammo')!.textContent = `×${throwCount}${others ? `  ${others}` : ''}`;
     for (const i of [1, 2, 3] as const) $(`slot${i}`).classList.toggle('active', inv.active === i);
-    $('plates-row').textContent = inv.plates > 0 ? `Panzerung ${'■'.repeat(inv.plates)} · nächster Treffer −20%` : 'Keine Panzerung';
+    $('plates-row').textContent =
+      `Schild ${inv.shield}/${MAX_SHIELD} · Platten ${inv.plates}/${MAX_PLATES}${inv.helmet ? ' · 🪖 Helm' : ''}`;
+    $('shield-bar').style.transform = `scaleX(${Math.max(0, Math.min(MAX_SHIELD, inv.shield)) / MAX_SHIELD})`;
     $('mats-row').textContent =
       `Holz ${inv.mats.wood}  ·  Stein ${inv.mats.stone}  ·  Fasern ${inv.mats.fiber}`;
     const hasMaterials = inv.mats.wood + inv.mats.stone + inv.mats.fiber > 0;
@@ -141,11 +145,45 @@ export class Hud {
     this.announceTimer = setTimeout(() => { el.style.opacity = '0'; }, ms);
   }
 
-  hitmarker(headshot: boolean): void {
+  hitmarker(headshot: boolean, blocked = false): void {
     const el = $('hitmarker');
     el.classList.toggle('head', headshot);
+    el.classList.toggle('blocked', blocked);
     el.style.opacity = '1';
     setTimeout(() => { el.style.opacity = '0'; }, 130);
+  }
+
+  armorImpact(): void {
+    if (this.reduceMotion) return;
+    $('shield-bar').animate(
+      [
+        { filter: 'brightness(1)', transform: $('shield-bar').style.transform },
+        { filter: 'brightness(2.1)', offset: 0.35 },
+        { filter: 'brightness(1)', transform: $('shield-bar').style.transform },
+      ],
+      { duration: 220, easing: 'ease-out' },
+    );
+  }
+
+  equipmentNotice(text: string, danger = false): void {
+    const el = $('equipment-notice');
+    el.textContent = text;
+    el.classList.toggle('danger', danger);
+    if (this.equipmentNoticeTimer) clearTimeout(this.equipmentNoticeTimer);
+    el.getAnimations().forEach((animation) => animation.cancel());
+    const animation = el.animate(
+      [
+        { opacity: 0, transform: 'translate(-50%, 8px)' },
+        { opacity: 1, transform: 'translate(-50%, 0)', offset: 0.16 },
+        { opacity: 1, transform: 'translate(-50%, 0)', offset: 0.78 },
+        { opacity: 0, transform: 'translate(-50%, -5px)' },
+      ],
+      { duration: this.reduceMotion ? 80 : 1900, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' },
+    );
+    this.equipmentNoticeTimer = setTimeout(
+      () => animation.cancel(),
+      this.reduceMotion ? 100 : 1950,
+    );
   }
 
   damageFlash(): void {

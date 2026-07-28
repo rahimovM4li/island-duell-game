@@ -4,7 +4,7 @@ import type { BotDifficulty, ItemType, MatchMode, Recipe, ThrowKind, WeaponType 
 import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
 
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 // ---------- lobby ----------
 export interface JoinMsg { v: number; name: string; resumeToken?: string }
@@ -104,6 +104,8 @@ export interface SnapPlayer {
   aiming: boolean;
   bandaging: boolean;
   plates: number;
+  shield: number;
+  helmet: boolean;
   stamina: number;
   vx: number;
   vy: number;
@@ -167,6 +169,8 @@ export interface InventoryState {
   activeThrow: ThrowKind;
   bandages: number;
   plates: number;
+  shield: number;
+  helmet: boolean;
   ammo: { arrow: number; pistol: number; rifle: number; shell: number; sniper: number };
   mats: { wood: number; stone: number; fiber: number };
   reloading: boolean;
@@ -175,6 +179,8 @@ export interface InventoryState {
 // ---------- events (host → clients) ----------
 export type GameEvent =
   | { type: 'damage'; target: string; attacker: string | null; amount: number; hp: number; weapon?: WeaponType; headshot?: boolean }
+  | { type: 'armorHit'; target: string; attacker: string | null; absorbed: number; shield: number }
+  | { type: 'helmetBreak'; target: string; attacker: string | null }
   | { type: 'death'; target: string; attacker: string | null; cause: 'weapon' | 'zone' | 'grenade'; weapon?: WeaponType; distance?: number; attackerHp?: number; headshot?: boolean; finalDamage?: number }
   | { type: 'kill'; killer: string | null; victim: string; weapon: WeaponType | 'zone' }
   | { type: 'shot'; by: string; weapon: WeaponType; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; primary?: boolean; hx?: number; hy?: number; hz?: number }
@@ -186,7 +192,7 @@ export type GameEvent =
   | { type: 'inventory'; inv: InventoryState }                    // owner only
   | { type: 'craft'; by: string; recipe: Recipe; ok: boolean; reason?: string }
   | { type: 'heal'; target: string; amount: number; hp: number }
-  | { type: 'hitmarker'; target: string; headshot: boolean }     // shooter only
+  | { type: 'hitmarker'; target: string; headshot: boolean; blocked?: boolean } // shooter only
   | { type: 'care'; state: 'incoming' | 'landed' | 'taken'; x: number; z: number; by?: string }
   | { type: 'zoneStep'; tier: number; targetRadius: number; dot: number }
   | { type: 'smoke'; state: 'pop'; id: number; x: number; y: number; z: number; radius: number }

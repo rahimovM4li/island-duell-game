@@ -52,7 +52,11 @@ Trade-off-Prinzip: Gewehr tödlich, aber laut + muni-arm. Bogen leise/stark, abe
 Projektil muss gezielt werden. Schrotflinte kontert Rusher. Kein „strikt bestes" Item.
 
 4.4 Ressourcen & Crafting (minimal, 3 Rezepte)
-RezeptInputOutputZeitPfeileHolzPfeil-Bündel1 sBandageFiberHeilt 30 HP über 3 s1 sPanzerplatteStein−20 % Schaden, 1× Ladung~2 s
+RezeptInputOutputZeitPfeileHolzPfeil-Bündel1 sBandageFiberHeilt 30 HP über 3 s1 sPanzerplatteStein25 Schild, maximal 2 gleichzeitig~2 s
+
+Schutzhelm: seltenes Kisten-Item, wird beim Aufheben automatisch ausgerüstet,
+ist an anderen Spielern sichtbar und blockiert genau einen Kopftreffer vollständig.
+Danach zerbricht er mit einer klaren HUD-Rückmeldung.
 
 Kein XP, keine Level, kein Tech-Tree. Progression = Ausrüstung + Verbrauchsgüter + Positionierung.
 

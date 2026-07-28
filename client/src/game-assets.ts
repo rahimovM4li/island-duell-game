@@ -10,7 +10,7 @@ const WEAPON_NAMES = [
 ] as const satisfies readonly WeaponType[];
 const LANDMARK_NAMES = ['wreck', 'watchtower', 'bunker'] as const satisfies readonly PoiKind[];
 const PROP_NAMES = [
-  'crate_common', 'crate_good', 'crate_top', 'care', 'bandage', 'plate', 'arrow_bundle',
+  'crate_common', 'crate_good', 'crate_top', 'care', 'bandage', 'plate', 'helmet', 'arrow_bundle',
   'pistol_ammo', 'rifle_ammo', 'shell_ammo', 'sniper_ammo', 'projectile_arrow',
 ] as const;
 const ENVIRONMENT_NAMES = [
@@ -19,7 +19,7 @@ const ENVIRONMENT_NAMES = [
   'bush', 'grass', 'stump', 'rock_chips', 'rubble', 'barrel',
   'brazier', 'torch', 'spawn_marker', 'ruin_wall', 'ruin_cap',
 ] as const;
-const ASSET_REVISION = '2026-07-28-middle-island-v1';
+const ASSET_REVISION = '2026-07-28-helmet-shield-v1';
 
 type AssetWeapon = (typeof WEAPON_NAMES)[number];
 type AssetLandmark = (typeof LANDMARK_NAMES)[number];
@@ -30,6 +30,7 @@ export interface CharacterAsset {
   group: THREE.Group;
   body: THREE.Mesh;
   head: THREE.Mesh;
+  helmet: THREE.Mesh;
   weaponSocket: THREE.Group;
   armLeft: THREE.Object3D;
   armRight: THREE.Object3D;
@@ -280,12 +281,13 @@ class GameAssetLibrary {
     const group = this.character.clone(true) as THREE.Group;
     const body = group.getObjectByName('player_body') as THREE.Mesh | undefined;
     const head = group.getObjectByName('player_head') as THREE.Mesh | undefined;
+    const helmet = group.getObjectByName('player_helmet') as THREE.Mesh | undefined;
     const weaponSocket = group.getObjectByName('player_weapon_socket') as THREE.Group | undefined;
     const armLeft = group.getObjectByName('player_arm_l_pivot');
     const armRight = group.getObjectByName('player_arm_r_pivot');
     const legLeft = group.getObjectByName('player_leg_l_pivot');
     const legRight = group.getObjectByName('player_leg_r_pivot');
-    if (!body?.isMesh || !head?.isMesh || !weaponSocket
+    if (!body?.isMesh || !head?.isMesh || !helmet?.isMesh || !weaponSocket
       || !armLeft || !armRight || !legLeft || !legRight) return null;
     const lod1 = findSemanticChild(group, 'visual_lod1');
     if (lod1) lod1.visible = false;
@@ -296,8 +298,9 @@ class GameAssetLibrary {
       if (mesh === body) material.color.setHex(color);
       mesh.material = material;
     });
+    helmet.visible = false;
     group.userData.compactAsset = true;
-    return { group, body, head, weaponSocket, armLeft, armRight, legLeft, legRight };
+    return { group, body, head, helmet, weaponSocket, armLeft, armRight, legLeft, legRight };
   }
 }
 

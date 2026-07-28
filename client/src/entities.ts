@@ -14,6 +14,7 @@ interface PlayerRig {
   group: THREE.Group;
   body: THREE.Mesh;
   head: THREE.Mesh;
+  helmet: THREE.Object3D;
   weapon: THREE.Group;
   armLeft: THREE.Object3D;
   armRight: THREE.Object3D;
@@ -66,6 +67,7 @@ const ITEM_VISUALS: Record<string, ItemVisual> = {
   flashGrenade: { label: 'Blendgranate', color: 0xffe9a8, glyph: '✳' },
   bandageItem: { label: 'Verband', color: 0xff6b6f, glyph: '+' },
   plateItem: { label: 'Panzerplatte', color: 0x70d7e8, glyph: 'A' },
+  helmetItem: { label: 'Schutzhelm', color: 0x8ee3ed, glyph: 'H' },
   arrowBundle: { label: 'Pfeile', color: 0xd9a441, glyph: '↟' },
   pistolAmmo: { label: 'Pistolen-Munition', color: 0x65b7ee, glyph: '•' },
   rifleAmmo: { label: 'Gewehr-Munition', color: 0xb68cff, glyph: '•' },
@@ -291,6 +293,24 @@ function ammoModel(color: number, shells = false): THREE.Group {
   return g;
 }
 
+function helmetModel(): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'player_helmet';
+  const cap = new THREE.Mesh(
+    new THREE.SphereGeometry(0.29, 10, 7, 0, Math.PI * 2, 0, Math.PI * 0.64),
+    material(0x26313a),
+  );
+  cap.scale.set(1.08, 0.75, 1);
+  cap.position.y = 0.27;
+  cap.castShadow = true;
+  g.add(cap);
+  addBox(g, [0.44, 0.065, 0.2], [0, 0.28, -0.12], 0x52717c);
+  addBox(g, [0.12, 0.2, 0.18], [-0.22, 0.13, 0], 0x394a54);
+  addBox(g, [0.12, 0.2, 0.18], [0.22, 0.13, 0], 0x394a54);
+  addBox(g, [0.35, 0.06, 0.055], [0, 0.2, -0.25], 0x70d7e8);
+  return g;
+}
+
 function pickupModel(p: PickupInfo): THREE.Group {
   if (p.item === 'crate') {
     const compact = gameAssets.cloneProp(
@@ -304,6 +324,7 @@ function pickupModel(p: PickupInfo): THREE.Group {
   if (p.item in WEAPON_MODEL_KEYS) return weaponModel(p.item as WeaponType);
   const compactProp = p.item === 'bandageItem' ? 'bandage'
     : p.item === 'plateItem' ? 'plate'
+      : p.item === 'helmetItem' ? 'helmet'
       : p.item === 'arrowBundle' ? 'arrow_bundle'
         : p.item === 'pistolAmmo' ? 'pistol_ammo'
           : p.item === 'rifleAmmo' ? 'rifle_ammo'
@@ -326,6 +347,8 @@ function pickupModel(p: PickupInfo): THREE.Group {
     addBox(g, [0.12, 0.5, 0.08], [0.22, 0.32, 0.03], 0x4a7f8b, [0, -0.4, 0]);
     addBox(g, [0.5, 0.12, 0.14], [0, 0.55, 0], 0x9ce7ee);                        // top edge
     addBox(g, [0.24, 0.24, 0.02], [0, 0.34, 0.08], 0x304e5b);                    // center panel
+  } else if (p.item === 'helmetItem') {
+    return helmetModel();
   } else if (p.item === 'arrowBundle') {
     for (let i = -1; i <= 1; i++) {
       addCylinder(g, 0.025, 0.92, [i * 0.09, 0.28, 0], 0xc9b382, [0, 0, 0.08 * i], 5);
@@ -491,6 +514,7 @@ export class Entities {
         group: compact.group,
         body: compact.body,
         head: compact.head,
+        helmet: compact.helmet,
         weapon: compact.weaponSocket,
         armLeft: compact.armLeft,
         armRight: compact.armRight,
@@ -549,11 +573,9 @@ export class Entities {
     const handR = handL.clone(); handR.position.x = 0.42;
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), skinMat);
     head.position.y = 1.67;
-    // low-poly helmet cap + visor
-    const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.255, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.62), darkMat);
-    helmet.position.y = 1.7;
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.08, 0.06), gearMat);
-    visor.position.set(0, 1.7, -0.22);
+    const helmet = helmetModel();
+    helmet.position.y = 1.54;
+    helmet.visible = false;
     const backpack = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.56, 0.22), gearMat);
     backpack.position.set(0, 1.12, 0.3);
     const bedroll = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.44, 8), mat);
@@ -563,16 +585,16 @@ export class Entities {
     weapon.scale.setScalar(0.48);
     const extras = [
       vest, beltStrap, collar, shoulderL, shoulderR, hips, leftLeg, rightLeg,
-      bootL, bootR, leftArm, rightArm, handL, handR, helmet, visor, backpack, bedroll,
+      bootL, bootR, leftArm, rightArm, handL, handR, backpack, bedroll,
     ];
     for (const mesh of [body, head, ...extras]) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
     }
-    group.add(body, head, weapon, ...extras);
+    group.add(body, head, helmet, weapon, ...extras);
     this.scene.add(group);
     this.players.set(id, {
-      group, body, head, weapon, currentWeapon: null,
+      group, body, head, helmet, weapon, currentWeapon: null,
       armLeft: leftArm, armRight: rightArm, legLeft: leftLeg, legRight: rightLeg,
       armLeftBase: leftArm.rotation.clone(), armRightBase: rightArm.rotation.clone(),
       legLeftBase: leftLeg.rotation.clone(), legRightBase: rightLeg.rotation.clone(),
@@ -721,6 +743,7 @@ export class Entities {
   updatePlayer(
     id: string, x: number, y: number, z: number, yaw: number, pitch: number,
     alive: boolean, weapon: WeaponType, sneaking: boolean, prone: boolean, aiming: boolean,
+    helmetEquipped = false,
   ): void {
     const rig = this.players.get(id);
     if (!rig) return;
@@ -744,6 +767,8 @@ export class Entities {
     rig.proneTarget = prone ? 1 : 0;
     rig.aiming = aiming;
     rig.head.rotation.x = -pitch * 0.8;
+    rig.helmet.rotation.x = -pitch * 0.8;
+    rig.helmet.visible = effectiveAlive && helmetEquipped;
     if (rig.currentWeapon !== weapon) {
       for (const child of [...rig.weapon.children]) disposeObject(child);
       rig.weapon.clear();
@@ -771,6 +796,38 @@ export class Entities {
   flashPlayer(id: string, headshot: boolean): void {
     const rig = this.players.get(id);
     if (rig) rig.flashT = headshot ? 0.16 : 0.11;
+  }
+
+  breakHelmet(id: string): void {
+    const rig = this.players.get(id);
+    if (!rig) return;
+    rig.helmet.visible = false;
+    const origin = rig.group.position.clone();
+    origin.y += 1.68;
+    for (let i = 0; i < 6; i++) {
+      const shard = new THREE.Mesh(
+        new THREE.TetrahedronGeometry(0.075, 0),
+        new THREE.MeshBasicMaterial({
+          color: i % 2 === 0 ? 0x70d7e8 : 0x26313a,
+          transparent: true,
+          opacity: 0.92,
+        }),
+      );
+      const angle = (i / 6) * Math.PI * 2;
+      shard.position.copy(origin);
+      this.scene.add(shard);
+      this.fx.push({
+        obj: shard,
+        life: 0.75,
+        maxLife: 0.75,
+        velocity: new THREE.Vector3(
+          Math.cos(angle) * 1.25,
+          1.5 + (i % 2) * 0.35,
+          Math.sin(angle) * 1.25,
+        ),
+        spin: 7 + i,
+      });
+    }
   }
 
   /** Start the readable remote-player fall immediately and add a short world-space confirmation pulse. */

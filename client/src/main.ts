@@ -903,7 +903,8 @@ function onSnapshot(m: SnapshotMsg): void {
     buf.push({ at: now, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch });
     while (buf.length > 30) buf.shift();
     entities?.updatePlayer(
-      p.id, p.x, p.y, p.z, p.yaw, p.pitch, p.alive, p.weapon, p.sneaking, p.prone, p.aiming,
+      p.id, p.x, p.y, p.z, p.yaw, p.pitch, p.alive, p.weapon,
+      p.sneaking, p.prone, p.aiming, p.helmet,
     );
   }
 
@@ -1016,7 +1017,7 @@ function incomingDamageAngle(attackerId: string | null): number | null {
 
 function playPickupSound(item: GameEvent & { type: 'pickupRemove' }): void {
   if (item.item === 'bandageItem') sfx.play('pickupHeal');
-  else if (item.item === 'plateItem') sfx.play('pickupArmor');
+  else if (item.item === 'plateItem' || item.item === 'helmetItem') sfx.play('pickupArmor');
   else if (item.item === 'arrowBundle' || item.item === 'pistolAmmo'
     || item.item === 'rifleAmmo' || item.item === 'shellAmmo' || item.item === 'grenade') sfx.play('pickupAmmo');
   else if (item.item in WEAPONS) sfx.play('pickupWeapon');
@@ -1076,10 +1077,25 @@ function onEvent(e: GameEvent): void {
         rumble(95, 0.35, 0.22);
       }
       break;
+    case 'armorHit':
+      if (e.target === myId) {
+        hud.armorImpact();
+        sfx.play('pickupArmor');
+      }
+      break;
+    case 'helmetBreak':
+      entities?.breakHelmet(e.target);
+      if (e.target === myId) {
+        hud.equipmentNotice('Helm hat den Kopftreffer blockiert – jetzt zerstört', true);
+        sfx.play('pickupArmor');
+      } else if (e.attacker === myId) {
+        hud.equipmentNotice('Gegnerischen Helm zerstört');
+      }
+      break;
     case 'hitmarker':
-      hud.hitmarker(e.headshot);
-      sfx.play(e.headshot ? 'headshot' : 'hit');
-      entities?.flashPlayer(e.target, e.headshot);
+      hud.hitmarker(e.headshot, e.blocked);
+      sfx.play(e.blocked ? 'pickupArmor' : e.headshot ? 'headshot' : 'hit');
+      if (!e.blocked) entities?.flashPlayer(e.target, e.headshot);
       break;
     case 'death': {
       const victimSnap = lastSnap?.players.find((player) => player.id === e.target);
@@ -1129,6 +1145,9 @@ function onEvent(e: GameEvent): void {
       if (e.by === myId) {
         playPickupSound(e);
         hud.punchPickup();
+        if (e.item === 'helmetItem') {
+          hud.equipmentNotice('Schutzhelm automatisch ausgerüstet');
+        }
         onboarding.signal('loot');
       }
       break;
@@ -1434,6 +1453,7 @@ function frame(): void {
       a.yaw + yawDiff * k, lerp(a.pitch, b.pitch),
       snapP?.alive ?? true, snapP?.weapon ?? 'fists',
       snapP?.sneaking ?? false, snapP?.prone ?? false, snapP?.aiming ?? false,
+      snapP?.helmet ?? false,
     );
     updateRemoteFootsteps(id, renderX, renderZ, {
       alive: snapP?.alive ?? true,

@@ -194,6 +194,40 @@
           "yaw": 0.0,
           "pitch": 0.0,
           "walkSurface": false
+        },
+        {
+          "name": "tower_railing_left",
+          "shape": "box",
+          "center": [
+            -2.7,
+            6.08,
+            0
+          ],
+          "size": [
+            0.22,
+            1.25,
+            5.4
+          ],
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "walkSurface": false
+        },
+        {
+          "name": "tower_railing_right",
+          "shape": "box",
+          "center": [
+            2.7,
+            6.08,
+            0
+          ],
+          "size": [
+            0.22,
+            1.25,
+            5.4
+          ],
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "walkSurface": false
         }
       ]
     },

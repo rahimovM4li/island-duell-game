@@ -3,6 +3,29 @@ import * as THREE from 'three';
 import { Entities } from '../client/src/entities';
 
 describe('remote elimination presentation', () => {
+  it('shows the helmet only while the remote player has one equipped', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    const entities = new Entities(scene, camera, 5);
+    entities.ensurePlayer('armored', 0);
+    const rig = scene.children.find((child) => child.type === 'Group')!;
+    const helmet = rig.getObjectByName('player_helmet')!;
+
+    entities.updatePlayer(
+      'armored', 0, 0, 0, 0, 0, true, 'rifle', false, false, false, false,
+    );
+    expect(helmet.visible).toBe(false);
+
+    entities.updatePlayer(
+      'armored', 0, 0, 0, 0, 0, true, 'rifle', false, false, false, true,
+    );
+    expect(helmet.visible).toBe(true);
+
+    entities.breakHelmet('armored');
+    expect(helmet.visible).toBe(false);
+    entities.dispose();
+  });
+
   it('keeps the victim visible while it falls and hides it after the animation', () => {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera();

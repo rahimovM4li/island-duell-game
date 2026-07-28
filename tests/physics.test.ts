@@ -114,6 +114,37 @@ describe('heightfield collider', () => {
     phys.removePlayer('tower-climber');
   });
 
+  it('blocks players at both side railings on the watchtower deck', () => {
+    const tower = gen.pois.find((poi) => poi.id === 'watchtower')!;
+    const baseY = sampleHeight(gen.params, tower.x, tower.z);
+    const towerYaw = tower.structures[0].rotY;
+    const c = Math.cos(towerYaw), s = Math.sin(towerYaw);
+
+    for (const side of [-1, 1] as const) {
+      const localX = side * 1.75;
+      const localZ = -1;
+      const start = {
+        x: tower.x + c * localX + s * localZ,
+        y: baseY + 5.54,
+        z: tower.z - s * localX + c * localZ,
+      };
+      const id = `tower-railing-${side}`;
+      phys.addPlayer(id, start);
+      const st = freshMoveState(start);
+      for (let i = 0; i < 15; i++) {
+        stepMovement(phys, id, st, idleInput());
+        phys.step();
+      }
+      for (let i = 0; i < 45; i++) {
+        stepMovement(phys, id, st, idleInput({ mx: side, yaw: towerYaw }));
+        phys.step();
+      }
+      const finalLocalX = c * (st.pos.x - tower.x) - s * (st.pos.z - tower.z);
+      expect(Math.abs(finalLocalX)).toBeLessThan(2.65);
+      phys.removePlayer(id);
+    }
+  });
+
   it('walks through the authored bunker entrance instead of hitting the back-wall collider', () => {
     const bunker = gen.pois.find((poi) => poi.id === 'bunker')!;
     const bunkerYaw = bunker.structures[0].rotY;
@@ -133,18 +164,25 @@ describe('heightfield collider', () => {
     phys.removePlayer('bunker-entry');
   });
 
-  it('blocks shots on Blender-authored middle-island cover', () => {
+  it('blocks shots from outside on the approved high middle-island cover', () => {
     const cover = gen.centralStructures.find((part) =>
-      part.name === 'Cover_High_Ruins_01' && part.shape === 'box');
+      part.name === 'Cover_High_Outer_NE_01' && part.shape === 'box');
     expect(cover?.shape).toBe('box');
     if (!cover || cover.shape !== 'box') return;
+    const length = Math.hypot(cover.x, cover.z);
+    const outwardX = cover.x / length;
+    const outwardZ = cover.z / length;
     const hit = phys.raycast(
-      { x: cover.x, y: cover.y, z: cover.z - 5 },
-      { x: 0, y: 0, z: 1 },
-      10,
+      {
+        x: cover.x + outwardX * 4,
+        y: cover.y,
+        z: cover.z + outwardZ * 4,
+      },
+      { x: -outwardX, y: 0, z: -outwardZ },
+      8,
     );
     expect(hit).not.toBeNull();
-    expect(hit!.dist).toBeLessThan(6);
+    expect(hit!.dist).toBeLessThan(5);
   });
 
   it('walks up both authored middle-island ramps', () => {

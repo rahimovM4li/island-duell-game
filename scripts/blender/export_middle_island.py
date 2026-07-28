@@ -1,8 +1,8 @@
 """Export the reviewed middle-island scene for the Three.js runtime.
 
-Run with the reviewed ``middle-island-v2.blend`` open in Blender 5.2+:
+Run with the approved ``middle-island-high-cover-v1.blend`` open in Blender 5.2+:
 
-    blender --background art/concepts/middle-island-v1/middle-island-v2.blend \
+    blender --background art/concepts/middle-island-high-cover-v1/middle-island-high-cover-v1.blend \
       --python scripts/blender/export_middle_island.py
 
 The authored render meshes are merged by material for a small draw-call count.
@@ -273,6 +273,10 @@ def build_manifest() -> dict[str, object]:
 
     return {
         "version": 1,
+        "sourceVariant": bpy.context.scene.get(
+            "approved_variant",
+            Path(bpy.data.filepath).stem,
+        ),
         "coordinateSystem": "three-y-up",
         "groundSurfaceZ": GROUND_SURFACE_Z,
         "gameFloorY": GAME_FLOOR_Y,

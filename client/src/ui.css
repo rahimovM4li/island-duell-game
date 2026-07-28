@@ -171,6 +171,12 @@ button.secondary:hover:not(:disabled) { background: #31505e; }
 #hp-bar-wrap { height: 13px; background: #321c20; }
 #hp-bar { background: var(--health); transition: transform 150ms ease-out; }
 #plates-row { margin-top: 6px; color: #8ee3ed; font-size: 12px; }
+#shield-bar-wrap { height: 5px; margin-top: 3px; overflow: hidden; background: #16313a; border-radius: 3px; }
+#shield-bar {
+  width: 100%; height: 100%; transform: scaleX(0); transform-origin: left;
+  background: linear-gradient(90deg, #4aa9bd, #8ee3ed);
+  transition: transform 140ms ease-out;
+}
 #stamina-wrap { margin-top: 5px; background: #18313a; }
 #stamina-bar { background: var(--stamina); transition: transform 100ms linear; }
 #mats-row { margin-top: 8px; color: #d4e0e5; }
@@ -225,6 +231,18 @@ button.secondary:hover:not(:disabled) { background: #31505e; }
 #killfeed { width: 330px; }
 #killfeed div { display: inline-block; clear: both; float: right; padding: 5px 9px; background: rgba(4, 10, 14, 0.82); border-radius: 6px; }
 #announce { max-width: min(760px, 84vw); color: var(--accent); font-size: 25px; font-weight: 800; text-shadow: 0 2px 6px #000; white-space: normal; text-wrap: balance; transition: opacity 220ms ease-out; }
+#equipment-notice {
+  position: absolute; left: 50%; top: 32%; z-index: 16;
+  max-width: min(440px, 82vw); padding: 8px 13px;
+  color: #dffaff; background: rgba(8, 18, 24, .94);
+  border-left: 3px solid #70d7e8; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.28);
+  font-size: 13px; font-weight: 750; text-align: center;
+  opacity: 0; transform: translate(-50%, 8px);
+  pointer-events: none;
+}
+#equipment-notice.danger { color: #ffe3c2; border-left-color: #ff9f43; }
+#hitmarker.blocked { color: #8ee3ed; text-shadow: 0 0 10px #43b8cf; }
 #elimination-confirm {
   position: absolute; left: 50%; top: 34%; display: flex; flex-direction: column; align-items: center;
   min-width: 260px; padding: 12px 20px; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent);

@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "sourceVariant": "middle-island-high-cover-v1",
   "coordinateSystem": "three-y-up",
   "groundSurfaceZ": 1.08,
   "gameFloorY": 5.5,
@@ -649,6 +650,126 @@
         0.62
       ],
       "yaw": 2.678368
+    },
+    {
+      "name": "Cover_High_Outer_NE_01",
+      "shape": "box",
+      "center": [
+        14.7098,
+        2.43,
+        -8.8934
+      ],
+      "size": [
+        2.75,
+        2.82,
+        0.78
+      ],
+      "yaw": 2.216568
+    },
+    {
+      "name": "Cover_High_Outer_NE_02",
+      "shape": "box",
+      "center": [
+        12.9148,
+        2.14,
+        -11.1094
+      ],
+      "size": [
+        2.25,
+        2.24,
+        0.78
+      ],
+      "yaw": 2.254965
+    },
+    {
+      "name": "Cover_High_Outer_NW_01",
+      "shape": "box",
+      "center": [
+        -15.3762,
+        2.49,
+        -7.4588
+      ],
+      "size": [
+        2.75,
+        2.94,
+        0.78
+      ],
+      "yaw": 4.363323
+    },
+    {
+      "name": "Cover_High_Outer_NW_02",
+      "shape": "box",
+      "center": [
+        -16.257,
+        2.14,
+        -4.7465
+      ],
+      "size": [
+        2.25,
+        2.24,
+        0.78
+      ],
+      "yaw": 4.324926
+    },
+    {
+      "name": "Cover_High_Outer_SW_01",
+      "shape": "box",
+      "center": [
+        -9.069,
+        2.38,
+        14.6022
+      ],
+      "size": [
+        2.75,
+        2.72,
+        0.78
+      ],
+      "yaw": 5.8294
+    },
+    {
+      "name": "Cover_High_Outer_SW_02",
+      "shape": "box",
+      "center": [
+        -6.4636,
+        2.14,
+        15.7617
+      ],
+      "size": [
+        2.25,
+        2.24,
+        0.78
+      ],
+      "yaw": 5.867797
+    },
+    {
+      "name": "Cover_High_Outer_SE_01",
+      "shape": "box",
+      "center": [
+        16.6348,
+        2.43,
+        4.7102
+      ],
+      "size": [
+        2.75,
+        2.82,
+        0.78
+      ],
+      "yaw": 7.679449
+    },
+    {
+      "name": "Cover_High_Outer_SE_02",
+      "shape": "box",
+      "center": [
+        17.0312,
+        2.14,
+        1.8861
+      ],
+      "size": [
+        2.25,
+        2.24,
+        0.78
+      ],
+      "yaw": 7.641052
     },
     {
       "name": "Platform_NorthWest",

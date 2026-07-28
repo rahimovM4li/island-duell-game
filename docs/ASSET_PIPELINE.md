@@ -43,7 +43,7 @@ Blender object names are unique across the complete master scene. Repeated seman
 - The survivor faces Blender `+Y`: goggles and weapon socket are forward, backpack and bedroll are behind. Head pitch pivots at the neck and feet contact ground at `Z=0`.
 - The shared atlas adds tile-local wood grain, foliage mottling, metal highlights and hazard bands without adding another texture request.
 
-The current optimized payload is 685.0 KiB. The middle island contributes 254.8 KB and 11,298 triangles while rendering as only 17 material-group meshes. The complete initial art payload remains below the 1 MB browser cap.
+The current optimized payload is 692.3 KiB. The middle island contributes 262.3 KB and 11,650 triangles while rendering as only 17 material-group meshes. The complete initial art payload remains below the 1 MB browser cap.
 
 ## Collision policy
 
@@ -74,7 +74,7 @@ The current optimized payload is 685.0 KiB. The middle island contributes 254.8 
    Export the reviewed middle-island scene separately:
 
    ```powershell
-   blender --background art/concepts/middle-island-v1/middle-island-v2.blend --python scripts/blender/export_middle_island.py
+   blender --background art/concepts/middle-island-high-cover-v1/middle-island-high-cover-v1.blend --python scripts/blender/export_middle_island.py
    ```
 
 2. Compress and validate the raw exports:

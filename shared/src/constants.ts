@@ -197,8 +197,9 @@ export const ARROWS_PER_CRAFT = 4;
 export const BANDAGE_HEAL = 30; // HP over 3 s
 export const BANDAGE_DURATION = 3;
 export const BANDAGE_USE_TIME = 1;
-export const PLATE_DAMAGE_REDUCTION = 0.2; // −20 % damage, 1 charge each
-export const MAX_PLATES = 3;
+export const ARMOR_PER_PLATE = 25;
+export const MAX_PLATES = 2;
+export const MAX_SHIELD = ARMOR_PER_PLATE * MAX_PLATES;
 export const MAX_GRENADES = 2; // §4.3 "1–2 Stück"
 export const MAX_SMOKE = 2;
 export const MAX_FLASH = 2;
@@ -218,7 +219,7 @@ export const RECONNECT_GRACE_MS = 12_000;
 export type ItemType =
   | WeaponType
   | 'bandageItem' | 'arrowBundle' | 'pistolAmmo' | 'rifleAmmo' | 'shellAmmo' | 'sniperAmmo'
-  | 'plateItem' | 'smokeGrenade' | 'flashGrenade';
+  | 'plateItem' | 'helmetItem' | 'smokeGrenade' | 'flashGrenade';
 
 export interface AmmoPickupAmounts { arrow: number; pistol: number; rifle: number; shell: number; sniper: number }
 export const AMMO_PICKUP: AmmoPickupAmounts = { arrow: 6, pistol: 14, rifle: 20, shell: 8, sniper: 5 };

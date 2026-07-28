@@ -97,3 +97,44 @@ describe('middle-island GLB budget', () => {
     expect(gltf.extensionsRequired).toContain('EXT_meshopt_compression');
   });
 });
+
+describe('watchtower GLB silhouette', () => {
+  it('preserves the split stair opening in the distance LOD', () => {
+    const buffer = readFileSync(path.resolve('client/public/assets/landmarks.glb'));
+    const jsonLength = buffer.readUInt32LE(12);
+    const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLength)) as {
+      meshes?: Array<{
+        name?: string;
+        primitives?: Array<{ indices?: number; attributes?: { POSITION?: number } }>;
+      }>;
+      accessors?: Array<{ count?: number }>;
+    };
+    const mesh = gltf.meshes?.find((entry) => entry.name === 'poi_watchtower_visual_lod1_mesh');
+    const triangles = (mesh?.primitives ?? []).reduce((sum, primitive) => {
+      const accessor = primitive.indices ?? primitive.attributes?.POSITION;
+      return sum + Math.floor(
+        (accessor === undefined ? 0 : gltf.accessors?.[accessor]?.count ?? 0) / 3,
+      );
+    }, 0);
+
+    // A single solid deck is only one box (the broken asset has 136 total
+    // triangles). Three deck sections retain the authored hatch silhouette.
+    expect(triangles).toBeGreaterThanOrEqual(150);
+  });
+});
+
+describe('helmet GLB assets', () => {
+  it('exports a separate pickup and toggleable character helmet', () => {
+    const readNodes = (filename: string): Set<string> => {
+      const buffer = readFileSync(path.resolve(`client/public/assets/${filename}`));
+      const jsonLength = buffer.readUInt32LE(12);
+      const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLength)) as {
+        nodes?: Array<{ name?: string }>;
+      };
+      return new Set((gltf.nodes ?? []).flatMap((node) => node.name ? [node.name] : []));
+    };
+
+    expect(readNodes('props.glb')).toContain('prop_helmet');
+    expect(readNodes('character.glb')).toContain('player_helmet');
+  });
+});

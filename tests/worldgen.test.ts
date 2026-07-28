@@ -197,12 +197,16 @@ describe('authored middle island', () => {
   const gen = generateWorld(SEED, 3);
 
   it('loads Blender-authored primitive colliders and two walkable ramps', () => {
-    expect(gen.centralStructures).toHaveLength(91);
+    expect(gen.centralStructures).toHaveLength(99);
     expect(gen.centralStructures.filter((part) => part.shape === 'cylinder')).toHaveLength(3);
     expect(gen.centralStructures.filter((part) =>
       part.shape === 'box' && part.walkSurface)).toHaveLength(2);
     expect(gen.centralStructures.some((part) => part.name === 'Cover_High_Ruins_01')).toBe(true);
     expect(gen.centralStructures.some((part) => part.name === 'Brazier_StoneBase')).toBe(true);
+    const outerCover = gen.centralStructures.filter((part) =>
+      part.shape === 'box' && part.name.startsWith('Cover_High_Outer_'));
+    expect(outerCover).toHaveLength(8);
+    expect(outerCover.every((part) => part.shape === 'box' && part.h >= 2.2)).toBe(true);
   });
 
   it('places the three contested top crates on the authored loot pads', () => {

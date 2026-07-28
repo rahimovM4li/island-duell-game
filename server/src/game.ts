@@ -11,7 +11,7 @@ import {
   MatchMode, MAX_BANDAGES,
   MAX_FLASH, MAX_GRENADES, MAX_PLATES, MAX_PLAYERS, MAX_PRACTICE_BOTS, MAX_SMOKE,
   MELEE_CONE_COS, MIN_PLAYERS,
-  PICKUP_RADIUS, PLATE_DAMAGE_REDUCTION, PLAYER_EYE_HEIGHT, PLAYER_MAX_HP,
+  MAX_SHIELD, PICKUP_RADIUS, PLAYER_EYE_HEIGHT, PLAYER_MAX_HP,
   PLAYER_PRONE_EYE_HEIGHT, PLAYER_SNEAK_EYE_HEIGHT, RECONNECT_GRACE_MS, SMOKE_DURATION, SMOKE_FUSE,
   SMOKE_RADIUS, SNIPER_CRATE_CHANCE, SPRINT_SPEED,
   RECIPES, Recipe, RESOURCE_NODE_CHARGES, RESOURCE_YIELD, ROUNDS_PER_MATCH,
@@ -43,6 +43,9 @@ import {
 import {
   cookRemainingFuse, flashIntensityAt, nextOwnedThrow, segmentThroughSphere,
 } from './throwables';
+import {
+  canGrantArmorPlate, grantArmorPlate, platesForShield, resolveArmorHit,
+} from './armor';
 
 interface Conn {
   socket: Socket;
@@ -61,6 +64,8 @@ interface Inventory {
   activeThrow: ThrowKind;
   bandages: number;
   plates: number;
+  shield: number;
+  helmet: boolean;
   ammo: Record<AmmoType, number>;
   mats: { wood: number; stone: number; fiber: number };
 }
@@ -180,6 +185,7 @@ export class GameRoom {
   private eliminationGroups: string[][] = [];
   private lootRng: Rng = mulberry32(1);
   private combatRng: Rng = mulberry32(2);
+  private helmetDroppedThisRound = false;
   private zoneTierAnnounced = 0;
   private currentSpawns: Record<string, number> = {};
   private currentSuddenDeath = false;
@@ -487,7 +493,7 @@ export class GameRoom {
     return {
       primary: null, secondary: null, active: 1,
       throwables: { frag: 0, smoke: 0, flash: 0 }, activeThrow: 'frag',
-      bandages: 0, plates: 0,
+      bandages: 0, plates: 0, shield: 0, helmet: false,
       ammo: { arrow: 0, pistol: 0, rifle: 0, shell: 0, sniper: 0 },
       mats: { wood: 0, stone: 0, fiber: 0 },
     };
@@ -513,6 +519,7 @@ export class GameRoom {
     this.careSpawned = false;
     this.lootRng = mulberry32((this.seed ^ (this.round * 0x9e3779b9)) >>> 0);
     this.combatRng = mulberry32(deriveSeed(this.seed, `combat-round-${this.round}`));
+    this.helmetDroppedThisRound = false;
 
     // reset resource nodes
     this.nodeCharges.clear();
@@ -1052,24 +1059,56 @@ export class GameRoom {
     weapon: WeaponType, cause: 'weapon' | 'grenade', events: GameEvent[], headshot: boolean,
   ): void {
     if (!target.alive) return;
-    if (target.inv.plates > 0) { // Panzerplatte: −20 % Schaden, 1 Ladung (§4.4)
-      amount *= 1 - PLATE_DAMAGE_REDUCTION;
-      target.inv.plates -= 1;
+
+    const armor = resolveArmorHit(amount, {
+      shield: target.inv.shield,
+      helmet: target.inv.helmet,
+      headshot,
+    });
+    target.inv.shield = armor.shield;
+    target.inv.plates = platesForShield(armor.shield);
+    target.inv.helmet = armor.helmet;
+    if (armor.shieldAbsorbed > 0 || armor.helmetBroke) {
       this.pushInventory(target);
     }
-    amount = Math.round(amount);
+    if (armor.shieldAbsorbed > 0) {
+      events.push({
+        type: 'armorHit',
+        target: target.id,
+        attacker: attacker?.id ?? null,
+        absorbed: armor.shieldAbsorbed,
+        shield: armor.shield,
+      });
+    }
+
+    const accurateWeapon = WEAPONS[weapon].kind === 'hitscan' || WEAPONS[weapon].kind === 'projectile';
+    if (attacker && attacker.id !== target.id) {
+      if (accurateWeapon) attacker.stats.hits += 1;
+      if (headshot && accurateWeapon) attacker.stats.headshots += 1;
+      this.sendTo(attacker.id, [{
+        type: 'hitmarker', target: target.id, headshot, blocked: armor.helmetBroke,
+      }]);
+    }
+
+    target.healRemaining = 0; // shield/helmet impacts also interrupt a running heal
+    if (armor.helmetBroke) {
+      events.push({
+        type: 'helmetBreak',
+        target: target.id,
+        attacker: attacker?.id ?? null,
+      });
+      return;
+    }
+
+    amount = armor.hpDamage;
+    if (amount <= 0) return;
     const applied = Math.min(target.hp, amount);
     target.hp = Math.max(0, target.hp - amount);
-    target.healRemaining = 0; // damage interrupts a running heal
     if (attacker && attacker.id !== target.id) {
       const distance = dist2d(attacker.move.pos.x, attacker.move.pos.z, target.move.pos.x, target.move.pos.z);
       target.lastDamagedBy = { id: attacker.id, at: this.t, weapon, headshot, amount: applied, distance };
       attacker.lastDamageDealtAt = this.t;
       attacker.stats.damageDealt += applied;
-      const accurateWeapon = WEAPONS[weapon].kind === 'hitscan' || WEAPONS[weapon].kind === 'projectile';
-      if (accurateWeapon) attacker.stats.hits += 1;
-      if (headshot && accurateWeapon) attacker.stats.headshots += 1;
-      this.sendTo(attacker.id, [{ type: 'hitmarker', target: target.id, headshot }]);
     }
     target.stats.damageTaken += applied;
     events.push({ type: 'damage', target: target.id, attacker: attacker?.id ?? null, amount: applied, hp: target.hp, weapon, headshot });
@@ -1190,7 +1229,7 @@ export class GameRoom {
         p.craftRecipe = null;
         if (r === 'arrows') p.inv.ammo.arrow = Math.min(AMMO_CAP.arrow, p.inv.ammo.arrow + ARROWS_PER_CRAFT);
         if (r === 'bandage') p.inv.bandages = Math.min(MAX_BANDAGES, p.inv.bandages + 1);
-        if (r === 'plate') p.inv.plates = Math.min(MAX_PLATES, p.inv.plates + 1);
+        if (r === 'plate') this.grantPlate(p.inv);
         events.push({ type: 'craft', by: p.id, recipe: r, ok: true });
         this.pushInventory(p);
       }
@@ -1224,10 +1263,22 @@ export class GameRoom {
     this.pushInventory(p);
   }
 
+  private grantPlate(inv: Inventory): boolean {
+    if (!canGrantArmorPlate(inv.shield)) return false;
+    inv.shield = grantArmorPlate(inv.shield);
+    inv.plates = platesForShield(inv.shield);
+    return true;
+  }
+
   private tryCraft(id: string, recipe: Recipe): void {
     const p = this.players.get(id);
     if (!p || !p.alive) return;
     if (p.craftRecipe) return this.sendTo(id, [{ type: 'craft', by: id, recipe, ok: false, reason: 'busy' }]);
+    if (recipe === 'plate' && !canGrantArmorPlate(p.inv.shield)) {
+      return this.sendTo(id, [{
+        type: 'craft', by: id, recipe, ok: false, reason: 'Maximal 2 Panzerplatten',
+      }]);
+    }
     const def = RECIPES[recipe];
     const m = p.inv.mats;
     const need = def.input;
@@ -1372,8 +1423,12 @@ export class GameRoom {
         break;
       }
       case 'plateItem': {
-        if (inv.plates >= MAX_PLATES) return;
-        inv.plates += 1;
+        if (!this.grantPlate(inv)) return;
+        break;
+      }
+      case 'helmetItem': {
+        if (inv.helmet) return;
+        inv.helmet = true;
         break;
       }
       case 'arrowBundle': {
@@ -1417,6 +1472,12 @@ export class GameRoom {
     const tier = (pk.tier ?? 'common') as CrateTier;
     const rng = this.lootRng;
     const drops: ItemType[] = [];
+    // One contested helmet is guaranteed per round from the first opened
+    // top-tier crate. It remains rare, but players can reliably seek it out.
+    if (tier === 'top' && !this.helmetDroppedThisRound) {
+      drops.push('helmetItem');
+      this.helmetDroppedThisRound = true;
+    }
     if (tier === 'top') {
       const guaranteedSniper = this.gen.crates.some(
         (crate) => crate.id === pk.id && crate.guaranteedItem === 'sniper',
@@ -1458,6 +1519,7 @@ export class GameRoom {
     for (let i = 0; i < p.inv.throwables.flash; i++) drop('flashGrenade');
     for (let i = 0; i < p.inv.bandages; i++) drop('bandageItem');
     for (let i = 0; i < p.inv.plates; i++) drop('plateItem');
+    if (p.inv.helmet) drop('helmetItem');
     if (p.inv.ammo.arrow > 0) drop('arrowBundle', { amount: p.inv.ammo.arrow });
     if (p.inv.ammo.pistol > 0) drop('pistolAmmo', { amount: p.inv.ammo.pistol });
     if (p.inv.ammo.rifle > 0) drop('rifleAmmo', { amount: p.inv.ammo.rifle });
@@ -1641,7 +1703,8 @@ export class GameRoom {
       if (pk.item === 'crate') value = pk.tier === 'top' ? 9 : pk.tier === 'good' ? 7 : 5;
       else if (pk.item === 'care') value = 12;
       else if (pk.item === 'bandageItem') value = inv.bandages < MAX_BANDAGES ? (p.hp < 60 ? 8 : 4) : 0;
-      else if (pk.item === 'plateItem') value = inv.plates < MAX_PLATES ? 4 : 0;
+      else if (pk.item === 'plateItem') value = inv.shield < MAX_SHIELD ? 4 : 0;
+      else if (pk.item === 'helmetItem') value = inv.helmet ? 0 : 7;
       else if (pk.item === 'grenade') value = inv.throwables.frag < MAX_GRENADES ? 3 : 0;
       else if (pk.item === 'smokeGrenade') value = inv.throwables.smoke < MAX_SMOKE ? 2 : 0;
       else if (pk.item === 'flashGrenade') value = inv.throwables.flash < MAX_FLASH ? 2 : 0;
@@ -1678,6 +1741,8 @@ export class GameRoom {
       aiming: p.aiming,
       bandaging: p.healRemaining > 0,
       plates: p.inv.plates,
+      shield: p.inv.shield,
+      helmet: p.inv.helmet,
       stamina: round3(p.move.stamina),
       vx: round3(p.move.velX),
       vy: round3(p.move.velY),
@@ -1724,6 +1789,7 @@ export class GameRoom {
       primary: p.inv.primary, secondary: p.inv.secondary, active: p.inv.active,
       throwables: { ...p.inv.throwables }, activeThrow: p.inv.activeThrow,
       bandages: p.inv.bandages, plates: p.inv.plates,
+      shield: p.inv.shield, helmet: p.inv.helmet,
       ammo: { ...p.inv.ammo }, mats: { ...p.inv.mats },
       reloading: p.reloadUntil > 0,
     };
