@@ -23,6 +23,7 @@ export const WALK_SPEED = 6; // m/s
 export const AIM_SPEED = 4.4; // m/s while aiming down sights
 export const SNEAK_SPEED = 3.2; // m/s while crouched
 export const PRONE_SPEED = 1.8; // m/s while lying down with the sniper
+export const PRONE_AIM_SPEED = 0.75; // nearly stationary while stabilising the scoped rifle
 export const SPRINT_SPEED = 9; // m/s
 export const GROUND_ACCEL = 36; // m/s²: responsive, but not an instant velocity snap
 export const GROUND_DECEL = 44; // m/s²: short, readable stopping distance
@@ -76,10 +77,10 @@ export const ROUND_END_SCOREBOARD_SECS = 8;
 
 // ---------- Combat (§4.3) ----------
 export type WeaponType =
-  | 'fists' | 'machete' | 'spear' | 'bow' | 'pistol' | 'rifle' | 'shotgun' | 'sniper'
+  | 'fists' | 'machete' | 'spear' | 'pistol' | 'rifle' | 'shotgun' | 'sniper'
   | 'grenade' | 'smoke' | 'flash';
 
-export type AmmoType = 'arrow' | 'pistol' | 'rifle' | 'shell' | 'sniper';
+export type AmmoType = 'pistol' | 'rifle' | 'shell' | 'sniper';
 
 /** The three throwables sharing slot 3; cycled with the throwable key. */
 export type ThrowKind = 'frag' | 'smoke' | 'flash';
@@ -91,9 +92,8 @@ export const THROW_WEAPON: Record<ThrowKind, WeaponType> = {
 
 export interface WeaponDef {
   type: WeaponType;
-  kind: 'melee' | 'hitscan' | 'projectile' | 'throwable';
+  kind: 'melee' | 'hitscan' | 'throwable';
   damage: number;       // per hit / per pellet / at grenade center
-  headshotDamage?: number;
   cooldown: number;     // s between uses (Kadenz/Draw)
   range: number;        // melee reach or hitscan max range (m)
   ammo?: AmmoType;
@@ -116,10 +116,6 @@ export const WEAPONS: Record<WeaponType, WeaponDef> = {
   fists:   { type: 'fists',   kind: 'melee', damage: 8,  cooldown: 0.5,  range: 1.5, loud: false },
   machete: { type: 'machete', kind: 'melee', damage: 35, cooldown: 0.6,  range: 2.0, loud: false },
   spear:   { type: 'spear',   kind: 'melee', damage: 28, cooldown: 0.8,  range: 3.5, loud: false },
-  bow: {
-    type: 'bow', kind: 'projectile', damage: 40, headshotDamage: 70, cooldown: 1.0,
-    range: 120, ammo: 'arrow', projectileSpeed: 40, loud: false,
-  },
   pistol: {
     type: 'pistol', kind: 'hitscan', damage: 22, cooldown: 0.25, range: 60,
     ammo: 'pistol', magSize: 7, falloffStart: 30, falloffEnd: 60, loud: true, reloadTime: 1.4,
@@ -156,6 +152,13 @@ export const WEAPONS: Record<WeaponType, WeaponDef> = {
   },
 };
 
+/** Applies only while normally walking or sprinting with this weapon active. */
+export const WEAPON_MOVE_MULTIPLIER: Partial<Record<WeaponType, number>> = {
+  machete: 1.08,
+  spear: 1.05,
+  sniper: 0.9,
+};
+
 export const GRENADE_FUSE = 3; // s (§4.3); also the cooking budget before a hand detonation
 export const GRENADE_RADIUS = 5; // m
 export const GRENADE_MIN_THROW_FUSE = 0.2; // s: a fully cooked release still flies briefly
@@ -181,7 +184,7 @@ export const INTERACT_HOLD_SECS = 1.5; // §4.2
 export const RESPAWN_INVULN_SECS = 0; // no respawn during a round (spectate)
 
 // ---------- Crafting (§4.4) ----------
-export type Recipe = 'arrows' | 'bandage' | 'plate';
+export type Recipe = 'bandage' | 'plate';
 export interface RecipeDef {
   recipe: Recipe;
   input: { wood?: number; stone?: number; fiber?: number };
@@ -189,11 +192,9 @@ export interface RecipeDef {
   output: string;
 }
 export const RECIPES: Record<Recipe, RecipeDef> = {
-  arrows:  { recipe: 'arrows',  input: { wood: 2 },  time: 1, output: '4 arrows' },
   bandage: { recipe: 'bandage', input: { fiber: 2 }, time: 1, output: '1 bandage' },
   plate:   { recipe: 'plate',   input: { stone: 3 }, time: 2, output: '1 armor plate' },
 };
-export const ARROWS_PER_CRAFT = 4;
 export const BANDAGE_HEAL = 30; // HP over 3 s
 export const BANDAGE_DURATION = 3;
 export const BANDAGE_USE_TIME = 1;
@@ -218,16 +219,16 @@ export const RECONNECT_GRACE_MS = 12_000;
 // ---------- Loot ----------
 export type ItemType =
   | WeaponType
-  | 'bandageItem' | 'arrowBundle' | 'pistolAmmo' | 'rifleAmmo' | 'shellAmmo' | 'sniperAmmo'
+  | 'bandageItem' | 'pistolAmmo' | 'rifleAmmo' | 'shellAmmo' | 'sniperAmmo'
   | 'plateItem' | 'helmetItem' | 'smokeGrenade' | 'flashGrenade';
 
-export interface AmmoPickupAmounts { arrow: number; pistol: number; rifle: number; shell: number; sniper: number }
-export const AMMO_PICKUP: AmmoPickupAmounts = { arrow: 6, pistol: 14, rifle: 20, shell: 8, sniper: 5 };
+export interface AmmoPickupAmounts { pistol: number; rifle: number; shell: number; sniper: number }
+export const AMMO_PICKUP: AmmoPickupAmounts = { pistol: 14, rifle: 20, shell: 8, sniper: 5 };
 // Weapon pickups come with a starter mag/reserve
 export const WEAPON_START_AMMO: Partial<Record<WeaponType, number>> = {
-  bow: 6, pistol: 14, rifle: 20, shotgun: 8, sniper: 5,
+  pistol: 14, rifle: 20, shotgun: 8, sniper: 5,
 };
-export const AMMO_CAP: Record<AmmoType, number> = { arrow: 24, pistol: 56, rifle: 60, shell: 24, sniper: 15 };
+export const AMMO_CAP: Record<AmmoType, number> = { pistol: 56, rifle: 60, shell: 24, sniper: 15 };
 /** Chance a top-tier crate rolls the sniper instead of rifle/shotgun (kept rare). */
 export const SNIPER_CRATE_CHANCE = 0.18;
 
@@ -246,5 +247,5 @@ export const BOT_DIFFICULTIES: Record<BotDifficulty, BotDifficultyDef> = {
   normal: { reaction: 0.30, aimError: 0.045, detectRange: 75, detectFovCos: 0.15, aggression: 0.6,  throwSkill: 0.55 },
   hard:   { reaction: 0.18, aimError: 0.022, detectRange: 95, detectFovCos: 0.0,  aggression: 0.85, throwSkill: 0.8 },
 };
-export const BOT_NAMES = ['Bot Alpha', 'Bot Bravo', 'Bot Charlie', 'Bot Delta'] as const;
+export const BOT_NAMES = ['Charlie Kirk', 'Erika Kirk', 'Olaf Scholz Abi', 'Friedrich Schmerz'] as const;
 export const MAX_PRACTICE_BOTS = 4;

@@ -53,6 +53,13 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
     }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().state.pointerLocked ?? false
   ))).toBe(true);
 
+  const wheelHandledByGame = await page.evaluate(() => {
+    const event = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(wheelHandledByGame).toBe(true);
+
   await page.evaluate(() => {
     (window as Window & { __CTRL_D_DEFAULT_PREVENTED__?: boolean }).__CTRL_D_DEFAULT_PREVENTED__ = false;
     window.addEventListener('keydown', (event) => {

@@ -26,7 +26,7 @@ export class InputState {
   private fireHeld = false;
   private aimHeld = false;
   private sniperScoped = false;
-  private sniperZoomWheel = 0;
+  private wheelDelta = 0;
   pointerLocked = false;
 
   // per-frame edge events
@@ -50,9 +50,8 @@ export class InputState {
       else if (k === 'Digit3') this.slotPressed = 3;
       else if (k === this.settings.keybinds.reload) this.reloadPressed = true;
       else if (k === this.settings.keybinds.jump) { this.jumpPressed = true; e.preventDefault(); }
-      else if (k === 'Digit4') this.craftPressed = 'arrows';
-      else if (k === 'Digit5') this.craftPressed = 'bandage';
-      else if (k === 'Digit6') this.craftPressed = 'plate';
+      else if (k === 'Digit4') this.craftPressed = 'bandage';
+      else if (k === 'Digit5') this.craftPressed = 'plate';
       else if (k === this.settings.keybinds.heal) this.bandagePressed = true;
       else if (k === 'F3') { this.debugToggled = true; e.preventDefault(); }
     });
@@ -78,9 +77,9 @@ export class InputState {
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     document.addEventListener('wheel', (e) => {
-      if (!this.pointerLocked || !this.sniperScoped) return;
+      if (!this.pointerLocked) return;
       e.preventDefault();
-      this.sniperZoomWheel += e.deltaY;
+      this.wheelDelta += e.deltaY;
     }, { passive: false });
 
     document.addEventListener('mousemove', (e) => {
@@ -96,7 +95,7 @@ export class InputState {
         this.keys.clear();
         this.fireHeld = false;
         this.aimHeld = false;
-        this.sniperZoomWheel = 0;
+        this.wheelDelta = 0;
       }
     });
   }
@@ -113,9 +112,9 @@ export class InputState {
   setSettings(settings: PlayerSettings): void { this.settings = settings; }
   setSniperScoped(scoped: boolean): void { this.sniperScoped = scoped; }
 
-  consumeSniperZoomWheel(): number {
-    const delta = this.sniperZoomWheel;
-    this.sniperZoomWheel = 0;
+  consumeWheelDelta(): number {
+    const delta = this.wheelDelta;
+    this.wheelDelta = 0;
     return delta;
   }
 

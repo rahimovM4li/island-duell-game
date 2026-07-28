@@ -18,13 +18,19 @@ interface PlayerRig {
   weapon: THREE.Group;
   armLeft: THREE.Object3D;
   armRight: THREE.Object3D;
+  forearmLeft?: THREE.Object3D;
+  forearmRight?: THREE.Object3D;
   legLeft: THREE.Object3D;
   legRight: THREE.Object3D;
   armLeftBase: THREE.Euler;
   armRightBase: THREE.Euler;
+  forearmLeftBase?: THREE.Euler;
+  forearmRightBase?: THREE.Euler;
   legLeftBase: THREE.Euler;
   legRightBase: THREE.Euler;
   headBase: THREE.Euler;
+  weaponBasePosition: THREE.Vector3;
+  lookPitch: number;
   currentWeapon: WeaponType | null;
   crouchTarget: number;
   crouchBlend: number;
@@ -47,6 +53,11 @@ interface PlayerRig {
 }
 
 const DEATH_ANIMATION_DURATION = 1.35;
+const PRONE_ROOT_ROTATION = -Math.PI / 2;
+const PRONE_ROOT_HEIGHT = 0.36;
+const PRONE_ARM_FORWARD = 2.3;
+const PRONE_FOREARM_BEND = 0.7;
+const PRONE_HEAD_LIFT = 0.34;
 
 interface ItemVisual {
   label: string;
@@ -57,7 +68,6 @@ interface ItemVisual {
 const ITEM_VISUALS: Record<string, ItemVisual> = {
   machete: { label: 'Machete', color: 0xd9e2e8, glyph: 'M' },
   spear: { label: 'Speer', color: 0xd9e2e8, glyph: 'S' },
-  bow: { label: 'Bogen', color: 0xd9a441, glyph: 'B' },
   pistol: { label: 'Pistole', color: 0x65b7ee, glyph: 'P' },
   rifle: { label: 'Gewehr', color: 0xb68cff, glyph: 'G' },
   shotgun: { label: 'Schrotflinte', color: 0xff8c56, glyph: 'S' },
@@ -68,7 +78,6 @@ const ITEM_VISUALS: Record<string, ItemVisual> = {
   bandageItem: { label: 'Verband', color: 0xff6b6f, glyph: '+' },
   plateItem: { label: 'Panzerplatte', color: 0x70d7e8, glyph: 'A' },
   helmetItem: { label: 'Schutzhelm', color: 0x8ee3ed, glyph: 'H' },
-  arrowBundle: { label: 'Pfeile', color: 0xd9a441, glyph: '↟' },
   pistolAmmo: { label: 'Pistolen-Munition', color: 0x65b7ee, glyph: '•' },
   rifleAmmo: { label: 'Gewehr-Munition', color: 0xb68cff, glyph: '•' },
   shellAmmo: { label: 'Schrot-Munition', color: 0xff8c56, glyph: '•' },
@@ -152,19 +161,6 @@ function proceduralWeaponModel(weapon: WeaponType | 'none'): THREE.Group {
       addBox(g, [0.02, 0.02, 0.24], [0, 0, -1.42], 0x9aa4ac);                       // socket highlight
       for (let i = 0; i < 4; i++) addCylinder(g, 0.04, 0.02, [0, 0, -1.28 + i * 0.09], leather, [Math.PI / 2, 0, 0], 8); // bindings
       addCone(g, 0.05, 0.14, [0, 0, 0.63], 0x8a7a5a, [Math.PI / 2, 0, 0], 6);       // butt cap
-      break;
-    }
-    case 'bow': {
-      const arc = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.032, 8, 26, Math.PI * 1.42), material(0x9a672f));
-      arc.rotation.set(0, 0, -Math.PI * 0.71); arc.castShadow = true; g.add(arc);
-      // recurve tips
-      addCylinder(g, 0.02, 0.12, [0.02, 0.5, 0], 0x6f4a22, [0, 0, 0.25], 6);
-      addCylinder(g, 0.02, 0.12, [0.02, -0.5, 0], 0x6f4a22, [0, 0, -0.25], 6);
-      const points = [new THREE.Vector3(0.02, -0.52, 0), new THREE.Vector3(-0.14, 0, 0), new THREE.Vector3(0.02, 0.52, 0)];
-      g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: 0xe8e2d4 })));
-      addCylinder(g, 0.03, 0.24, [-0.02, 0, 0], leather, [0, 0, 0], 8);            // grip wrap
-      addCylinder(g, 0.016, 0.9, [-0.02, 0.02, -0.08], 0xc9b382, [0, 0, 0], 5);    // nocked arrow
-      addCone(g, 0.035, 0.1, [-0.02, 0.02, -0.55], steel, [-Math.PI / 2, 0, 0], 5);
       break;
     }
     case 'pistol':
@@ -325,7 +321,6 @@ function pickupModel(p: PickupInfo): THREE.Group {
   const compactProp = p.item === 'bandageItem' ? 'bandage'
     : p.item === 'plateItem' ? 'plate'
       : p.item === 'helmetItem' ? 'helmet'
-      : p.item === 'arrowBundle' ? 'arrow_bundle'
         : p.item === 'pistolAmmo' ? 'pistol_ammo'
           : p.item === 'rifleAmmo' ? 'rifle_ammo'
             : p.item === 'shellAmmo' ? 'shell_ammo'
@@ -349,13 +344,6 @@ function pickupModel(p: PickupInfo): THREE.Group {
     addBox(g, [0.24, 0.24, 0.02], [0, 0.34, 0.08], 0x304e5b);                    // center panel
   } else if (p.item === 'helmetItem') {
     return helmetModel();
-  } else if (p.item === 'arrowBundle') {
-    for (let i = -1; i <= 1; i++) {
-      addCylinder(g, 0.025, 0.92, [i * 0.09, 0.28, 0], 0xc9b382, [0, 0, 0.08 * i], 5);
-      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.16, 5), material(0xc4ced5));
-      tip.position.set(i * 0.09, 0.82, 0); g.add(tip);
-    }
-    addBox(g, [0.34, 0.09, 0.12], [0, 0.25, 0], 0x8b5530);
   } else if (p.item === 'smokeGrenade') {
     return weaponModel('smoke');
   } else if (p.item === 'flashGrenade') {
@@ -372,7 +360,7 @@ function pickupModel(p: PickupInfo): THREE.Group {
 }
 
 const WEAPON_MODEL_KEYS: Record<WeaponType, true> = {
-  fists: true, machete: true, spear: true, bow: true, pistol: true,
+  fists: true, machete: true, spear: true, pistol: true,
   rifle: true, shotgun: true, sniper: true, grenade: true, smoke: true, flash: true,
 };
 
@@ -415,13 +403,11 @@ function pickupLabel(p: PickupInfo): THREE.Sprite {
 function viewmodelFor(weapon: WeaponType | 'none'): THREE.Group {
   const g = weaponModel(weapon);
   const scale = weapon === 'rifle' || weapon === 'shotgun' || weapon === 'spear' || weapon === 'sniper'
-    ? 0.36 : weapon === 'bow' ? 0.48 : 0.54;
+    ? 0.36 : 0.54;
   g.scale.setScalar(scale);
   const baseRotation = weapon === 'machete'
     ? { x: 0.06, y: -0.28, z: -0.3 }
-    : weapon === 'bow'
-      ? { x: 0.02, y: 0.18, z: 0.04 }
-      : { x: 0, y: -0.08, z: 0 };
+    : { x: 0, y: -0.08, z: 0 };
   g.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
   g.userData.viewmodelBaseRotation = baseRotation;
   return g;
@@ -518,13 +504,19 @@ export class Entities {
         weapon: compact.weaponSocket,
         armLeft: compact.armLeft,
         armRight: compact.armRight,
+        forearmLeft: compact.forearmLeft,
+        forearmRight: compact.forearmRight,
         legLeft: compact.legLeft,
         legRight: compact.legRight,
         armLeftBase: compact.armLeft.rotation.clone(),
         armRightBase: compact.armRight.rotation.clone(),
+        forearmLeftBase: compact.forearmLeft.rotation.clone(),
+        forearmRightBase: compact.forearmRight.rotation.clone(),
         legLeftBase: compact.legLeft.rotation.clone(),
         legRightBase: compact.legRight.rotation.clone(),
         headBase: compact.head.rotation.clone(),
+        weaponBasePosition: compact.weaponSocket.position.clone(),
+        lookPitch: 0,
         currentWeapon: null,
         crouchTarget: 0,
         crouchBlend: 0,
@@ -566,8 +558,10 @@ export class Entities {
     bootL.position.set(-0.17, 0.05, 0.04);
     const bootR = bootL.clone(); bootR.position.x = 0.17;
     const leftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.095, 0.62, 8), mat);
+    leftArm.name = 'player_arm_l_pivot';
     leftArm.position.set(-0.39, 1.08, 0); leftArm.rotation.z = -0.12;
-    const rightArm = leftArm.clone(); rightArm.position.x = 0.39; rightArm.rotation.z = 0.12;
+    const rightArm = leftArm.clone(); rightArm.name = 'player_arm_r_pivot';
+    rightArm.position.x = 0.39; rightArm.rotation.z = 0.12;
     const handL = new THREE.Mesh(new THREE.SphereGeometry(0.075, 7, 6), gearMat);
     handL.position.set(-0.42, 0.79, 0);
     const handR = handL.clone(); handR.position.x = 0.42;
@@ -581,6 +575,7 @@ export class Entities {
     const bedroll = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.44, 8), mat);
     bedroll.rotation.z = Math.PI / 2; bedroll.position.set(0, 1.4, 0.34);
     const weapon = new THREE.Group();
+    weapon.name = 'player_weapon_socket';
     weapon.position.set(0.34, 1.22, -0.18);
     weapon.scale.setScalar(0.48);
     const extras = [
@@ -599,6 +594,7 @@ export class Entities {
       armLeftBase: leftArm.rotation.clone(), armRightBase: rightArm.rotation.clone(),
       legLeftBase: leftLeg.rotation.clone(), legRightBase: rightLeg.rotation.clone(),
       headBase: head.rotation.clone(),
+      weaponBasePosition: weapon.position.clone(), lookPitch: 0,
       crouchTarget: 0, crouchBlend: 0, proneTarget: 0, proneBlend: 0, aiming: false,
       flashT: 0,
       bodyBaseEmissive: (body.material as THREE.MeshLambertMaterial).emissive.clone(),
@@ -620,9 +616,12 @@ export class Entities {
     rig.group.scale.set(1, 1, 1);
     rig.armLeft.rotation.copy(rig.armLeftBase);
     rig.armRight.rotation.copy(rig.armRightBase);
+    if (rig.forearmLeft && rig.forearmLeftBase) rig.forearmLeft.rotation.copy(rig.forearmLeftBase);
+    if (rig.forearmRight && rig.forearmRightBase) rig.forearmRight.rotation.copy(rig.forearmRightBase);
     rig.legLeft.rotation.copy(rig.legLeftBase);
     rig.legRight.rotation.copy(rig.legRightBase);
     rig.head.rotation.copy(rig.headBase);
+    rig.helmet.rotation.copy(rig.headBase);
   }
 
   /** Creates a visible third-person winner when the local first-person player wins. */
@@ -766,8 +765,7 @@ export class Entities {
     rig.crouchTarget = sneaking ? 1 : 0;
     rig.proneTarget = prone ? 1 : 0;
     rig.aiming = aiming;
-    rig.head.rotation.x = -pitch * 0.8;
-    rig.helmet.rotation.x = -pitch * 0.8;
+    rig.lookPitch = pitch;
     rig.helmet.visible = effectiveAlive && helmetEquipped;
     if (rig.currentWeapon !== weapon) {
       for (const child of [...rig.weapon.children]) disposeObject(child);
@@ -776,8 +774,7 @@ export class Entities {
       rig.currentWeapon = weapon;
     }
     rig.weapon.visible = effectiveAlive && weapon !== 'fists';
-    rig.weapon.rotation.x = -pitch;
-    rig.weapon.position.z = aiming ? -0.28 : -0.18;
+    rig.weapon.position.z = aiming ? -0.28 : rig.weaponBasePosition.z;
   }
 
   removePlayer(id: string): void {
@@ -876,9 +873,13 @@ export class Entities {
       rig.group.scale.set(1, 1, 1);
       rig.armLeft.rotation.copy(rig.armLeftBase);
       rig.armRight.rotation.copy(rig.armRightBase);
+      if (rig.forearmLeft && rig.forearmLeftBase) rig.forearmLeft.rotation.copy(rig.forearmLeftBase);
+      if (rig.forearmRight && rig.forearmRightBase) rig.forearmRight.rotation.copy(rig.forearmRightBase);
       rig.legLeft.rotation.copy(rig.legLeftBase);
       rig.legRight.rotation.copy(rig.legRightBase);
       rig.head.rotation.copy(rig.headBase);
+      rig.helmet.rotation.copy(rig.headBase);
+      rig.lookPitch = 0;
     }
   }
 
@@ -965,40 +966,22 @@ export class Entities {
       seen.add(pr.id);
       let obj = this.projectiles.get(pr.id);
       if (!obj) {
-        if (pr.kind === 'arrow') {
-          const compactArrow = gameAssets.cloneProp('projectile_arrow');
-          if (compactArrow) {
-            obj = compactArrow;
-          } else {
-          const m = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.02, 0.02, 0.7, 4),
-            new THREE.MeshLambertMaterial({ color: 0xc9b382 }),
-          );
-          m.rotation.x = Math.PI / 2;
-          const holder = new THREE.Group();
-          holder.add(m);
-          obj = holder;
-          }
+        const weaponKind = pr.kind === 'smoke' ? 'smoke' : pr.kind === 'flash' ? 'flash' : 'grenade';
+        const compactThrowable = gameAssets.cloneWeapon(weaponKind);
+        if (compactThrowable) {
+          obj = compactThrowable;
+          obj.scale.setScalar(0.68);
         } else {
-          const weaponKind = pr.kind === 'smoke' ? 'smoke' : pr.kind === 'flash' ? 'flash' : 'grenade';
-          const compactThrowable = gameAssets.cloneWeapon(weaponKind);
-          if (compactThrowable) {
-            obj = compactThrowable;
-            obj.scale.setScalar(0.68);
-          }
-          else {
-            const color = pr.kind === 'smoke' ? 0x8d99a3 : pr.kind === 'flash' ? 0xcfc39a : 0x4a7a4a;
-            obj = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), new THREE.MeshLambertMaterial({ color }));
-          }
+          const color = pr.kind === 'smoke' ? 0x8d99a3 : pr.kind === 'flash' ? 0xcfc39a : 0x4a7a4a;
+          obj = new THREE.Mesh(
+            new THREE.SphereGeometry(0.13, 8, 6),
+            new THREE.MeshLambertMaterial({ color }),
+          );
         }
         this.scene.add(obj);
         this.projectiles.set(pr.id, obj);
       }
       obj.position.set(pr.x, pr.y, pr.z);
-      if (pr.kind === 'arrow') {
-        const dir = new THREE.Vector3(pr.vx, pr.vy, pr.vz);
-        if (dir.lengthSq() > 0.01) obj.lookAt(obj.position.clone().add(dir));
-      }
     }
     for (const [id, obj] of this.projectiles) {
       if (!seen.has(id)) {
@@ -1189,6 +1172,8 @@ export class Entities {
         rig.armRight.rotation.x = THREE.MathUtils.lerp(rig.armRightBase.x, rig.armRightBase.x - beat * 0.32, weight);
         rig.armLeft.rotation.z = THREE.MathUtils.lerp(rig.armLeftBase.z, rig.armLeftBase.z - 2.35 - halfBeat * 0.18, weight);
         rig.armRight.rotation.z = THREE.MathUtils.lerp(rig.armRightBase.z, rig.armRightBase.z + 2.35 + halfBeat * 0.18, weight);
+        if (rig.forearmLeft && rig.forearmLeftBase) rig.forearmLeft.rotation.copy(rig.forearmLeftBase);
+        if (rig.forearmRight && rig.forearmRightBase) rig.forearmRight.rotation.copy(rig.forearmRightBase);
         rig.legLeft.rotation.x = THREE.MathUtils.lerp(rig.legLeftBase.x, rig.legLeftBase.x + beat * 0.22, weight);
         rig.legRight.rotation.x = THREE.MathUtils.lerp(rig.legRightBase.x, rig.legRightBase.x - beat * 0.22, weight);
         rig.head.rotation.x = rig.headBase.x;
@@ -1207,10 +1192,55 @@ export class Entities {
       } else {
         const crouchScale = THREE.MathUtils.lerp(1, 0.68, rig.crouchBlend);
         rig.group.scale.y = THREE.MathUtils.lerp(crouchScale, 1, rig.proneBlend);
-        rig.group.rotation.x = THREE.MathUtils.lerp(0, -Math.PI * 0.43, rig.proneBlend);
-        rig.group.position.y = rig.baseY + rig.proneBlend * 0.43;
+        rig.group.rotation.x = PRONE_ROOT_ROTATION * rig.proneBlend;
+        rig.group.position.y = rig.baseY + PRONE_ROOT_HEIGHT * rig.proneBlend;
+        rig.armLeft.rotation.x = THREE.MathUtils.lerp(
+          rig.armLeftBase.x,
+          rig.armLeftBase.x + PRONE_ARM_FORWARD,
+          rig.proneBlend,
+        );
+        rig.armRight.rotation.x = THREE.MathUtils.lerp(
+          rig.armRightBase.x,
+          rig.armRightBase.x + PRONE_ARM_FORWARD,
+          rig.proneBlend,
+        );
+        // Pull both elbows inward so the hands meet the centred rifle instead
+        // of leaving the arms stretched beside the torso.
+        rig.armLeft.rotation.z = THREE.MathUtils.lerp(rig.armLeftBase.z, -0.62, rig.proneBlend);
+        rig.armRight.rotation.z = THREE.MathUtils.lerp(rig.armRightBase.z, 0.62, rig.proneBlend);
+        if (rig.forearmLeft && rig.forearmLeftBase) {
+          rig.forearmLeft.rotation.x = THREE.MathUtils.lerp(
+            rig.forearmLeftBase.x,
+            rig.forearmLeftBase.x + PRONE_FOREARM_BEND,
+            rig.proneBlend,
+          );
+        }
+        if (rig.forearmRight && rig.forearmRightBase) {
+          rig.forearmRight.rotation.x = THREE.MathUtils.lerp(
+            rig.forearmRightBase.x,
+            rig.forearmRightBase.x + PRONE_FOREARM_BEND,
+            rig.proneBlend,
+          );
+        }
+        rig.legLeft.rotation.x = THREE.MathUtils.lerp(rig.legLeftBase.x, 0.12, rig.proneBlend);
+        rig.legRight.rotation.x = THREE.MathUtils.lerp(rig.legRightBase.x, 0.08, rig.proneBlend);
+        rig.legLeft.rotation.z = THREE.MathUtils.lerp(rig.legLeftBase.z, -0.08, rig.proneBlend);
+        rig.legRight.rotation.z = THREE.MathUtils.lerp(rig.legRightBase.z, 0.08, rig.proneBlend);
+        const headPitch = rig.headBase.x - rig.lookPitch * 0.8 + PRONE_HEAD_LIFT * rig.proneBlend;
+        rig.head.rotation.x = headPitch;
+        rig.helmet.rotation.x = headPitch;
+        rig.weapon.position.x = THREE.MathUtils.lerp(
+          rig.weaponBasePosition.x,
+          0,
+          rig.proneBlend,
+        );
+        rig.weapon.rotation.x = -rig.lookPitch + Math.PI / 2 * rig.proneBlend;
       }
-      rig.weapon.position.y = THREE.MathUtils.lerp(1.22, 1.3, rig.aiming ? 1 : 0);
+      rig.weapon.position.y = THREE.MathUtils.lerp(
+        rig.weaponBasePosition.y,
+        1.3,
+        rig.aiming ? 1 : 0,
+      );
       rig.flashT = Math.max(0, rig.flashT - dt);
       const flash = Math.min(1, rig.flashT / 0.08);
       const bodyMat = rig.body.material as LitPlayerMaterial;

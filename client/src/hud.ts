@@ -13,12 +13,12 @@ import type { LandmarkPoi, SpawnPoi } from '@shared/worldgen';
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 const WEAPON_NAMES: Record<WeaponType, string> = {
-  fists: 'Fäuste', machete: 'Machete', spear: 'Speer', bow: 'Bogen',
+  fists: 'Fäuste', machete: 'Machete', spear: 'Speer',
   pistol: 'Pistole', rifle: 'Gewehr', shotgun: 'Schrotflinte', sniper: 'Scharfschütze',
   grenade: 'Granate', smoke: 'Rauch', flash: 'Blend',
 };
 const WEAPON_GLYPHS: Record<WeaponType, string> = {
-  fists: '✦', machete: '╱', spear: '↑', bow: '◖',
+  fists: '✦', machete: '╱', spear: '↑',
   pistol: 'P', rifle: 'G', shotgun: 'S', sniper: '◎',
   grenade: '●', smoke: '◌', flash: '✳',
 };
@@ -116,7 +116,6 @@ export class Hud {
     $('mats-row').style.display = hasMaterials ? 'block' : 'none';
     $('craft-recipes').style.display = hasMaterials ? 'flex' : 'none';
     const affordable = {
-      arrows: inv.mats.wood >= 2,
       bandage: inv.mats.fiber >= 2,
       plate: inv.mats.stone >= 3,
     };
@@ -124,7 +123,7 @@ export class Hud {
       document.querySelector(`[data-recipe="${recipe}"]`)?.classList.toggle('affordable', ok);
     }
     $('consumables').innerHTML =
-      `<strong>${inv.bandages}</strong> Verbände <span style="color:#ffc45c">[H]</span><br><strong>${inv.ammo.arrow}</strong> Pfeile`;
+      `<strong>${inv.bandages}</strong> Verbände <span style="color:#ffc45c">[H]</span>`;
   }
 
   killfeed(text: string, isMe: boolean): void {
@@ -430,7 +429,7 @@ export class Hud {
       g.strokeRect(px - 4, py - 4, 8, 8);
     }
 
-    // self (white arrow showing facing)
+    // self (white triangle showing facing)
     const [sx, sy] = this.toMap(selfX, selfZ);
     g.save();
     g.translate(sx, sy);

@@ -145,6 +145,23 @@
           "walkSurface": true
         },
         {
+          "name": "tower_stair_landing",
+          "shape": "box",
+          "center": [
+            0,
+            5.265,
+            -0.14
+          ],
+          "size": [
+            1.8,
+            0.45,
+            0.78
+          ],
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "walkSurface": false
+        },
+        {
           "name": "tower_deck_left",
           "shape": "box",
           "center": [

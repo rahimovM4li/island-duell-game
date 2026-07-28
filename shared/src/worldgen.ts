@@ -208,7 +208,7 @@ export interface WorldGen {
 }
 
 const MELEE_FLOOR: ItemType[] = ['machete', 'spear'];
-const RANGED_FLOOR: ItemType[] = ['pistol', 'bow'];
+const RANGED_FLOOR: ItemType[] = ['pistol'];
 export const CRATE_PLACEMENT_RADIUS = 0.8;
 export const FLOOR_ITEM_PLACEMENT_RADIUS = 0.5;
 export const CARE_PLACEMENT_RADIUS = 1.2;

@@ -133,7 +133,6 @@ export function scoreBotWeapon(type: WeaponType, distance: number, supply: numbe
   else if (type === 'sniper') rangeFactor *= distance < 12 ? 0.22 : distance > 34 ? 1.65 : 1;
   else if (type === 'rifle') rangeFactor *= distance > 14 && distance < 55 ? 1.3 : 0.9;
   else if (type === 'pistol') rangeFactor *= distance < 24 ? 1.15 : 0.65;
-  else if (type === 'bow') rangeFactor *= distance > 10 ? 1.15 : 0.75;
   return dps * rangeFactor + Math.min(20, supply) * 0.1;
 }
 
@@ -338,7 +337,7 @@ export function computeBotInput(mem: BotMemory, ctx: BotCtx): BotDecision {
           mem.burstPauseUntil = mem.burstUntil + 0.25 + ctx.rng() * (1 - ctx.diff.aggression) * 0.9;
         }
         inp.fire = ctx.t < mem.burstUntil;
-        inp.aim = def.kind === 'hitscan' || def.kind === 'projectile';
+        inp.aim = def.kind === 'hitscan';
       }
       const magEmpty = self.slot !== 3
         && (self.slot === 1 ? self.primary : self.secondary)?.mag === 0;

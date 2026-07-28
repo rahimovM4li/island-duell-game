@@ -25,15 +25,15 @@ Anderer Port (macOS/Linux): `PORT=4000 npm start`.
 |---|---|
 | WASD + Maus | Bewegen / Umsehen (Klick ins Spiel = Mauszeiger-Lock) |
 | Shift | Sprinten (Ausdauer mit langsamer Regeneration) |
-| Strg | Schleichen (kleinere Haltung, langsamer und deutlich leiser) |
+| Strg | Schleichen; mit ausgerüsteter Sniper auf den Bauch legen |
 | Leertaste | Springen |
 | Linksklick | Angreifen / Schießen / Granate werfen |
-| Rechte Maustaste | Mit Bogen/Pistole/Gewehr/Schrotflinte/Scharfschützengewehr zielen |
+| Rechte Maustaste | Mit Pistole/Gewehr/Schrotflinte/Scharfschützengewehr zielen |
 | R | Nachladen |
-| 1 / 2 / 3 | Waffenslot 1 / 2 / Wurfslot |
+| 1 / 2 / 3 oder Mausrad | Waffenslot 1 / 2 / Wurfslot auswählen beziehungsweise durch belegte Slots wechseln |
 | E (halten ~1,5 s) | Ressourcen abbauen (Baum→Holz, Fels→Stein, Busch→Fasern); kurz drücken: Waffe tauschen wenn beide Slots voll |
 | H | Verband benutzen (30 HP über 3 s) |
-| 4 / 5 / 6 | Craften: Pfeile (2 Holz) / Verband (2 Fasern) / Panzerplatte (3 Stein) |
+| 4 / 5 | Craften: Verband (2 Fasern) / Panzerplatte (3 Stein) |
 | F3 | Debug-Overlay (FPS, Draw Calls, Dreiecke, Position/Tempo, Entities, Rapier, Netzwerk) |
 | WASD + Maus (als Zuschauer) | Freecam fliegen und umsehen |
 | Leertaste / Strg / Shift (als Zuschauer) | Hoch / runter / schneller fliegen |
@@ -48,10 +48,11 @@ wichtigsten Tasten dauerhaft konfigurieren.
 - **Match = 3 Runden.** Platzierungspunkte 3/2/1/0/0; bei N=2 exakt Best-of-3
   (Sieger 3 / Verlierer 0). Gleichstand nach Runde 3 → Sudden-Death-Runde(n).
 - **Zwei Tempi:** Klassisch bleibt bei etwa 8–11 Minuten pro Runde. Schnell
-  komprimiert nur Zone, Licht und Care-Package auf etwa 5–7 Minuten; Bewegung,
+  komprimiert Zone und Care-Package auf etwa 5–7 Minuten; Bewegung,
   Feuerrate, Nachladen und Heilung bleiben unverändert.
-- **Rundenablauf:** 0:00–3:00 Looting (Tag) → 3:00–8:00 Closing (Dämmerung,
-  Zone schrumpft 3:00 und 6:00) → ab 8:00 Endgame (Nacht, letzte Zone 8:30).
+- **Rundenablauf:** 0:00–3:00 Looting → 3:00–8:00 Closing
+  (Zone schrumpft 3:00 und 6:00) → ab 8:00 Endgame (letzte Zone 8:30).
+  Alle Runden bleiben bei klarer Tagesbeleuchtung.
   Finaler Ring: 20 + 5×N m Durchmesser. Zonenschaden 2 → 5 → 10 HP/s.
 - **Spawns:** 5 Einstiege auf einem 80-m-Ring (72° Abstand), pro Spawn 1 Nahkampf-
   + 1 Fernkampfwaffe + 2 Verbände als Bodenloot. 12 feste POI-Kisten
@@ -59,8 +60,8 @@ wichtigsten Tasten dauerhaft konfigurieren.
   Wald = einfach) + 3×N Streukisten.
 - **Landmarks:** offenes Strandwrack, begehbarer Aussichtsposten und enger
   Waldbunker besitzen eigene Silhouetten, Deckung, Collider und Minimapmarker.
-- **Laut vs. leise:** Pistole/Gewehr/Schrot pingen den Schützen 2 s auf der
-  Minimap, solange es hell ist. Bogen und Nahkampf sind lautlos.
+- **Laut vs. leise:** Schusswaffen pingen den Schützen 2 s auf der
+  Minimap. Nahkampf ist lautlos.
   Schleichen reduziert die hörbare Schrittlautstärke stark. Die Minimap zeigt
   NIE Gegnerpositionen; über Gegnern werden auch keine Namen eingeblendet.
 - **Deckung:** Wald, große Büsche und Grasfelder brechen die Sichtlinie und
@@ -149,8 +150,8 @@ Ablauf steht in `docs/ASSET_PIPELINE.md`.
   Kenney-Asset-Pack; prozedurale Meshes bleiben als Offline-Fallback erhalten.
 - **Sound:** WebAudio-synthetisierte Effekte statt Audiodateien (gleiche
   Begründung).
-- Bogenschütze bekommt Pfeile über Crafting (2 Holz → 4 Pfeile), Pfeilbündel
-  liegen zusätzlich in Kisten.
+- Bogen und Pfeile wurden vollständig aus Loot, Crafting, Inventar und Assets
+  entfernt; ihr Anteil am Spawn-Loot wurde der Pistole zugeschlagen.
 
 ## Nicht enthalten (out of scope v1, per PRD)
 

@@ -46,13 +46,14 @@ Inventar: 2 Waffenslots (Primär/Sekundär) + 1 Wurf-Slot + Verbrauchsgüter (Ba
 Waffen/Items: sichtbare Pickups (Kisten, POIs) → Walk-over-Pickup, kein Menü.
 Ressourcen: Interact-Hold (~1,5 s) an Bäumen/Felsen/Büschen.
 4.3 Waffen-Baseline
-WaffeTypSchadenKadenz/DrawReichweiteMunitionRolleFäusteMelee80,5 s1,5 m–FallbackMacheteMelee350,6 s2 m–Burst-NahkampfSpeerMelee280,8 s3,5 m–Reichweiten-MeleeBogenProjektil40 Körper / 70 Kopf1,0 s40 m/s PfeilPfeile (craftbar/aufsammelbar)Leise, Skill-belohntPistoleHitscan220,25 smittel7er-MagAllrounderGewehr (selten)Hitscan300,15 shoch20er-MagWin-Condition, muni-armSchrotflinte (selten)Hitscan (8 Pellets)12×8 (96 nah)0,9 shart fallend >8 m5erNahkampf-KonterGranateWurf60 Zentrum, Radius 5 m3 s Zünder–1–2 StückArea-Denial
+WaffeTypSchadenKadenz/DrawReichweiteMunitionRolleFäusteMelee80,5 s1,5 m–FallbackMacheteMelee350,6 s2 m–Burst-NahkampfSpeerMelee280,8 s3,5 m–Reichweiten-MeleePistoleHitscan220,25 smittel7er-MagAllrounderGewehr (selten)Hitscan300,15 shoch20er-MagWin-Condition, muni-armSchrotflinte (selten)Hitscan (8 Pellets)12×8 (96 nah)0,9 shart fallend >8 m5erNahkampf-KonterGranateWurf60 Zentrum, Radius 5 m3 s Zünder–1–2 StückArea-Denial
 
-Trade-off-Prinzip: Gewehr tödlich, aber laut + muni-arm. Bogen leise/stark, aber
-Projektil muss gezielt werden. Schrotflinte kontert Rusher. Kein „strikt bestes" Item.
+Trade-off-Prinzip: Gewehr tödlich, aber laut + muni-arm. Schrotflinte kontert
+Rusher. Machete und Speer erhöhen die Mobilität, die Sniper reduziert sie.
+Kein „strikt bestes" Item.
 
-4.4 Ressourcen & Crafting (minimal, 3 Rezepte)
-RezeptInputOutputZeitPfeileHolzPfeil-Bündel1 sBandageFiberHeilt 30 HP über 3 s1 sPanzerplatteStein25 Schild, maximal 2 gleichzeitig~2 s
+4.4 Ressourcen & Crafting (minimal, 2 Rezepte)
+RezeptInputOutputZeitBandageFiberHeilt 30 HP über 3 s1 sPanzerplatteStein25 Schild, maximal 2 gleichzeitig~2 s
 
 Schutzhelm: seltenes Kisten-Item, wird beim Aufheben automatisch ausgerüstet,
 ist an anderen Spielern sichtbar und blockiert genau einen Kopftreffer vollständig.
@@ -77,11 +78,11 @@ Jeder Spawn-POI hat garantierten Loot-Floor: 1 Melee + 1 Ranged + 2 Bandagen in 
 
 6. Rundenablauf & Match
 6.1 Phasen (Ziel-Rundenlänge ~11 min)
-ZeitPhaseLichtZone0:00–3:00LootingTagoffen (~90 % der Insel)3:00–8:00ClosingDämmerung → NachtShrink 1 (3:00) + Shrink 2 (6:00)8:00–EndeEndgameNachtShrink 3 (8:30), finaler Ring (§3)
+ZeitPhaseLichtZone0:00–3:00LootingTagoffen (~90 % der Insel)3:00–8:00ClosingTagShrink 1 (3:00) + Shrink 2 (6:00)8:00–EndeEndgameTagShrink 3 (8:30), finaler Ring (§3)
 
-6.2 Tag/Nacht-Effekte
-Tag: Fog ~120 m. Laute Waffen (Pistole/Gewehr/Schrot) pingen die Schützen-Position 2 s auf der Gegner-Minimap.
-Nacht: Fog ~50 m. Mündungsfeuer sehr sichtbar; Fackel/Lampe verrät Position → Bogen (leise, kein Flash) wird nachts stark. Beide Waffenklassen bekommen ihr Zeitfenster.
+6.2 Beleuchtung
+Alle Runden verwenden Tageslicht und Fog ~120 m. Laute Schusswaffen pingen die
+Schützen-Position 2 s auf der Gegner-Minimap.
 6.3 Schrumpfende Zone
 Kreisförmig, 3 Shrink-Schritte, finaler Durchmesser = 20 + 5×N m (§3).
 DoT außerhalb: 2 HP/s (früh) → 5 HP/s (mittel) → 10 HP/s (final). Bestraft, tötet aber nicht sofort — kurzes Repositionieren bleibt möglich.
@@ -158,8 +159,8 @@ Physik	Rapier.js — Kinematic-Capsule + Heightfield-Collider	§4.1, §5.1, §10
 Bewegung	Laufen ~6 m/s, Sprint ~9 m/s, normaler Jump, kein Double-Jump	§4.1
 HP	100, keine passive Regen	§4.1
 Inventar	2 Waffen + 1 Wurf + Verbrauch	§4.1
-Waffen-Baseline	Fäuste, Machete, Speer, Bogen, Pistole, Gewehr, Schrot, Granate	§4.3
-Crafting	3 Rezepte: Pfeile, Bandage, Panzerplatte	§2, §4.4
+Waffen-Baseline	Fäuste, Machete, Speer, Pistole, Gewehr, Schrot, Sniper, Granate	§4.3
+Crafting	2 Rezepte: Bandage, Panzerplatte	§2, §4.4
 Map-Größe	256×256 m, ~200 m Land-Durchmesser	§5.1
 Chunks	32×32 m, 8×8 Grid, seed-basiert	§5.1, §9 M3
 Spawn-POIs	5 auf Ring 80 m, 72° Abstand; Loot-Floor 1 Melee + 1 Ranged + 2 Bandagen	§3, §5.3
@@ -179,7 +180,6 @@ Zonen-DoT-Kurve vs Rundenlänge	§12 offen	Startwerte 2/5/10 halten, Playtest ab
 Loot-Dichte bei N=5	§12 offen	3×N halten, in M5-Playtest prüfen	M4
 Care-Package-Waffenstärke	§12 offen	Start: Gewehr voll geladen, kein OHK	M4
 Munitions-Start & Drop-Raten pro Waffe	PRD schweigt	Tabelle vor Loot-Spawn definieren	M4
-Bogen-Pfeile aufsammeln (Modus)	§4.3 nur „aufsammelbar"	Interact-Hold am Boden	M4
 Fackel/Lampe als Item	§6.2 nur erwähnt	v1 weglassen, sofern Playtest es nicht fordert	M4
 Rematch-Flow (Seed neu?)	§9 M5 nennt nur „Rematch"	Neuer Seed, gleiche Lobby	M5
 Doppel-KO / geteilte Platzierung — Punktzuordnung	§6.4 undefiniert	Beide bekommen den höheren Platzwert	M5
@@ -260,10 +260,10 @@ Aufgaben:
  5 Spawn-POIs mit garantiertem Loot-Floor (1 Melee, 1 Ranged, 2 Bandagen)
  Walk-over-Pickup + Interact-Hold für Ressourcen
  Inventar (2 Waffen + 1 Wurf + Verbrauch), Waffen-Swap
- Alle Waffen: Fäuste, Machete, Speer, Bogen, Pistole, Gewehr, Schrot, Granate
- Projektil-System (Bogen, Granate) host-autoritativ
- Crafting-3-Rezepte
- Tag/Nacht-Zyklus: Directional-Light-Lerp + Skybox-Lerp + Fog-Distance-Lerp
+ Alle Waffen: Fäuste, Machete, Speer, Pistole, Gewehr, Schrot, Sniper, Granate
+ Projektil-System für Granaten host-autoritativ
+ Crafting mit Bandage und Panzerplatte
+ Durchgängige Tagesbeleuchtung mit stabiler Sichtweite
  Ping-on-loud: laute Waffen taggen Schützen 2 s auf Minimap
  Zone: Shader-Ring visuell, Shrink-Schedule (3 Stufen), DoT 2/5/10 HP/s
  Care-Package bei 5:00 mit markierter Legendärwaffe an Kartenmitte

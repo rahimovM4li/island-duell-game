@@ -46,7 +46,7 @@ describe('isInputMsg', () => {
 
 describe('isCraftMsg / isReadyMsg', () => {
   it('validates recipes', () => {
-    expect(isCraftMsg({ recipe: 'arrows' })).toBe(true);
+    expect(isCraftMsg({ recipe: 'arrows' })).toBe(false);
     expect(isCraftMsg({ recipe: 'bandage' })).toBe(true);
     expect(isCraftMsg({ recipe: 'plate' })).toBe(true);
     expect(isCraftMsg({ recipe: 'nuke' })).toBe(false);

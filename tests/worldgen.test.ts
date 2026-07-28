@@ -54,7 +54,7 @@ describe('spawn POIs (§5.3)', () => {
       expect(items).toHaveLength(4);
       const kinds = items.map((i) => i.item);
       expect(kinds.filter((k) => k === 'machete' || k === 'spear')).toHaveLength(1);
-      expect(kinds.filter((k) => k === 'pistol' || k === 'bow')).toHaveLength(1);
+      expect(kinds.filter((k) => k === 'pistol')).toHaveLength(1);
       expect(kinds.filter((k) => k === 'bandageItem')).toHaveLength(2);
       for (const gi of items) {
         expect(Math.hypot(gi.x - sp.x, gi.z - sp.z)).toBeLessThan(20);
@@ -91,6 +91,10 @@ describe('crates (§3, §5.2)', () => {
   });
 
   it('keeps care, crates and spawn loot clear of generated objects across many seeds', () => {
+    const failures: string[] = [];
+    const verify = (condition: boolean, message: string) => {
+      if (!condition && failures.length < 25) failures.push(message);
+    };
     const circleClearOfBox = (
       x: number, z: number, radius: number,
       box: { x: number; z: number; w: number; d: number; rotY: number },
@@ -106,8 +110,10 @@ describe('crates (§3, §5.2)', () => {
 
     for (let seed = 1; seed <= 1_000; seed++) {
       const gen = generateWorld(seed, 5);
-      expect(Math.hypot(gen.carePackagePos.x, gen.carePackagePos.z), `care seed ${seed}`)
-        .toBeGreaterThan(3);
+      verify(
+        Math.hypot(gen.carePackagePos.x, gen.carePackagePos.z) > 3,
+        `care package too close to centre at seed ${seed}`,
+      );
 
       const solidStructures = gen.pois.flatMap((poi) => poi.structures.filter((part) =>
           (part.yOffset ?? 0) + part.h / 2
@@ -120,50 +126,52 @@ describe('crates (§3, §5.2)', () => {
       ];
 
       for (const entry of loot) {
-        expect(
-          Math.hypot(entry.x, entry.z),
+        verify(
+          Math.hypot(entry.x, entry.z) >= entry.radius + 1.8,
           `${entry.label} overlaps central brazier at seed ${seed}`,
-        ).toBeGreaterThanOrEqual(entry.radius + 1.8);
-        expect(
+        );
+        verify(
           solidStructures.every((part) => circleClearOfBox(entry.x, entry.z, entry.radius, part)),
           `${entry.label} overlaps structure at seed ${seed}`,
-        ).toBe(true);
-        expect(
+        );
+        verify(
           gen.centralStructures.every((part) => part.shape === 'cylinder'
             ? Math.hypot(entry.x - part.x, entry.z - part.z) >= entry.radius + part.radius
             : circleClearOfBox(entry.x, entry.z, entry.radius, part)),
           `${entry.label} overlaps middle-island structure at seed ${seed}`,
-        ).toBe(true);
-        expect(
+        );
+        verify(
           gen.vegetation.every((plant) => {
             const plantRadius = plant.kind === 'bush' ? 0.95 * plant.scale : plant.colliderRadius;
             return Math.hypot(entry.x - plant.x, entry.z - plant.z) >= entry.radius + plantRadius;
           }),
           `${entry.label} overlaps vegetation at seed ${seed}`,
-        ).toBe(true);
-        expect(
+        );
+        verify(
           gen.decorations.every((detail) => {
             const detailRadius = (detail.kind === 'rubble' ? 0.48 : 0.42) * detail.scale;
             return Math.hypot(entry.x - detail.x, entry.z - detail.z)
               >= entry.radius + detailRadius;
           }),
           `${entry.label} overlaps decoration at seed ${seed}`,
-        ).toBe(true);
-        expect(
+        );
+        verify(
           gen.navigationLights.every((light) =>
             Math.hypot(entry.x - light.x, entry.z - light.z) >= entry.radius + 0.32),
           `${entry.label} overlaps navigation light at seed ${seed}`,
-        ).toBe(true);
+        );
       }
       for (let i = 0; i < loot.length; i++) {
         for (let j = i + 1; j < loot.length; j++) {
-          expect(
-            Math.hypot(loot[i].x - loot[j].x, loot[i].z - loot[j].z),
+          verify(
+            Math.hypot(loot[i].x - loot[j].x, loot[i].z - loot[j].z)
+              >= loot[i].radius + loot[j].radius,
             `${loot[i].label} overlaps ${loot[j].label} at seed ${seed}`,
-          ).toBeGreaterThanOrEqual(loot[i].radius + loot[j].radius);
+          );
         }
       }
     }
+    expect(failures).toEqual([]);
   });
 });
 

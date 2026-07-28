@@ -4,7 +4,7 @@ import type { BotDifficulty, ItemType, MatchMode, Recipe, ThrowKind, WeaponType 
 import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
 
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 // ---------- lobby ----------
 export interface JoinMsg { v: number; name: string; resumeToken?: string }
@@ -120,7 +120,7 @@ export interface SnapPlayer {
 }
 export interface SnapProjectile {
   id: number;
-  kind: 'arrow' | 'grenade' | 'smoke' | 'flash';
+  kind: 'grenade' | 'smoke' | 'flash';
   x: number; y: number; z: number;
   vx: number; vy: number; vz: number;
 }
@@ -171,7 +171,7 @@ export interface InventoryState {
   plates: number;
   shield: number;
   helmet: boolean;
-  ammo: { arrow: number; pistol: number; rifle: number; shell: number; sniper: number };
+  ammo: { pistol: number; rifle: number; shell: number; sniper: number };
   mats: { wood: number; stone: number; fiber: number };
   reloading: boolean;
 }
@@ -267,7 +267,7 @@ export function isStartMatchMsg(m: unknown): m is StartMatchMsg {
 
 export function isCraftMsg(m: unknown): m is { recipe: Recipe } {
   const x = m as { recipe: Recipe };
-  return !!x && (x.recipe === 'arrows' || x.recipe === 'bandage' || x.recipe === 'plate');
+  return !!x && (x.recipe === 'bandage' || x.recipe === 'plate');
 }
 
 export function isReadyMsg(m: unknown): m is { ready: boolean } {

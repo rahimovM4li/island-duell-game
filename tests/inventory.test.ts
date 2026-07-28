@@ -5,7 +5,7 @@ function emptyInventory(): WeaponInventory {
   return {
     primary: null,
     secondary: null,
-    ammo: { arrow: 0, pistol: 0, rifle: 0, shell: 0 },
+    ammo: { pistol: 0, rifle: 0, shell: 0, sniper: 0 },
   };
 }
 
@@ -32,9 +32,9 @@ describe('stateful weapon pickups', () => {
   it('does not grant ammo when both slots are occupied', () => {
     const inv = emptyInventory();
     equipWeapon(inv, 'machete');
-    equipWeapon(inv, 'bow');
-    const arrows = inv.ammo.arrow;
-    expect(equipWeapon(inv, 'bow')).toBe(false);
-    expect(inv.ammo.arrow).toBe(arrows);
+    equipWeapon(inv, 'rifle');
+    const rifleAmmo = inv.ammo.rifle;
+    expect(equipWeapon(inv, 'rifle')).toBe(false);
+    expect(inv.ammo.rifle).toBe(rifleAmmo);
   });
 });

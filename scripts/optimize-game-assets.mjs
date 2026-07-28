@@ -10,8 +10,8 @@ const files = [
   'middle-island.glb',
 ];
 const requiredRoots = {
-  'weapons.glb': ['weapon_fists', 'weapon_machete', 'weapon_spear', 'weapon_bow', 'weapon_pistol', 'weapon_rifle', 'weapon_shotgun', 'weapon_sniper', 'weapon_grenade', 'weapon_smoke', 'weapon_flash'],
-  'props.glb': ['prop_crate_common', 'prop_crate_good', 'prop_crate_top', 'prop_care', 'prop_bandage', 'prop_plate', 'prop_helmet', 'prop_arrow_bundle', 'prop_pistol_ammo', 'prop_rifle_ammo', 'prop_shell_ammo', 'prop_sniper_ammo', 'prop_projectile_arrow'],
+  'weapons.glb': ['weapon_fists', 'weapon_machete', 'weapon_spear', 'weapon_pistol', 'weapon_rifle', 'weapon_shotgun', 'weapon_sniper', 'weapon_grenade', 'weapon_smoke', 'weapon_flash'],
+  'props.glb': ['prop_crate_common', 'prop_crate_good', 'prop_crate_top', 'prop_care', 'prop_bandage', 'prop_plate', 'prop_helmet', 'prop_pistol_ammo', 'prop_rifle_ammo', 'prop_shell_ammo', 'prop_sniper_ammo'],
   'environment.glb': ['env_tree_pine', 'env_tree_broadleaf', 'env_tree_palm', 'env_rock_boulder', 'env_rock_slab', 'env_rock_cluster', 'env_bush', 'env_grass', 'env_stump', 'env_rock_chips', 'env_rubble', 'env_barrel', 'env_brazier', 'env_torch', 'env_spawn_marker', 'env_ruin_wall', 'env_ruin_cap'],
   'landmarks.glb': ['poi_wreck', 'poi_watchtower', 'poi_bunker'],
   'character.glb': ['player_survivor', 'player_body', 'player_head', 'player_helmet', 'player_gear', 'player_weapon_socket'],

@@ -3,7 +3,7 @@
 import type { Server, Socket } from 'socket.io';
 import { randomBytes } from 'node:crypto';
 import {
-  AMMO_CAP, AMMO_PICKUP, ARROWS_PER_CRAFT, BANDAGE_DURATION, BANDAGE_HEAL,
+  AMMO_CAP, AMMO_PICKUP, BANDAGE_DURATION, BANDAGE_HEAL,
   BANDAGE_USE_TIME, BOT_DIFFICULTIES, BOT_NAMES, BotDifficulty, CARE_PACKAGE_AT,
   FLASH_FUSE, FLASH_MAX_BLIND, FLASH_RADIUS,
   GRENADE_FUSE, GRENADE_RADIUS,
@@ -120,7 +120,7 @@ interface MatchPlayer {
 
 interface Projectile {
   id: number;
-  kind: 'arrow' | 'grenade' | 'smoke' | 'flash';
+  kind: 'grenade' | 'smoke' | 'flash';
   owner: string;
   pos: Vec3;
   vel: Vec3;
@@ -494,7 +494,7 @@ export class GameRoom {
       primary: null, secondary: null, active: 1,
       throwables: { frag: 0, smoke: 0, flash: 0 }, activeThrow: 'frag',
       bandages: 0, plates: 0, shield: 0, helmet: false,
-      ammo: { arrow: 0, pistol: 0, rifle: 0, shell: 0, sniper: 0 },
+      ammo: { pistol: 0, rifle: 0, shell: 0, sniper: 0 },
       mats: { wood: 0, stone: 0, fiber: 0 },
     };
   }
@@ -654,7 +654,7 @@ export class GameRoom {
     p.pitch = inp.pitch;
     p.aiming = inp.aim;
     p.lastSeq = inp.seq;
-    stepMovement(this.phys, p.id, p.move, inp);
+    stepMovement(this.phys, p.id, p.move, inp, this.activeWeapon(p).type);
 
     let interactState = p.prevInteract;
     let interactEdge = false;
@@ -809,18 +809,6 @@ export class GameRoom {
 
     // ranged weapons need ammo in the mag
     if (!slotState) return;
-    if (def.kind === 'projectile') { // bow: mag = nocked arrows, draws from arrow pool
-      if (p.inv.ammo.arrow <= 0) return;
-      p.inv.ammo.arrow -= 1;
-      p.stats.shotsFired += 1;
-      p.cooldownUntil = this.t + def.cooldown;
-      this.spawnProjectile('arrow', p);
-      this.pushInventory(p);
-      const o = this.eyePos(p), d = this.viewDir(p);
-      events.push({ type: 'shot', by: p.id, weapon: type, ox: o.x, oy: o.y, oz: o.z, dx: d.x, dy: d.y, dz: d.z, primary: true });
-      return;
-    }
-
     // hitscan
     if (slotState.mag <= 0) { this.tryReload(p); return; }
     slotState.mag -= 1;
@@ -910,13 +898,12 @@ export class GameRoom {
   private spawnProjectile(
     kind: Projectile['kind'], p: MatchPlayer, fuseOverride?: number,
   ): void {
-    const weapon: WeaponType = kind === 'arrow' ? 'bow'
-      : kind === 'smoke' ? 'smoke' : kind === 'flash' ? 'flash' : 'grenade';
+    const weapon: WeaponType = kind === 'smoke' ? 'smoke' : kind === 'flash' ? 'flash' : 'grenade';
     const def = WEAPONS[weapon];
     const dir = this.viewDir(p);
     const eye = this.eyePos(p);
     const speed = def.projectileSpeed ?? 20;
-    const lob = kind === 'arrow' ? 0 : 3; // thrown canisters get an arc
+    const lob = 3;
     const vel = { x: dir.x * speed, y: dir.y * speed + lob, z: dir.z * speed };
     const defaultFuse = kind === 'smoke' ? SMOKE_FUSE : kind === 'flash' ? FLASH_FUSE : GRENADE_FUSE;
     const id = this.projSeq++;
@@ -929,52 +916,30 @@ export class GameRoom {
 
   private updateProjectiles(dt: number, events: GameEvent[]): void {
     for (const pr of [...this.projectiles.values()]) {
-      if (pr.kind !== 'arrow' && this.t >= pr.fuseAt) {
+      if (this.t >= pr.fuseAt) {
         if (pr.kind === 'grenade') this.explode(pr, events);
         else if (pr.kind === 'smoke') this.popSmoke(pr, events);
         else this.popFlash(pr, events);
         this.projectiles.delete(pr.id);
         continue;
       }
-      const gravity = pr.kind === 'arrow' ? 9.8 : 18;
-      pr.vel.y -= gravity * dt;
+      pr.vel.y -= 18 * dt;
       const stepLen = Math.hypot(pr.vel.x, pr.vel.y, pr.vel.z) * dt;
       if (stepLen > 0.0001) {
         const dir = normalize(pr.vel);
         const graceOwner = this.t - pr.bornAt < 0.25 ? [pr.owner] : [];
         const hit = this.phys.raycast(pr.pos, dir, stepLen, graceOwner);
         if (hit) {
-          if (pr.kind === 'arrow') {
-            const target = hit.playerId ? this.players.get(hit.playerId) : null;
-            if (target?.alive) {
-              const owner = this.players.get(pr.owner);
-              const def = WEAPONS.bow;
-              const headshot = isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y, target.move.prone);
-              const dmg = headshot ? (def.headshotDamage ?? def.damage) : def.damage;
-              if (owner) this.applyDamage(target, owner, dmg, 'bow', 'weapon', events, headshot);
-            } else {
-              // arrows stick in the world and can be collected (§4.3)
-              this.addPickup('arrowBundle', hit.point.x, hit.point.z, { amount: 1 });
-            }
-            this.projectiles.delete(pr.id);
-            continue;
-          } else {
-            // grenade bounce
-            pr.pos = {
-              x: hit.point.x - dir.x * 0.05,
-              y: hit.point.y - dir.y * 0.05,
-              z: hit.point.z - dir.z * 0.05,
-            };
-            pr.vel = { x: pr.vel.x * 0.4, y: -pr.vel.y * 0.35, z: pr.vel.z * 0.4 };
-            if (Math.abs(pr.vel.y) < 1.2) pr.vel.y = 0;
-            continue;
-          }
+          pr.pos = {
+            x: hit.point.x - dir.x * 0.05,
+            y: hit.point.y - dir.y * 0.05,
+            z: hit.point.z - dir.z * 0.05,
+          };
+          pr.vel = { x: pr.vel.x * 0.4, y: -pr.vel.y * 0.35, z: pr.vel.z * 0.4 };
+          if (Math.abs(pr.vel.y) < 1.2) pr.vel.y = 0;
+          continue;
         }
         pr.pos.x += pr.vel.x * dt; pr.pos.y += pr.vel.y * dt; pr.pos.z += pr.vel.z * dt;
-      }
-      if (pr.kind === 'arrow' && this.t - pr.bornAt > 8) {
-        this.addPickup('arrowBundle', pr.pos.x, pr.pos.z, { amount: 1 });
-        this.projectiles.delete(pr.id);
       }
       if (pr.pos.y < -20) this.projectiles.delete(pr.id);
     }
@@ -1081,7 +1046,7 @@ export class GameRoom {
       });
     }
 
-    const accurateWeapon = WEAPONS[weapon].kind === 'hitscan' || WEAPONS[weapon].kind === 'projectile';
+    const accurateWeapon = WEAPONS[weapon].kind === 'hitscan';
     if (attacker && attacker.id !== target.id) {
       if (accurateWeapon) attacker.stats.hits += 1;
       if (headshot && accurateWeapon) attacker.stats.headshots += 1;
@@ -1227,7 +1192,6 @@ export class GameRoom {
       if (p.craftRecipe && this.t >= p.craftDoneAt) {
         const r = p.craftRecipe;
         p.craftRecipe = null;
-        if (r === 'arrows') p.inv.ammo.arrow = Math.min(AMMO_CAP.arrow, p.inv.ammo.arrow + ARROWS_PER_CRAFT);
         if (r === 'bandage') p.inv.bandages = Math.min(MAX_BANDAGES, p.inv.bandages + 1);
         if (r === 'plate') this.grantPlate(p.inv);
         events.push({ type: 'craft', by: p.id, recipe: r, ok: true });
@@ -1431,11 +1395,6 @@ export class GameRoom {
         inv.helmet = true;
         break;
       }
-      case 'arrowBundle': {
-        if (inv.ammo.arrow >= AMMO_CAP.arrow) return;
-        inv.ammo.arrow = Math.min(AMMO_CAP.arrow, inv.ammo.arrow + (pk.amount ?? AMMO_PICKUP.arrow));
-        break;
-      }
       case 'pistolAmmo': {
         if (inv.ammo.pistol >= AMMO_CAP.pistol) return;
         inv.ammo.pistol = Math.min(AMMO_CAP.pistol, inv.ammo.pistol + (pk.amount ?? AMMO_PICKUP.pistol));
@@ -1492,11 +1451,11 @@ export class GameRoom {
       }
       if (rng() < 0.5) drops.push('bandageItem');
     } else if (tier === 'good') {
-      drops.push(pick(rng, ['pistol', 'bow', 'grenade'] as ItemType[]));
-      drops.push(pick(rng, ['pistolAmmo', 'arrowBundle', 'bandageItem', 'smokeGrenade', 'flashGrenade'] as ItemType[]));
+      drops.push(pick(rng, ['pistol', 'pistol', 'grenade'] as ItemType[]));
+      drops.push(pick(rng, ['pistolAmmo', 'pistolAmmo', 'bandageItem', 'smokeGrenade', 'flashGrenade'] as ItemType[]));
     } else {
       drops.push(pick(rng, ['machete', 'spear', 'pistol', 'bandageItem'] as ItemType[]));
-      if (rng() < 0.6) drops.push(pick(rng, ['pistolAmmo', 'arrowBundle'] as ItemType[]));
+      if (rng() < 0.6) drops.push('pistolAmmo');
     }
     drops.forEach((item, i) => {
       const a = rng() * Math.PI * 2 + i;
@@ -1520,7 +1479,6 @@ export class GameRoom {
     for (let i = 0; i < p.inv.bandages; i++) drop('bandageItem');
     for (let i = 0; i < p.inv.plates; i++) drop('plateItem');
     if (p.inv.helmet) drop('helmetItem');
-    if (p.inv.ammo.arrow > 0) drop('arrowBundle', { amount: p.inv.ammo.arrow });
     if (p.inv.ammo.pistol > 0) drop('pistolAmmo', { amount: p.inv.ammo.pistol });
     if (p.inv.ammo.rifle > 0) drop('rifleAmmo', { amount: p.inv.ammo.rifle });
     if (p.inv.ammo.shell > 0) drop('shellAmmo', { amount: p.inv.ammo.shell });
@@ -1688,7 +1646,7 @@ export class GameRoom {
   private pickBotLoot(p: MatchPlayer, zoneRadius: number): { id: string; x: number; z: number } | null {
     const inv = p.inv;
     const ammoItemFor: Partial<Record<ItemType, AmmoType>> = {
-      arrowBundle: 'arrow', pistolAmmo: 'pistol', rifleAmmo: 'rifle',
+      pistolAmmo: 'pistol', rifleAmmo: 'rifle',
       shellAmmo: 'shell', sniperAmmo: 'sniper',
     };
     const usesAmmo = (ammo: AmmoType): boolean =>

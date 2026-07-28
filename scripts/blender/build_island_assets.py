@@ -370,23 +370,36 @@ def build_weapons(collection):
             p.append(beveled_box(r, collection, (.045, .09, .055), (x + finger, y + .08, .015), T["skin"], bevel=.012))
     finish_mesh(r, p, "visual")
 
-    # Machete: the blade rises in local +Z so a first-person camera sees its
-    # broad face. The old +Y layout pointed directly away from the camera and
-    # reduced the whole weapon to a tiny handle and blade edge.
+    # Classic jungle machete: one broad, single-edged curved blade without the
+    # old spear-like tip and decorative bolts. The face remains camera-readable.
     r = weapon_base(collection, "machete"); p = [
-        beveled_box(r, collection, (.19, .06, .66), (0, .02, .39), T["steel"], (0, -.10, 0), bevel=.018),
-        cone(r, collection, .135, .27, (-.078, .02, .82), T["steel"], (0, 0, 0), 4),
-        box(r, collection, (.02, .018, .53), (.07, .057, .42), T["gun"], (0, -.10, 0)),
-        beveled_box(r, collection, (.31, .14, .07), (0, 0, .025), T["brass"], bevel=.02),
-        cylinder(r, collection, .06, .32, (0, 0, -.18), T["leather"], vertices=10, radius_top=.05),
-        cylinder(r, collection, .074, .055, (0, 0, -.36), T["brass"], vertices=8),
+        polygon_prism(
+            r, collection,
+            [(-.10,.06), (.08,.06), (.105,.34), (.14,.65), (.125,.82),
+             (.045,.96), (-.105,.91), (-.15,.72), (-.13,.34)],
+            .072, (0, .02, 0), T["steel"],
+        ),
+        # Dark blunt spine separates the silhouette from the sharpened edge.
+        polygon_prism(
+            r, collection,
+            [(.055,.08), (.082,.34), (.112,.64), (.102,.79), (.06,.86),
+             (.035,.82), (.065,.62), (.042,.32)],
+            .078, (0, .02, 0), T["gun"],
+        ),
+        polygon_prism(
+            r, collection,
+            [(-.105,.10), (-.08,.12), (-.105,.42), (-.125,.69),
+             (-.095,.86), (-.108,.89), (-.14,.71), (-.12,.35)],
+            .076, (0, .02, 0), T["white"],
+        ),
+        beveled_box(r, collection, (.25, .13, .065), (0, 0, .025), T["brass"], bevel=.018),
+        cylinder(r, collection, .06, .34, (0, 0, -.18), T["leather"], vertices=10, radius_top=.052),
+        cylinder(r, collection, .072, .05, (0, 0, -.375), T["gun"], vertices=8),
+        torus(r, collection, .042, .009, (0, 0, -.405), T["dark"],
+              major_segments=12, minor_segments=4),
     ]
     for z in (-.07, -.14, -.21, -.28):
         p.append(torus(r, collection, .052, .009, (0, 0, z), T["grip"], major_segments=8, minor_segments=3))
-    for z in (.20, .34, .48):
-        p.append(beveled_box(r, collection, (.055, .073, .035), (-.09, .02, z), T["dark"], (0, -.1, 0), bevel=.008))
-    for z in (.11, .57):
-        p.append(cylinder(r, collection, .024, .075, (.035, .02, z), T["brass"], (math.pi / 2, 0, 0), 8))
     finish_mesh(r, p, "visual")
 
     r = weapon_base(collection, "spear"); p = [
@@ -397,25 +410,6 @@ def build_weapons(collection):
     ]
     for y in (.82, .9, .98):
         p.append(torus(r, collection, .044, .008, (0, y, 0), T["leather"], (math.pi / 2, 0, 0), 8, 3))
-    finish_mesh(r, p, "visual")
-
-    # Recurve bow with reinforced grip, string, arrow, fletching and metal tip.
-    r = weapon_base(collection, "bow"); p = []
-    arc = [(-.01, 0, -.59), (-.17, 0, -.49), (-.27, 0, -.22), (-.29, 0, 0),
-           (-.27, 0, .22), (-.17, 0, .49), (-.01, 0, .59)]
-    for a, b in zip(arc, arc[1:]):
-        p.append(segment(r, collection, a, b, .045, T["wood"], 8))
-    p += [
-        segment(r, collection, arc[0], (-.15, 0, 0), .012, T["white"], 5),
-        segment(r, collection, (-.15, 0, 0), arc[-1], .012, T["white"], 5),
-        beveled_box(r, collection, (.09, .11, .28), (-.27, 0, 0), T["leather"], bevel=.018),
-        cylinder(r, collection, .024, 1.16, (-.15, .54, 0), T["wood"], (-math.pi / 2, 0, 0), 7),
-        cone(r, collection, .065, .18, (-.15, 1.18, 0), T["steel"], (-math.pi / 2, 0, 0), 6),
-        triangular_prism(r, collection, [(-.065, 0), (.065, 0), (0, .19)], .024, (-.15, .06, .085), T["signal"], (math.pi / 2, 0, 0)),
-        triangular_prism(r, collection, [(-.055, 0), (.055, 0), (0, .17)], .024, (-.15, .075, -.08), T["hazard"], (math.pi / 2, 0, math.pi)),
-    ]
-    for z in (-.09, 0, .09):
-        p.append(torus(r, collection, .047, .009, (-.27, 0, z), T["brass"], major_segments=8, minor_segments=3))
     finish_mesh(r, p, "visual")
 
     # Service-pistol silhouette: long rectangular slide, flared magazine well,
@@ -613,15 +607,6 @@ def build_props(collection):
         segment(r, collection, (-.2,.08,.25), (-.15,.12,.04), .018, T["grip"], 5),
         segment(r, collection, (.2,.08,.25), (.15,.12,.04), .018, T["grip"], 5),
     ]; finish_mesh(r, p, "visual")
-    r = root(collection, "prop_arrow_bundle"); p = []
-    for x in (-.09, 0, .09):
-        p += [cylinder(r, collection, .025, .9, (x, 0, .45), T["rope"], vertices=5),
-              cone(r, collection, .055, .14, (x, 0, .97), T["steel"], vertices=5),
-              triangular_prism(r, collection, [(-.045,0),(.045,0),(0,.14)], .025, (x, 0, .05), T["signal"])]
-    p += [box(r, collection, (.34, .13, .09), (0, 0, .25), T["wood"]),
-          torus(r, collection, .13, .018, (0, 0, .42), T["leather"], major_segments=10, minor_segments=3)]
-    finish_mesh(r, p, "visual")
-
     for name, tile, shells in (("pistol_ammo", T["crate_good"], False), ("rifle_ammo", T["purple"], False),
                                ("shell_ammo", T["orange"], True), ("sniper_ammo", T["teal"], False)):
         r = root(collection, f"prop_{name}"); p = [
@@ -635,11 +620,6 @@ def build_props(collection):
             p.append(cylinder(r, collection, .032 if not shells else .042, .16, (x, 0, .43), T["brass"], vertices=8))
             p.append(cone(r, collection, .032 if not shells else .042, .07, (x, 0, .545), tile, vertices=8))
         finish_mesh(r, p, "visual")
-    r = root(collection, "prop_projectile_arrow"); p = [
-        cylinder(r, collection, .02, .72, (0, .36, 0), T["rope"], (-math.pi / 2, 0, 0), 5),
-        cone(r, collection, .05, .13, (0, .79, 0), T["steel"], (-math.pi / 2, 0, 0), 5),
-    ]; finish_mesh(r, p, "visual")
-
 
 def build_environment(collection):
     def lod_asset(name, build0, build1=None):
@@ -831,6 +811,9 @@ def build_landmarks(collection):
     p += [beveled_box(r, collection, (1.55, 5.6, .45), (-2.025, 0, 5.265), T["wood"], bevel=.06),
           beveled_box(r, collection, (1.55, 5.6, .45), (2.025, 0, 5.265), T["wood"], bevel=.06),
           beveled_box(r, collection, (2.5, 2.3, .45), (0, 1.65, 5.265), T["wood"], bevel=.06),
+          # Short landing closes the visible/physical gap without sealing the
+          # stairwell below it.
+          beveled_box(r, collection, (1.8, .78, .45), (0, .14, 5.265), T["wood"], bevel=.045),
           # Dark hatch rim makes the stair opening readable from below.
           beveled_box(r, collection, (2.45,.12,.14), (0,.44,5.48), T["dark"], bevel=.025)]
     # Structural X-bracing visibly explains why the tower stands.
@@ -867,6 +850,7 @@ def build_landmarks(collection):
     q = [box(r, collection, (1.55, 5.6, .45), (-2.025, 0, 5.265), T["wood"]),
          box(r, collection, (1.55, 5.6, .45), (2.025, 0, 5.265), T["wood"]),
          box(r, collection, (2.5, 2.3, .45), (0, 1.65, 5.265), T["wood"]),
+         box(r, collection, (1.8, .78, .45), (0, .14, 5.265), T["wood"]),
          beveled_box(r, collection, (6.4, 6.4, .32), (0, 0, 7.48), T["gun"], bevel=.05)]
     for x in (-2.1, 2.1):
         for y in (-2.1, 2.1): q.append(cylinder(r, collection, .23, 5.5, (x, y, 2.75), T["wood"], vertices=6))
@@ -889,7 +873,8 @@ def build_landmarks(collection):
         (0, ramp_center_y, (ramp_start_z + ramp_end_z) / 2),
         (1.8, ramp_thickness, ramp_length), pitch=ramp_pitch, walk_surface=True,
     ))
-    cols += [collider(r, collection, "tower_deck_left", (-2.025, 5.265, 0), (1.55, .45, 5.6)),
+    cols += [collider(r, collection, "tower_stair_landing", (0, 5.265, -.14), (1.8, .45, .78)),
+             collider(r, collection, "tower_deck_left", (-2.025, 5.265, 0), (1.55, .45, 5.6)),
              collider(r, collection, "tower_deck_right", (2.025, 5.265, 0), (1.55, .45, 5.6)),
              collider(r, collection, "tower_deck_back", (0, 5.265, -1.65), (2.5, .45, 2.3)),
              # Thin gameplay planes follow the two visible rope railings. They
@@ -991,13 +976,22 @@ def build_character(collection):
     # later procedural gait/aim animation without paying for a skeletal rig.
     for side, sign in (("l", -1), ("r", 1)):
         arm_pivot = limb_pivot(f"player_arm_{side}_pivot", (sign*.39, 0, 1.39))
-        arm_parts = [
+        upper_arm_parts = [
             segment(arm_pivot, collection, (0,0,0), (sign*.015,.055,-.31), .10, T["gun"], 9),
-            segment(arm_pivot, collection, (sign*.015,.055,-.31), (sign*.035,.17,-.59), .085, T["skin"], 9),
-            ico(arm_pivot, collection, .09, (sign*.035,.18,-.64), T["grip"], (1,.9,.85), 1),
             ico(arm_pivot, collection, .135, (0,0,-.02), T["plate"], (1,.9,.7), 1),
         ]
-        finish_mesh(arm_pivot, arm_parts, f"player_arm_{side}")
+        finish_mesh(arm_pivot, upper_arm_parts, f"player_upper_arm_{side}")
+        forearm_pivot = bpy.data.objects.new(f"player_forearm_{side}_pivot", None)
+        collection.objects.link(forearm_pivot)
+        forearm_pivot.parent = arm_pivot
+        forearm_pivot.location = (sign*.015, .055, -.31)
+        forearm_pivot.empty_display_type = "SPHERE"
+        forearm_pivot.empty_display_size = .055
+        forearm_parts = [
+            segment(forearm_pivot, collection, (0,0,0), (sign*.02,.115,-.28), .085, T["skin"], 9),
+            ico(forearm_pivot, collection, .09, (sign*.02,.125,-.33), T["grip"], (1,.9,.85), 1),
+        ]
+        finish_mesh(forearm_pivot, forearm_parts, f"player_forearm_{side}")
 
         leg_pivot = limb_pivot(f"player_leg_{side}_pivot", (sign*.18, 0, .74))
         leg_parts = [

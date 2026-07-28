@@ -5,13 +5,13 @@ import type { WeaponType } from '@shared/constants';
 import type { PoiKind } from '@shared/worldgen';
 
 const WEAPON_NAMES = [
-  'fists', 'machete', 'spear', 'bow', 'pistol', 'rifle', 'shotgun', 'sniper',
+  'fists', 'machete', 'spear', 'pistol', 'rifle', 'shotgun', 'sniper',
   'grenade', 'smoke', 'flash',
 ] as const satisfies readonly WeaponType[];
 const LANDMARK_NAMES = ['wreck', 'watchtower', 'bunker'] as const satisfies readonly PoiKind[];
 const PROP_NAMES = [
-  'crate_common', 'crate_good', 'crate_top', 'care', 'bandage', 'plate', 'helmet', 'arrow_bundle',
-  'pistol_ammo', 'rifle_ammo', 'shell_ammo', 'sniper_ammo', 'projectile_arrow',
+  'crate_common', 'crate_good', 'crate_top', 'care', 'bandage', 'plate', 'helmet',
+  'pistol_ammo', 'rifle_ammo', 'shell_ammo', 'sniper_ammo',
 ] as const;
 const ENVIRONMENT_NAMES = [
   'tree_pine', 'tree_broadleaf', 'tree_palm',
@@ -19,7 +19,7 @@ const ENVIRONMENT_NAMES = [
   'bush', 'grass', 'stump', 'rock_chips', 'rubble', 'barrel',
   'brazier', 'torch', 'spawn_marker', 'ruin_wall', 'ruin_cap',
 ] as const;
-const ASSET_REVISION = '2026-07-28-helmet-shield-v1';
+const ASSET_REVISION = '2026-07-28-prone-machete-v2';
 
 type AssetWeapon = (typeof WEAPON_NAMES)[number];
 type AssetLandmark = (typeof LANDMARK_NAMES)[number];
@@ -34,6 +34,8 @@ export interface CharacterAsset {
   weaponSocket: THREE.Group;
   armLeft: THREE.Object3D;
   armRight: THREE.Object3D;
+  forearmLeft: THREE.Object3D;
+  forearmRight: THREE.Object3D;
   legLeft: THREE.Object3D;
   legRight: THREE.Object3D;
 }
@@ -285,10 +287,12 @@ class GameAssetLibrary {
     const weaponSocket = group.getObjectByName('player_weapon_socket') as THREE.Group | undefined;
     const armLeft = group.getObjectByName('player_arm_l_pivot');
     const armRight = group.getObjectByName('player_arm_r_pivot');
+    const forearmLeft = group.getObjectByName('player_forearm_l_pivot');
+    const forearmRight = group.getObjectByName('player_forearm_r_pivot');
     const legLeft = group.getObjectByName('player_leg_l_pivot');
     const legRight = group.getObjectByName('player_leg_r_pivot');
     if (!body?.isMesh || !head?.isMesh || !helmet?.isMesh || !weaponSocket
-      || !armLeft || !armRight || !legLeft || !legRight) return null;
+      || !armLeft || !armRight || !forearmLeft || !forearmRight || !legLeft || !legRight) return null;
     const lod1 = findSemanticChild(group, 'visual_lod1');
     if (lod1) lod1.visible = false;
     group.traverse((object) => {
@@ -300,7 +304,10 @@ class GameAssetLibrary {
     });
     helmet.visible = false;
     group.userData.compactAsset = true;
-    return { group, body, head, helmet, weaponSocket, armLeft, armRight, legLeft, legRight };
+    return {
+      group, body, head, helmet, weaponSocket,
+      armLeft, armRight, forearmLeft, forearmRight, legLeft, legRight,
+    };
   }
 }
 

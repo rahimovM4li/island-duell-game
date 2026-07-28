@@ -29,6 +29,7 @@ import { FREECAM_FAST_SPEED, FREECAM_SPEED, updateFreecam } from './spectator';
 import { AdaptiveResolution } from './performance';
 import { gameAssets } from './game-assets';
 import { adjustSniperScopeFov, DEFAULT_SNIPER_SCOPE_FOV } from './sniper';
+import { nextWeaponSlot } from './weapon-navigation';
 import {
   computeVictoryCameraPose, REDUCED_MOTION_VICTORY_SECONDS, VICTORY_CINEMATIC_SECONDS,
   type VictoryCameraPose, type VictorySubject,
@@ -967,7 +968,7 @@ function reconcile(self: SnapPlayer): void {
     replayPreviousX = move.pos.x;
     replayPreviousY = move.pos.y;
     replayPreviousZ = move.pos.z;
-    stepMovement(phys, myId, move, inp);
+    stepMovement(phys, myId, move, inp, myWeapon);
   }
 
   const err = Math.hypot(beforeX - move.pos.x, beforeY - move.pos.y, beforeZ - move.pos.z);
@@ -1018,7 +1019,7 @@ function incomingDamageAngle(attackerId: string | null): number | null {
 function playPickupSound(item: GameEvent & { type: 'pickupRemove' }): void {
   if (item.item === 'bandageItem') sfx.play('pickupHeal');
   else if (item.item === 'plateItem' || item.item === 'helmetItem') sfx.play('pickupArmor');
-  else if (item.item === 'arrowBundle' || item.item === 'pistolAmmo'
+  else if (item.item === 'pistolAmmo'
     || item.item === 'rifleAmmo' || item.item === 'shellAmmo' || item.item === 'grenade') sfx.play('pickupAmmo');
   else if (item.item in WEAPONS) sfx.play('pickupWeapon');
   else sfx.play('pickup');
@@ -1029,7 +1030,7 @@ function onEvent(e: GameEvent): void {
     case 'shot': {
       const d = e.by === myId ? 0 : distToMe(e.ox, e.oy, e.oz);
       const w = e.weapon;
-      const sound = w === 'bow' ? 'bow' : w === 'shotgun' ? 'shotgun' : w === 'rifle' ? 'rifle' : 'pistol';
+      const sound = w === 'shotgun' ? 'shotgun' : w === 'rifle' ? 'rifle' : w === 'sniper' ? 'sniper' : 'pistol';
       if (e.by === myId) sfx.play(sound, d);
       else playSpatial(sound, e.ox, e.oy, e.oz);
       if (WEAPONS[w].kind === 'hitscan' && e.hx !== undefined && e.hy !== undefined && e.hz !== undefined) {
@@ -1171,7 +1172,7 @@ function onEvent(e: GameEvent): void {
       break;
     case 'craft':
       if (e.by === myId) {
-        if (e.ok) { sfx.play('craft'); hud.announce(`Hergestellt: ${e.recipe === 'arrows' ? 'Pfeile' : e.recipe === 'bandage' ? 'Verband' : 'Panzerplatte'}`, 1400); }
+        if (e.ok) { sfx.play('craft'); hud.announce(`Hergestellt: ${e.recipe === 'bandage' ? 'Verband' : 'Panzerplatte'}`, 1400); }
         else hud.announce(e.reason ?? 'Nicht genug Material', 1400);
       }
       break;
@@ -1273,7 +1274,7 @@ function frame(): void {
 
   const t = lastSnap ? snapClock.t + (now - snapClock.at) / 1000 : 0;
 
-  const aimable = myWeapon === 'bow' || myWeapon === 'pistol'
+  const aimable = myWeapon === 'pistol'
     || myWeapon === 'rifle' || myWeapon === 'shotgun' || myWeapon === 'sniper';
   const aiming = roundRunning && alive && input.aim && aimable && !wasReloading;
   if (aiming) onboarding.signal('aim');
@@ -1283,8 +1284,12 @@ function frame(): void {
   // ---- sniper scope: hard zoom + overlay + breathing sway (§F1) ----
   const scoped = aiming && myWeapon === 'sniper';
   input.setSniperScoped(scoped);
-  const zoomWheel = input.consumeSniperZoomWheel();
-  if (scoped && zoomWheel !== 0) sniperScopeFov = adjustSniperScopeFov(sniperScopeFov, zoomWheel);
+  const wheelDelta = input.consumeWheelDelta();
+  if (scoped && wheelDelta !== 0) {
+    sniperScopeFov = adjustSniperScopeFov(sniperScopeFov, wheelDelta);
+  } else if (wheelDelta !== 0 && lastInv) {
+    input.slotPressed = nextWeaponSlot(lastInv, wheelDelta);
+  }
   entities.setViewVisible(alive && !scoped && !victoryCinematic);
   const holdingBreath = scoped && input.sprint && breath > 0;
   if (scoped) {
@@ -1316,7 +1321,7 @@ function frame(): void {
   }
   fireFovKick = Math.max(0, fireFovKick - dt * 8.5);
   crosshairBloom = Math.max(0, crosshairBloom - dt * 9.5);
-  const crosshairBase = aiming ? 2.4 : myWeapon === 'shotgun' ? 9 : myWeapon === 'bow' ? 4 : 5;
+  const crosshairBase = aiming ? 2.4 : myWeapon === 'shotgun' ? 9 : 5;
   hud.setCrosshairSpread(crosshairBase + Math.hypot(move.velX, move.velZ) * (aiming ? 0.18 : 0.55) + crosshairBloom);
 
   // --- input → predict → send ---
@@ -1358,7 +1363,7 @@ function frame(): void {
       }
       if (input.reloadPressed) inp.reload = true;
       previousMovePos.set(move.pos.x, move.pos.y, move.pos.z);
-      stepMovement(phys, myId, move, inp);
+      stepMovement(phys, myId, move, inp, myWeapon);
       pending.push(inp);
       net.sendInput(inp);
       phys.step(inputStep);

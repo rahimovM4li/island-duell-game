@@ -3,6 +3,30 @@ import * as THREE from 'three';
 import { Entities } from '../client/src/entities';
 
 describe('remote elimination presentation', () => {
+  it('poses a scoped sniper flat on the stomach with centered rifle and supported arms', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    const entities = new Entities(scene, camera, 3);
+    entities.ensurePlayer('sniper', 0);
+    const rig = scene.children.find((child) => child.type === 'Group')!;
+    const weapon = rig.getObjectByName('player_weapon_socket')!;
+    const armLeft = rig.getObjectByName('player_arm_l_pivot')!;
+    const armRight = rig.getObjectByName('player_arm_r_pivot')!;
+
+    entities.updatePlayer(
+      'sniper', 0, 0, 0, 0, 0, true, 'sniper', false, true, true, false,
+    );
+    entities.update(1, 1);
+
+    expect(rig.rotation.x).toBeCloseTo(-Math.PI / 2, 1);
+    expect(rig.position.y).toBeGreaterThan(0.15);
+    expect(rig.position.y).toBeLessThan(0.4);
+    expect(weapon.position.x).toBeCloseTo(0, 2);
+    expect(armLeft.rotation.x).toBeGreaterThan(2);
+    expect(armRight.rotation.x).toBeGreaterThan(2);
+    entities.dispose();
+  });
+
   it('shows the helmet only while the remote player has one equipped', () => {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera();

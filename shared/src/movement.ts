@@ -1,8 +1,10 @@
 // Shared kinematic movement (§4.1): identical on host (authority) and client
 // (prediction), so reconciliation errors stay tiny on LAN.
 import {
-  AIM_SPEED, AIR_ACCEL, GRAVITY, GROUND_ACCEL, GROUND_DECEL, JUMP_SPEED, PRONE_SPEED,
-  SNEAK_SPEED, SPRINT_SPEED, SPRINT_STAMINA_MAX, SPRINT_STAMINA_REGEN, WALK_SPEED, type WeaponType,
+  AIM_SPEED, AIR_ACCEL, GRAVITY, GROUND_ACCEL, GROUND_DECEL, JUMP_SPEED,
+  PRONE_AIM_SPEED, PRONE_SPEED,
+  SNEAK_SPEED, SPRINT_SPEED, SPRINT_STAMINA_MAX, SPRINT_STAMINA_REGEN, WALK_SPEED,
+  WEAPON_MOVE_MULTIPLIER, type WeaponType,
 } from './constants';
 import type { GamePhysics, Vec3 } from './physics';
 import type { InputMsg } from './protocol';
@@ -36,8 +38,28 @@ export function stanceForWeapon(weapon: WeaponType, controlHeld: boolean): { sne
     : { sneak: true, prone: false };
 }
 
+export function movementSpeedFor(
+  weapon: WeaponType,
+  prone: boolean,
+  sneaking: boolean,
+  aiming: boolean,
+  sprinting: boolean,
+): number {
+  if (prone) return aiming ? PRONE_AIM_SPEED : PRONE_SPEED;
+  if (sneaking) return SNEAK_SPEED;
+  if (aiming) return AIM_SPEED;
+  const base = sprinting ? SPRINT_SPEED : WALK_SPEED;
+  return base * (WEAPON_MOVE_MULTIPLIER[weapon] ?? 1);
+}
+
 /** Apply one input to a movement state via the physics character controller. */
-export function stepMovement(phys: GamePhysics, id: string, st: MoveState, inp: InputMsg): void {
+export function stepMovement(
+  phys: GamePhysics,
+  id: string,
+  st: MoveState,
+  inp: InputMsg,
+  weapon: WeaponType = 'fists',
+): void {
   const dt = clamp(inp.dt, 0.001, MAX_INPUT_DT);
 
   let mx = clamp(inp.mx, -1, 1);
@@ -54,7 +76,7 @@ export function stepMovement(phys: GamePhysics, id: string, st: MoveState, inp: 
   st.stamina = wantSprint
     ? Math.max(0, st.stamina - dt)
     : Math.min(SPRINT_STAMINA_MAX, st.stamina + SPRINT_STAMINA_REGEN * dt);
-  const speed = st.prone ? PRONE_SPEED : st.sneaking ? SNEAK_SPEED : inp.aim ? AIM_SPEED : wantSprint ? SPRINT_SPEED : WALK_SPEED;
+  const speed = movementSpeedFor(weapon, st.prone, st.sneaking, inp.aim, wantSprint);
 
   // yaw convention: yaw = 0 looks toward −Z (three.js)
   const sin = Math.sin(inp.yaw), cos = Math.cos(inp.yaw);

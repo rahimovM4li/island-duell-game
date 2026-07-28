@@ -51,7 +51,7 @@ describe('recognisable weapon GLB silhouettes', () => {
     expect(triangles.get('weapon_sniper_visual_mesh')).toBeGreaterThanOrEqual(980);
   });
 
-  it('keeps machete and bow detailed enough to remain readable in first person', () => {
+  it('keeps the redesigned machete detailed enough to remain readable in first person', () => {
     const buffer = readFileSync(path.resolve('client/public/assets/weapons.glb'));
     const jsonLength = buffer.readUInt32LE(12);
     const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLength)) as {
@@ -66,7 +66,7 @@ describe('recognisable weapon GLB silhouettes', () => {
       }, 0);
     };
     expect(triangleCount('weapon_machete_visual_mesh')).toBeGreaterThanOrEqual(420);
-    expect(triangleCount('weapon_bow_visual_mesh')).toBeGreaterThanOrEqual(360);
+    expect(triangleCount('weapon_bow_visual_mesh')).toBe(0);
   });
 });
 
@@ -121,6 +121,19 @@ describe('watchtower GLB silhouette', () => {
     // triangles). Three deck sections retain the authored hatch silhouette.
     expect(triangles).toBeGreaterThanOrEqual(150);
   });
+
+  it('has a solid top landing between the last stair tread and the deck', () => {
+    const manifest = JSON.parse(readFileSync(
+      path.resolve('shared/src/landmark-colliders.json'),
+      'utf8',
+    )) as {
+      landmarks?: { watchtower?: { colliders?: Array<{ name?: string; size?: number[] }> } };
+    };
+    const landing = manifest.landmarks?.watchtower?.colliders?.find((entry) =>
+      entry.name === 'tower_stair_landing');
+    expect(landing?.size?.[0]).toBeGreaterThanOrEqual(1.8);
+    expect(landing?.size?.[2]).toBeGreaterThanOrEqual(0.75);
+  });
 });
 
 describe('helmet GLB assets', () => {
@@ -136,5 +149,7 @@ describe('helmet GLB assets', () => {
 
     expect(readNodes('props.glb')).toContain('prop_helmet');
     expect(readNodes('character.glb')).toContain('player_helmet');
+    expect(readNodes('character.glb')).toContain('player_forearm_l_pivot');
+    expect(readNodes('character.glb')).toContain('player_forearm_r_pivot');
   });
 });

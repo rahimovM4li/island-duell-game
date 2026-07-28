@@ -3,7 +3,7 @@
 import { deriveSeed, mulberry32, type Rng } from '@shared/rng';
 
 export type SfxName =
-  | 'pistol' | 'rifle' | 'shotgun' | 'sniper' | 'bow' | 'melee' | 'explosion'
+  | 'pistol' | 'rifle' | 'shotgun' | 'sniper' | 'melee' | 'explosion'
   | 'smokePop' | 'flashBang' | 'grenadeBeep'
   | 'hit' | 'headshot' | 'hurt' | 'pickup' | 'pickupWeapon' | 'pickupAmmo'
   | 'pickupHeal' | 'pickupArmor' | 'reload' | 'heal' | 'craft' | 'zone' | 'click' | 'care'
@@ -110,7 +110,6 @@ export class Sfx {
       case 'smokePop': noise(0.35, hz(600), 0.4 * level, 0.7); tone(hz(180), 0.28, 0.14 * level, 'sine', -70); break;
       case 'flashBang': noise(0.1, hz(5200), 1.1 * level, 1.4); tone(hz(2900), 0.7, 0.4 * level, 'sine', 60); break;
       case 'grenadeBeep': tone(hz(1350), 0.05, 0.22 * level, 'square'); break;
-      case 'bow': noise(0.07, hz(900), 0.3 * level); tone(hz(220), 0.1, 0.15 * level, 'triangle', 120); break;
       case 'melee': noise(0.06, hz(700), 0.4 * level); break;
       case 'explosion': noise(0.7, hz(700), 1.2 * level, 0.6); tone(hz(55), 0.5, 0.6 * level, 'square', -25); break;
       case 'hit': tone(hz(1100), 0.06, 0.3 * level, 'square'); break;
