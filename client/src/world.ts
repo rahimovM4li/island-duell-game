@@ -8,6 +8,7 @@ import {
 import { sampleHeight, RUINS_FLOOR_HEIGHT } from '@shared/terrain';
 import { fogAt, timeOfDayAt, type LightingPreset } from '@shared/timeline';
 import { bushAt, MIDDLE_ISLAND_ROOT_Y, type WorldGen } from '@shared/worldgen';
+import { auditWorld, type WorldAuditReport } from '@shared/world-audit';
 import { deriveSeed, mulberry32 } from '@shared/rng';
 import { gameAssets, isSharedAssetResource } from './game-assets';
 
@@ -98,8 +99,11 @@ export class World {
   private lightingPreset: LightingPreset | null = null;
   private nightTorches = new THREE.Group();
   private torchLights: THREE.PointLight[] = [];
+  private colliderDebug: THREE.Group | null = null;
+  private readonly auditReport: WorldAuditReport;
 
   constructor(readonly gen: WorldGen) {
+    this.auditReport = auditWorld(gen);
     this.fog = new THREE.Fog(DAY_FOGC.clone(), 10, 120);
     this.scene.fog = this.fog;
     this.scene.background = DAY_SKY.clone();
@@ -882,9 +886,113 @@ export class World {
     this.zoneTargetMesh.visible = zoneTarget < zoneRadius - 0.5;
   }
 
+  private buildColliderDebug(): THREE.Group {
+    const root = new THREE.Group();
+    root.name = 'collision-debug';
+    root.renderOrder = 999;
+    root.userData.audit = this.auditReport;
+    const obstacleBoxes: Array<{
+      x: number; y: number; z: number; w: number; h: number; d: number; yaw: number; pitch: number;
+    }> = [];
+    const walkBoxes: typeof obstacleBoxes = [];
+    const cylinders: Array<{ x: number; y: number; z: number; radius: number; h: number }> = [];
+
+    for (const part of this.gen.centralStructures) {
+      if (part.shape === 'cylinder') {
+        cylinders.push({ x: part.x, y: part.y, z: part.z, radius: part.radius, h: part.h });
+      } else {
+        (part.walkSurface ? walkBoxes : obstacleBoxes).push({
+          x: part.x, y: part.y, z: part.z,
+          w: part.w, h: part.h, d: part.d, yaw: part.rotY, pitch: part.rotX,
+        });
+      }
+    }
+    for (const poi of this.gen.pois) {
+      const baseY = sampleHeight(this.gen.params, poi.x, poi.z);
+      for (const part of poi.structures) {
+        if (!part.collider) continue;
+        (part.walkSurface ? walkBoxes : obstacleBoxes).push({
+          x: part.x,
+          y: baseY + (part.yOffset ?? 0) + part.h / 2,
+          z: part.z,
+          w: part.w,
+          h: part.h,
+          d: part.d,
+          yaw: part.rotY,
+          pitch: part.rotX ?? 0,
+        });
+      }
+    }
+    for (const plant of this.gen.vegetation) {
+      if (plant.colliderRadius <= 0) continue;
+      const h = plant.kind === 'tree' ? 5 * plant.scale : 1.6 * plant.scale;
+      cylinders.push({
+        x: plant.x, y: plant.y + h / 2, z: plant.z,
+        radius: plant.colliderRadius, h,
+      });
+    }
+
+    const makeMaterial = (color: number): THREE.MeshBasicMaterial =>
+      new THREE.MeshBasicMaterial({
+        color, wireframe: true, transparent: true, opacity: 0.58,
+        depthTest: false, depthWrite: false, toneMapped: false,
+      });
+    const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const cylinderGeometry = new THREE.CylinderGeometry(1, 1, 1, 10, 1);
+    const dummy = new THREE.Object3D();
+    const addBoxes = (entries: typeof obstacleBoxes, color: number, name: string) => {
+      if (entries.length === 0) return;
+      const mesh = new THREE.InstancedMesh(boxGeometry, makeMaterial(color), entries.length);
+      mesh.name = name;
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 999;
+      entries.forEach((entry, index) => {
+        dummy.position.set(entry.x, entry.y, entry.z);
+        dummy.rotation.set(entry.pitch, entry.yaw, 0, 'YXZ');
+        dummy.scale.set(entry.w, entry.h, entry.d);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(index, dummy.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      root.add(mesh);
+    };
+    addBoxes(obstacleBoxes, 0xffa34f, 'debug-solid-boxes');
+    addBoxes(walkBoxes, 0x52e7ff, 'debug-walk-surfaces');
+    if (cylinders.length > 0) {
+      const mesh = new THREE.InstancedMesh(cylinderGeometry, makeMaterial(0x71ef83), cylinders.length);
+      mesh.name = 'debug-solid-cylinders';
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 999;
+      cylinders.forEach((entry, index) => {
+        dummy.position.set(entry.x, entry.y, entry.z);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(entry.radius, entry.h, entry.radius);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(index, dummy.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      root.add(mesh);
+    }
+    root.visible = false;
+    this.scene.add(root);
+    return root;
+  }
+
+  setColliderDebugVisible(visible: boolean): void {
+    if (!visible && !this.colliderDebug) return;
+    this.colliderDebug ??= this.buildColliderDebug();
+    this.colliderDebug.visible = visible;
+  }
+
+  worldAudit(): WorldAuditReport {
+    return this.auditReport;
+  }
+
   stats(): {
     nightTorches: { count: number; lights: number; visible: boolean };
     middleIsland: { authored: boolean; fallback: boolean };
+    colliderDebug: { visible: boolean; meshes: number };
+    audit: { errors: number; warnings: number; walkSurfaces: number };
   } {
     return {
       nightTorches: {
@@ -895,6 +1003,15 @@ export class World {
       middleIsland: {
         authored: this.scene.getObjectByName('middle-island') !== undefined,
         fallback: this.scene.getObjectByName('middle-island-fallback') !== undefined,
+      },
+      colliderDebug: {
+        visible: this.colliderDebug?.visible ?? false,
+        meshes: this.colliderDebug?.children.length ?? 0,
+      },
+      audit: {
+        errors: this.auditReport.errors,
+        warnings: this.auditReport.warnings,
+        walkSurfaces: this.auditReport.walkSurfaces,
       },
     };
   }

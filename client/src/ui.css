@@ -111,9 +111,28 @@ button.secondary:hover:not(:disabled) { background: #31505e; }
   padding: 4px 9px; border-radius: 999px; background: rgba(4, 10, 13, .68);
   color: rgba(232, 242, 239, .82); font-size: 11px; font-weight: 700; letter-spacing: .04em;
 }
-#hitmarker { font-size: 26px; font-weight: 900; text-shadow: 0 1px 3px #000; }
+#hitmarker {
+  font-size: 26px; font-weight: 900; color: #f4f7f8; text-shadow: 0 1px 3px #000;
+  transition: opacity 90ms ease-out, color 80ms linear, transform 90ms ease-out;
+}
+#hitmarker::after {
+  content: attr(data-label);
+  position: absolute; left: 50%; top: 29px; transform: translateX(-50%);
+  min-width: 150px; color: currentColor; font-size: 9px; line-height: 1;
+  font-weight: 900; letter-spacing: .12em; text-shadow: 0 1px 3px #000;
+}
+#hitmarker.head { color: #ffd76b; transform: translate(-50%, -50%) scale(1.08); }
+#hitmarker.armor { color: #83ddec; }
+#hitmarker.shield-break { color: #7ff1ff; transform: translate(-50%, -50%) scale(1.16); }
+#hitmarker.helmet-block { color: #ffb768; transform: translate(-50%, -50%) scale(1.18); }
 
-#damage-flash { transition: opacity 220ms ease-out; }
+#damage-flash {
+  background: radial-gradient(circle, transparent 48%, rgba(225, 45, 58, .62) 100%);
+  transition: opacity 220ms ease-out;
+}
+#damage-flash.headshot {
+  background: radial-gradient(circle, transparent 42%, rgba(255, 49, 59, .8) 100%);
+}
 #damage-direction {
   position: absolute;
   left: 50%;
@@ -176,6 +195,10 @@ button.secondary:hover:not(:disabled) { background: #31505e; }
   width: 100%; height: 100%; transform: scaleX(0); transform-origin: left;
   background: linear-gradient(90deg, #4aa9bd, #8ee3ed);
   transition: transform 140ms ease-out;
+}
+#damage-direction.armor::before {
+  background: #70d7e8;
+  filter: drop-shadow(0 0 5px rgba(67, 184, 207, .85));
 }
 #stamina-wrap { margin-top: 5px; background: #18313a; }
 #stamina-bar { background: var(--stamina); transition: transform 100ms linear; }
@@ -242,7 +265,6 @@ button.secondary:hover:not(:disabled) { background: #31505e; }
   pointer-events: none;
 }
 #equipment-notice.danger { color: #ffe3c2; border-left-color: #ff9f43; }
-#hitmarker.blocked { color: #8ee3ed; text-shadow: 0 0 10px #43b8cf; }
 #elimination-confirm {
   position: absolute; left: 50%; top: 34%; display: flex; flex-direction: column; align-items: center;
   min-width: 260px; padding: 12px 20px; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent);

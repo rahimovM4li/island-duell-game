@@ -72,6 +72,7 @@ export interface CentralCylinderStructure {
 export type CentralStructure = CentralBoxStructure | CentralCylinderStructure;
 
 export interface PoiStructure extends RuinWall {
+  name: string;
   material: 'wood' | 'metal' | 'stone';
   collider: boolean;
   yOffset?: number;
@@ -85,6 +86,7 @@ export interface LandmarkPoi {
   x: number;
   z: number;
   risk: 'medium' | 'high';
+  rootYaw: number;
   structures: PoiStructure[];
 }
 
@@ -101,6 +103,7 @@ export interface WorldDecoration {
 }
 
 interface LocalBoxCollider {
+  name: string;
   center: [number, number, number];
   size: [number, number, number];
   yaw: number;
@@ -178,6 +181,7 @@ function landmarkStructures(
     const [lx, cy, lz] = collider.center;
     const [w, h, d] = collider.size;
     return {
+      name: collider.name,
       x: x + c * lx + s * lz,
       z: z - s * lx + c * lz,
       w, h, d,
@@ -310,14 +314,17 @@ export function generateWorld(seed: number, n: number): WorldGen {
   const pois: LandmarkPoi[] = [
     {
       id: 'wreck', name: 'Strandwrack', x: wreck.x, z: wreck.z, risk: 'high',
+      rootYaw: wreckRot,
       structures: landmarkStructures('wreck', wreck.x, wreck.z, wreckRot),
     },
     {
       id: 'watchtower', name: 'Aussichtsposten', x: plateau.x, z: plateau.z, risk: 'high',
+      rootYaw: watchtowerRot,
       structures: landmarkStructures('watchtower', plateau.x, plateau.z, watchtowerRot),
     },
     {
       id: 'bunker', name: 'Waldbunker', x: bunker.x, z: bunker.z, risk: 'medium',
+      rootYaw: bunkerRot,
       structures: landmarkStructures('bunker', bunker.x, bunker.z, bunkerRot),
     },
   ];

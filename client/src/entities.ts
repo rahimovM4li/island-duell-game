@@ -4,6 +4,12 @@ import * as THREE from 'three';
 import { WEAPONS, type WeaponType } from '@shared/constants';
 import type { PickupInfo, SmokeSnap, SnapProjectile } from '@shared/protocol';
 import { deriveSeed, mulberry32, type Rng } from '@shared/rng';
+import {
+  CharacterAnimationStateMachine,
+  selectCharacterAction,
+  type CharacterAction,
+  type LocomotionState,
+} from './character-animation';
 import { gameAssets, isSharedAssetResource } from './game-assets';
 
 const PLAYER_COLORS = [0xe5484d, 0x3d9df2, 0x46c46e, 0xd8b43a, 0xb26ee0];
@@ -32,11 +38,19 @@ interface PlayerRig {
   weaponBasePosition: THREE.Vector3;
   lookPitch: number;
   currentWeapon: WeaponType | null;
-  crouchTarget: number;
-  crouchBlend: number;
-  proneTarget: number;
-  proneBlend: number;
+  animation: CharacterAnimationStateMachine;
+  locomotion: LocomotionState;
+  action: CharacterAction;
+  speed: number;
+  grounded: boolean;
+  sprinting: boolean;
+  sneaking: boolean;
+  prone: boolean;
+  reloading: boolean;
   aiming: boolean;
+  fireT: number;
+  meleeT: number;
+  hitT: number;
   flashT: number;
   bodyBaseEmissive: THREE.Color;
   headBaseEmissive: THREE.Color;
@@ -53,11 +67,9 @@ interface PlayerRig {
 }
 
 const DEATH_ANIMATION_DURATION = 1.35;
-const PRONE_ROOT_ROTATION = -Math.PI / 2;
-const PRONE_ROOT_HEIGHT = 0.36;
-const PRONE_ARM_FORWARD = 2.3;
-const PRONE_FOREARM_BEND = 0.7;
-const PRONE_HEAD_LIFT = 0.34;
+const FIRE_ACTION_DURATION = 0.14;
+const MELEE_ACTION_DURATION = 0.42;
+const HIT_ACTION_DURATION = 0.22;
 
 interface ItemVisual {
   label: string;
@@ -518,11 +530,17 @@ export class Entities {
         weaponBasePosition: compact.weaponSocket.position.clone(),
         lookPitch: 0,
         currentWeapon: null,
-        crouchTarget: 0,
-        crouchBlend: 0,
-        proneTarget: 0,
-        proneBlend: 0,
+        animation: new CharacterAnimationStateMachine(),
+        locomotion: 'idle',
+        action: 'none',
+        speed: 0,
+        grounded: true,
+        sprinting: false,
+        sneaking: false,
+        prone: false,
+        reloading: false,
         aiming: false,
+        fireT: 0, meleeT: 0, hitT: 0,
         flashT: 0,
         bodyBaseEmissive: bodyMaterial.emissive.clone(),
         headBaseEmissive: headMaterial.emissive.clone(),
@@ -595,7 +613,9 @@ export class Entities {
       legLeftBase: leftLeg.rotation.clone(), legRightBase: rightLeg.rotation.clone(),
       headBase: head.rotation.clone(),
       weaponBasePosition: weapon.position.clone(), lookPitch: 0,
-      crouchTarget: 0, crouchBlend: 0, proneTarget: 0, proneBlend: 0, aiming: false,
+      animation: new CharacterAnimationStateMachine(), locomotion: 'idle', action: 'none',
+      speed: 0, grounded: true, sprinting: false, sneaking: false, prone: false,
+      reloading: false, aiming: false, fireT: 0, meleeT: 0, hitT: 0,
       flashT: 0,
       bodyBaseEmissive: (body.material as THREE.MeshLambertMaterial).emissive.clone(),
       headBaseEmissive: (head.material as THREE.MeshLambertMaterial).emissive.clone(),
@@ -743,6 +763,7 @@ export class Entities {
     id: string, x: number, y: number, z: number, yaw: number, pitch: number,
     alive: boolean, weapon: WeaponType, sneaking: boolean, prone: boolean, aiming: boolean,
     helmetEquipped = false,
+    motion: { speed?: number; grounded?: boolean; sprinting?: boolean; reloading?: boolean } = {},
   ): void {
     const rig = this.players.get(id);
     if (!rig) return;
@@ -756,14 +777,19 @@ export class Entities {
       rig.group.rotation.x = 0;
       rig.group.rotation.z = 0;
       rig.group.scale.set(1, 1, 1);
+      rig.animation.reset();
     }
     rig.alive = effectiveAlive;
     rig.group.visible = effectiveAlive || (rig.deathT >= 0 && rig.deathT < DEATH_ANIMATION_DURATION);
     rig.group.position.set(x, y, z);
     rig.baseY = y;
     rig.group.rotation.y = yaw;
-    rig.crouchTarget = sneaking ? 1 : 0;
-    rig.proneTarget = prone ? 1 : 0;
+    rig.speed = Math.max(0, motion.speed ?? rig.speed);
+    rig.grounded = motion.grounded ?? rig.grounded;
+    rig.sprinting = motion.sprinting ?? false;
+    rig.sneaking = sneaking;
+    rig.prone = prone;
+    rig.reloading = motion.reloading ?? false;
     rig.aiming = aiming;
     rig.lookPitch = pitch;
     rig.helmet.visible = effectiveAlive && helmetEquipped;
@@ -792,7 +818,20 @@ export class Entities {
 
   flashPlayer(id: string, headshot: boolean): void {
     const rig = this.players.get(id);
-    if (rig) rig.flashT = headshot ? 0.16 : 0.11;
+    if (rig) {
+      rig.flashT = headshot ? 0.16 : 0.11;
+      rig.hitT = HIT_ACTION_DURATION;
+    }
+  }
+
+  triggerPlayerFire(id: string): void {
+    const rig = this.players.get(id);
+    if (rig) rig.fireT = FIRE_ACTION_DURATION;
+  }
+
+  triggerPlayerMelee(id: string): void {
+    const rig = this.players.get(id);
+    if (rig) rig.meleeT = MELEE_ACTION_DURATION;
   }
 
   breakHelmet(id: string): void {
@@ -823,6 +862,38 @@ export class Entities {
           Math.sin(angle) * 1.25,
         ),
         spin: 7 + i,
+      });
+    }
+  }
+
+  breakShield(id: string): void {
+    const rig = this.players.get(id);
+    if (!rig) return;
+    const origin = rig.group.position.clone();
+    origin.y += 1.05;
+    for (let i = 0; i < 8; i++) {
+      const shard = new THREE.Mesh(
+        new THREE.BoxGeometry(0.045, 0.16, 0.09),
+        new THREE.MeshBasicMaterial({
+          color: i % 2 === 0 ? 0x70d7e8 : 0xcaf8ff,
+          transparent: true,
+          opacity: 0.86,
+          depthWrite: false,
+        }),
+      );
+      const angle = (i / 8) * Math.PI * 2;
+      shard.position.copy(origin);
+      this.scene.add(shard);
+      this.fx.push({
+        obj: shard,
+        life: 0.52,
+        maxLife: 0.52,
+        velocity: new THREE.Vector3(
+          Math.cos(angle) * 1.7,
+          0.75 + (i % 3) * 0.24,
+          Math.sin(angle) * 1.7,
+        ),
+        spin: 9 + i,
       });
     }
   }
@@ -1154,9 +1225,6 @@ export class Entities {
       }
     }
     for (const rig of this.players.values()) {
-      const ease = 1 - Math.exp(-dt * 12);
-      rig.crouchBlend += (rig.crouchTarget - rig.crouchBlend) * ease;
-      rig.proneBlend += (rig.proneTarget - rig.proneBlend) * ease;
       if (rig.celebrating) {
         rig.celebrationT += dt;
         const weight = rig.celebrationWeight;
@@ -1190,51 +1258,80 @@ export class Entities {
         rig.weapon.visible = rig.deathT < 0.28 && rig.currentWeapon !== 'fists';
         if (rig.deathT >= DEATH_ANIMATION_DURATION) rig.group.visible = false;
       } else {
-        const crouchScale = THREE.MathUtils.lerp(1, 0.68, rig.crouchBlend);
-        rig.group.scale.y = THREE.MathUtils.lerp(crouchScale, 1, rig.proneBlend);
-        rig.group.rotation.x = PRONE_ROOT_ROTATION * rig.proneBlend;
-        rig.group.position.y = rig.baseY + PRONE_ROOT_HEIGHT * rig.proneBlend;
-        rig.armLeft.rotation.x = THREE.MathUtils.lerp(
-          rig.armLeftBase.x,
-          rig.armLeftBase.x + PRONE_ARM_FORWARD,
-          rig.proneBlend,
+        const frame = rig.animation.update({
+          speed: rig.speed,
+          grounded: rig.grounded,
+          sprinting: rig.sprinting,
+          sneaking: rig.sneaking,
+          prone: rig.prone,
+          aiming: rig.aiming,
+          reloading: rig.reloading,
+        }, dt);
+        rig.locomotion = frame.locomotion;
+        rig.fireT = Math.max(0, rig.fireT - dt);
+        rig.meleeT = Math.max(0, rig.meleeT - dt);
+        rig.hitT = Math.max(0, rig.hitT - dt);
+        rig.action = selectCharacterAction(
+          { aiming: rig.aiming, reloading: rig.reloading },
+          { fire: rig.fireT > 0, melee: rig.meleeT > 0, hit: rig.hitT > 0 },
         );
-        rig.armRight.rotation.x = THREE.MathUtils.lerp(
-          rig.armRightBase.x,
-          rig.armRightBase.x + PRONE_ARM_FORWARD,
-          rig.proneBlend,
-        );
-        // Pull both elbows inward so the hands meet the centred rifle instead
-        // of leaving the arms stretched beside the torso.
-        rig.armLeft.rotation.z = THREE.MathUtils.lerp(rig.armLeftBase.z, -0.62, rig.proneBlend);
-        rig.armRight.rotation.z = THREE.MathUtils.lerp(rig.armRightBase.z, 0.62, rig.proneBlend);
+
+        const pose = frame.pose;
+        let actionRootRoll = 0;
+        let actionArmLeftX = 0;
+        let actionArmRightX = 0;
+        let actionWeaponPitch = 0;
+        let actionWeaponRoll = 0;
+        if (rig.action === 'hit') {
+          const phase = 1 - rig.hitT / HIT_ACTION_DURATION;
+          actionRootRoll = Math.sin(phase * Math.PI) * rig.deathSide * 0.095;
+          actionArmLeftX = -Math.sin(phase * Math.PI) * 0.16;
+        } else if (rig.action === 'melee') {
+          const phase = 1 - rig.meleeT / MELEE_ACTION_DURATION;
+          const strike = Math.sin(phase * Math.PI);
+          actionArmRightX = strike * 1.15;
+          actionWeaponPitch = strike * 0.62;
+          actionWeaponRoll = -strike * 0.36;
+        } else if (rig.action === 'fire') {
+          const phase = rig.fireT / FIRE_ACTION_DURATION;
+          actionWeaponPitch = -Math.sin(phase * Math.PI) * 0.16;
+          actionArmLeftX = -Math.sin(phase * Math.PI) * 0.08;
+          actionArmRightX = -Math.sin(phase * Math.PI) * 0.1;
+        } else if (rig.action === 'reload') {
+          const reloadWave = Math.sin(time * 8.5);
+          actionArmLeftX = 0.3 + reloadWave * 0.12;
+          actionArmRightX = -0.18 - reloadWave * 0.08;
+          actionWeaponPitch = 0.28;
+          actionWeaponRoll = -0.35 + reloadWave * 0.08;
+        } else if (rig.action === 'aim' && !rig.prone) {
+          actionArmLeftX = 0.28;
+          actionArmRightX = 0.34;
+        }
+
+        rig.group.scale.set(1, pose.rootScaleY, 1);
+        rig.group.rotation.x = pose.rootPitch;
+        rig.group.rotation.z = pose.rootRoll + actionRootRoll;
+        rig.group.position.y = rig.baseY + pose.rootHeight;
+        rig.armLeft.rotation.x = rig.armLeftBase.x + pose.armLeftX + actionArmLeftX;
+        rig.armRight.rotation.x = rig.armRightBase.x + pose.armRightX + actionArmRightX;
+        rig.armLeft.rotation.z = rig.armLeftBase.z + pose.armLeftZ;
+        rig.armRight.rotation.z = rig.armRightBase.z + pose.armRightZ;
         if (rig.forearmLeft && rig.forearmLeftBase) {
-          rig.forearmLeft.rotation.x = THREE.MathUtils.lerp(
-            rig.forearmLeftBase.x,
-            rig.forearmLeftBase.x + PRONE_FOREARM_BEND,
-            rig.proneBlend,
-          );
+          rig.forearmLeft.rotation.x = rig.forearmLeftBase.x + pose.forearmLeftX;
         }
         if (rig.forearmRight && rig.forearmRightBase) {
-          rig.forearmRight.rotation.x = THREE.MathUtils.lerp(
-            rig.forearmRightBase.x,
-            rig.forearmRightBase.x + PRONE_FOREARM_BEND,
-            rig.proneBlend,
-          );
+          rig.forearmRight.rotation.x = rig.forearmRightBase.x + pose.forearmRightX;
         }
-        rig.legLeft.rotation.x = THREE.MathUtils.lerp(rig.legLeftBase.x, 0.12, rig.proneBlend);
-        rig.legRight.rotation.x = THREE.MathUtils.lerp(rig.legRightBase.x, 0.08, rig.proneBlend);
-        rig.legLeft.rotation.z = THREE.MathUtils.lerp(rig.legLeftBase.z, -0.08, rig.proneBlend);
-        rig.legRight.rotation.z = THREE.MathUtils.lerp(rig.legRightBase.z, 0.08, rig.proneBlend);
-        const headPitch = rig.headBase.x - rig.lookPitch * 0.8 + PRONE_HEAD_LIFT * rig.proneBlend;
+        rig.legLeft.rotation.x = rig.legLeftBase.x + pose.legLeftX;
+        rig.legRight.rotation.x = rig.legRightBase.x + pose.legRightX;
+        rig.legLeft.rotation.z = rig.legLeftBase.z + pose.legLeftZ;
+        rig.legRight.rotation.z = rig.legRightBase.z + pose.legRightZ;
+        const headPitch = rig.headBase.x - rig.lookPitch * 0.8 + pose.headLift;
         rig.head.rotation.x = headPitch;
         rig.helmet.rotation.x = headPitch;
-        rig.weapon.position.x = THREE.MathUtils.lerp(
-          rig.weaponBasePosition.x,
-          0,
-          rig.proneBlend,
-        );
-        rig.weapon.rotation.x = -rig.lookPitch + Math.PI / 2 * rig.proneBlend;
+        rig.weapon.position.x = THREE.MathUtils.lerp(rig.weaponBasePosition.x, 0, pose.weaponCenter);
+        rig.weapon.rotation.x = -rig.lookPitch + Math.PI / 2 * pose.weaponCenter + actionWeaponPitch;
+        rig.weapon.rotation.z = actionWeaponRoll;
       }
       rig.weapon.position.y = THREE.MathUtils.lerp(
         rig.weaponBasePosition.y,

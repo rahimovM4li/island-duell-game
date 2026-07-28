@@ -1051,7 +1051,13 @@ export class GameRoom {
       if (accurateWeapon) attacker.stats.hits += 1;
       if (headshot && accurateWeapon) attacker.stats.headshots += 1;
       this.sendTo(attacker.id, [{
-        type: 'hitmarker', target: target.id, headshot, blocked: armor.helmetBroke,
+        type: 'hitmarker',
+        target: target.id,
+        headshot,
+        blocked: armor.helmetBroke,
+        armor: armor.shieldAbsorbed > 0,
+        shieldBreak: armor.shieldAbsorbed > 0 && armor.shield === 0,
+        damage: armor.helmetBroke ? 0 : armor.hpDamage,
       }]);
     }
 
@@ -1697,6 +1703,7 @@ export class GameRoom {
       sneaking: p.move.sneaking,
       prone: p.move.prone,
       aiming: p.aiming,
+      reloading: p.reloadUntil > this.t,
       bandaging: p.healRemaining > 0,
       plates: p.inv.plates,
       shield: p.inv.shield,

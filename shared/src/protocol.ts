@@ -4,7 +4,7 @@ import type { BotDifficulty, ItemType, MatchMode, Recipe, ThrowKind, WeaponType 
 import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
 
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 // ---------- lobby ----------
 export interface JoinMsg { v: number; name: string; resumeToken?: string }
@@ -102,6 +102,7 @@ export interface SnapPlayer {
   sneaking: boolean;
   prone: boolean;
   aiming: boolean;
+  reloading: boolean;
   bandaging: boolean;
   plates: number;
   shield: number;
@@ -192,7 +193,15 @@ export type GameEvent =
   | { type: 'inventory'; inv: InventoryState }                    // owner only
   | { type: 'craft'; by: string; recipe: Recipe; ok: boolean; reason?: string }
   | { type: 'heal'; target: string; amount: number; hp: number }
-  | { type: 'hitmarker'; target: string; headshot: boolean; blocked?: boolean } // shooter only
+  | {
+      type: 'hitmarker';
+      target: string;
+      headshot: boolean;
+      blocked?: boolean;
+      armor?: boolean;
+      shieldBreak?: boolean;
+      damage?: number;
+    } // shooter only
   | { type: 'care'; state: 'incoming' | 'landed' | 'taken'; x: number; z: number; by?: string }
   | { type: 'zoneStep'; tier: number; targetRadius: number; dot: number }
   | { type: 'smoke'; state: 'pop'; id: number; x: number; y: number; z: number; radius: number }

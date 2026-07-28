@@ -9,6 +9,7 @@ import type {
   CareSnap, CombatStats, InventoryState, PingSnap, PlacementEntry, ZoneSnap,
 } from '@shared/protocol';
 import type { LandmarkPoi, SpawnPoi } from '@shared/worldgen';
+import type { HitFeedback } from './combat-feedback';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -144,10 +145,11 @@ export class Hud {
     this.announceTimer = setTimeout(() => { el.style.opacity = '0'; }, ms);
   }
 
-  hitmarker(headshot: boolean, blocked = false): void {
+  hitmarker(feedback: HitFeedback): void {
     const el = $('hitmarker');
-    el.classList.toggle('head', headshot);
-    el.classList.toggle('blocked', blocked);
+    el.className = feedback.kind;
+    el.textContent = '\u2715';
+    el.dataset.label = feedback.label;
     el.style.opacity = '1';
     setTimeout(() => { el.style.opacity = '0'; }, 130);
   }
@@ -185,10 +187,11 @@ export class Hud {
     );
   }
 
-  damageFlash(): void {
+  damageFlash(amount = 20, headshot = false): void {
     const el = $('damage-flash');
-    el.style.opacity = '1';
-    setTimeout(() => { el.style.opacity = '0'; }, 120);
+    el.classList.toggle('headshot', headshot);
+    el.style.opacity = `${Math.min(1, 0.38 + Math.max(0, amount) / 70)}`;
+    setTimeout(() => { el.style.opacity = '0'; }, headshot ? 180 : 120);
   }
 
   /** A short, local confirmation pulse when the player successfully loots. */
@@ -207,9 +210,10 @@ export class Hud {
     }
   }
 
-  damageDirection(angle: number | null): void {
+  damageDirection(angle: number | null, armor = false): void {
     if (angle === null) return;
     const el = $('damage-direction');
+    el.classList.toggle('armor', armor);
     el.style.setProperty('--damage-angle', `${angle}rad`);
     el.style.opacity = '1';
     if (this.damageDirectionTimer) clearTimeout(this.damageDirectionTimer);

@@ -30,6 +30,10 @@ import { AdaptiveResolution } from './performance';
 import { gameAssets } from './game-assets';
 import { adjustSniperScopeFov, DEFAULT_SNIPER_SCOPE_FOV } from './sniper';
 import { nextWeaponSlot } from './weapon-navigation';
+import { classifyHitFeedback } from './combat-feedback';
+import {
+  footstepCue, footstepIntensity, footstepSurfaceAt, type FootstepStance,
+} from './surface-audio';
 import {
   computeVictoryCameraPose, REDUCED_MOTION_VICTORY_SECONDS, VICTORY_CINEMATIC_SECONDS,
   type VictoryCameraPose, type VictorySubject,
@@ -308,10 +312,9 @@ function rumble(duration: number, strong = 0.5, weak = 0.25): void {
   }
 }
 
-function footstepSound(x: number, z: number): SfxName {
-  if (Math.hypot(x, z) < 19) return 'stepStone';
-  if (gen && sampleHeight(gen.params, x, z) < 2.15) return 'stepSand';
-  return 'stepGrass';
+function footstepSound(x: number, y: number, z: number, stance: FootstepStance): SfxName {
+  const surface = gen ? footstepSurfaceAt(gen, x, y, z) : 'grass';
+  return footstepCue(surface, stance);
 }
 
 function spatialPan(x: number, z: number): number {
@@ -320,8 +323,38 @@ function spatialPan(x: number, z: number): number {
   return Math.max(-1, Math.min(1, (dx * Math.cos(input.yaw) - dz * Math.sin(input.yaw)) / d));
 }
 
-function playSpatial(name: SfxName, x: number, y: number, z: number, intensity = 1): void {
-  sfx.play(name, distToMe(x, y, z), intensity, spatialPan(x, z));
+function spatialOccluded(x: number, y: number, z: number): boolean {
+  if (!phys) return false;
+  const listener = new THREE.Vector3();
+  camera.getWorldPosition(listener);
+  const dx = x - listener.x, dy = y - listener.y, dz = z - listener.z;
+  const distance = Math.hypot(dx, dy, dz);
+  if (distance < 3.5) return false;
+  const maxDist = distance - 0.35;
+  const hit = phys.raycast(
+    { x: listener.x, y: listener.y, z: listener.z },
+    { x: dx / distance, y: dy / distance, z: dz / distance },
+    maxDist,
+    lastSnap?.players.map((player) => player.id),
+  );
+  return hit !== null && hit.dist < maxDist;
+}
+
+function playSpatial(
+  name: SfxName,
+  x: number,
+  y: number,
+  z: number,
+  intensity = 1,
+  soft = false,
+): void {
+  sfx.play(
+    name,
+    distToMe(x, y, z),
+    intensity,
+    spatialPan(x, z),
+    { occluded: spatialOccluded(x, y, z), soft },
+  );
 }
 
 function updateLocalFootsteps(dt: number): void {
@@ -332,20 +365,32 @@ function updateLocalFootsteps(dt: number): void {
   const stride = move.prone ? 1.4 : move.sprinting ? 2.05 : move.sneaking ? 1.65 : 1.8;
   if (localFootstepDistance < stride) return;
   localFootstepDistance %= stride;
-  sfx.play(footstepSound(move.pos.x, move.pos.z), 0, move.prone ? 0.06 : move.sneaking ? 0.16 : move.sprinting ? 0.9 : 0.55);
+  const stance: FootstepStance = move.prone ? 'prone' : move.sneaking ? 'sneak' : 'normal';
+  sfx.play(
+    footstepSound(move.pos.x, move.pos.y, move.pos.z, stance),
+    0,
+    footstepIntensity(stance, move.sprinting, false),
+    0,
+    { soft: move.sneaking },
+  );
   const bush = gen ? bushAt(gen, move.pos.x, move.pos.z) : null;
   if (bush?.id !== localBushId) { localBushId = bush?.id ?? null; localBushDistance = 0; }
   if (bush) {
     localBushDistance += stride;
     if (localBushDistance >= 1.15) {
       localBushDistance = 0;
-      sfx.play('bushRustle', 0, move.prone ? 0.07 : move.sneaking ? 0.12 : move.sprinting ? 0.9 : 0.5);
+      sfx.play(
+        'bushRustle', 0,
+        move.prone ? 0.07 : move.sneaking ? 0.12 : move.sprinting ? 0.9 : 0.5,
+        0,
+        { soft: move.sneaking },
+      );
     }
   }
 }
 
 function updateRemoteFootsteps(
-  id: string, x: number, z: number,
+  id: string, x: number, y: number, z: number,
   state: { alive: boolean; grounded: boolean; sneaking: boolean; prone: boolean; sprinting: boolean },
 ): void {
   const previous = remoteFootsteps.get(id);
@@ -358,14 +403,24 @@ function updateRemoteFootsteps(
   const stride = state.prone ? 1.4 : state.sprinting ? 2.05 : state.sneaking ? 1.65 : 1.8;
   if (previous.distance < stride) return;
   previous.distance %= stride;
-  playSpatial(footstepSound(x, z), x, move.pos.y, z, state.prone ? 0.05 : state.sneaking ? 0.13 : state.sprinting ? 0.82 : 0.48);
+  const stance: FootstepStance = state.prone ? 'prone' : state.sneaking ? 'sneak' : 'normal';
+  playSpatial(
+    footstepSound(x, y, z, stance),
+    x, y, z,
+    footstepIntensity(stance, state.sprinting, true),
+    state.sneaking,
+  );
   const bush = gen ? bushAt(gen, x, z) : null;
   if (bush?.id !== previous.bushId) { previous.bushId = bush?.id ?? null; previous.bushDistance = 0; }
   if (bush) {
     previous.bushDistance += stride;
     if (previous.bushDistance >= 1.15) {
       previous.bushDistance = 0;
-      playSpatial('bushRustle', x, move.pos.y, z, state.prone ? 0.06 : state.sneaking ? 0.1 : state.sprinting ? 0.82 : 0.44);
+      playSpatial(
+        'bushRustle', x, y, z,
+        state.prone ? 0.06 : state.sneaking ? 0.1 : state.sprinting ? 0.82 : 0.44,
+        state.sneaking,
+      );
     }
   }
 }
@@ -427,7 +482,7 @@ function applyRuntimeSettings(): void {
   renderer.shadowMap.enabled = settings.graphics !== 'low';
   world?.setGraphicsQuality(settings.graphics);
   if (!settings.cameraShake) { damageKick = 0; fireFovKick = 0; }
-  $('controls-hint').textContent = `${keyLabel(settings.keybinds.forward)}/${keyLabel(settings.keybinds.left)}/${keyLabel(settings.keybinds.back)}/${keyLabel(settings.keybinds.right)} Bewegen · ${keyLabel(settings.keybinds.sneak)} Schleichen/Sniper hinlegen · ${keyLabel(settings.keybinds.sprint)} Sprint/Atem · RMB Zielen · Mausrad Scope-Zoom · ${keyLabel(settings.keybinds.reload)} Nachladen · ${keyLabel(settings.keybinds.interact)} Sammeln · ${keyLabel(settings.keybinds.heal)} Heilen`;
+  $('controls-hint').textContent = `${keyLabel(settings.keybinds.forward)}/${keyLabel(settings.keybinds.left)}/${keyLabel(settings.keybinds.back)}/${keyLabel(settings.keybinds.right)} Bewegen · ${keyLabel(settings.keybinds.sneak)} Schleichen/Sniper hinlegen · ${keyLabel(settings.keybinds.sprint)} Sprint/Atem · RMB Zielen · Mausrad Waffen/Scope-Zoom · ${keyLabel(settings.keybinds.reload)} Nachladen · ${keyLabel(settings.keybinds.interact)} Sammeln · ${keyLabel(settings.keybinds.heal)} Heilen`;
 }
 
 function populateSettings(): void {
@@ -791,6 +846,7 @@ function onMatchStart(m: MatchStartMsg): void {
   gen = generateWorld(m.seed, m.n);
   world = new World(gen);
   world.setGraphicsQuality(settings.graphics);
+  world.setColliderDebugVisible(showDebug);
   world.scene.add(camera);
   entities = new Entities(world.scene, camera, m.seed);
   phys = new GamePhysics(rapier, gen);
@@ -906,6 +962,12 @@ function onSnapshot(m: SnapshotMsg): void {
     entities?.updatePlayer(
       p.id, p.x, p.y, p.z, p.yaw, p.pitch, p.alive, p.weapon,
       p.sneaking, p.prone, p.aiming, p.helmet,
+      {
+        speed: Math.hypot(p.vx, p.vz),
+        grounded: p.grounded,
+        sprinting: p.sprinting,
+        reloading: p.reloading,
+      },
     );
   }
 
@@ -1038,6 +1100,7 @@ function onEvent(e: GameEvent): void {
         entities?.addImpact(e.hx, e.hy, e.hz, w);
       }
       if (e.by === myId && e.primary !== false) entities?.addMuzzleFlash(camera);
+      if (e.primary !== false) entities?.triggerPlayerFire(e.by);
       if (e.by === myId && e.primary !== false) {
         const def = WEAPONS[w];
         const pattern = ((shotPattern++ % 5) - 2) / 2;
@@ -1050,6 +1113,7 @@ function onEvent(e: GameEvent): void {
       break;
     }
     case 'melee':
+      entities?.triggerPlayerMelee(e.by);
       if (e.by === myId) sfx.play('melee');
       else {
         const source = lastSnap?.players.find((player) => player.id === e.by);
@@ -1070,7 +1134,7 @@ function onEvent(e: GameEvent): void {
       break;
     case 'damage':
       if (e.target === myId) {
-        hud.damageFlash();
+        hud.damageFlash(e.amount, e.headshot ?? false);
         hud.damageDirection(incomingDamageAngle(e.attacker));
         sfx.play('hurt');
         hud.setHp(e.hp);
@@ -1079,25 +1143,30 @@ function onEvent(e: GameEvent): void {
       }
       break;
     case 'armorHit':
+      if (e.shield === 0) entities?.breakShield(e.target);
       if (e.target === myId) {
         hud.armorImpact();
-        sfx.play('pickupArmor');
+        hud.damageDirection(incomingDamageAngle(e.attacker), true);
+        sfx.play(e.shield === 0 ? 'shieldBreak' : 'shieldHit');
+        if (e.shield === 0) hud.equipmentNotice('Panzerung zerstört', true);
       }
       break;
     case 'helmetBreak':
       entities?.breakHelmet(e.target);
       if (e.target === myId) {
         hud.equipmentNotice('Helm hat den Kopftreffer blockiert – jetzt zerstört', true);
-        sfx.play('pickupArmor');
+        sfx.play('helmetBreak');
       } else if (e.attacker === myId) {
         hud.equipmentNotice('Gegnerischen Helm zerstört');
       }
       break;
-    case 'hitmarker':
-      hud.hitmarker(e.headshot, e.blocked);
-      sfx.play(e.blocked ? 'pickupArmor' : e.headshot ? 'headshot' : 'hit');
-      if (!e.blocked) entities?.flashPlayer(e.target, e.headshot);
+    case 'hitmarker': {
+      const feedback = classifyHitFeedback(e);
+      hud.hitmarker(feedback);
+      sfx.play(feedback.sound);
+      if (feedback.flashTarget) entities?.flashPlayer(e.target, e.headshot);
       break;
+    }
     case 'death': {
       const victimSnap = lastSnap?.players.find((player) => player.id === e.target);
       lastElimination = {
@@ -1267,6 +1336,7 @@ function frame(): void {
 
   if (input.debugToggled) {
     showDebug = !showDebug;
+    world?.setColliderDebugVisible(showDebug);
     input.debugToggled = false;
   }
 
@@ -1459,8 +1529,14 @@ function frame(): void {
       snapP?.alive ?? true, snapP?.weapon ?? 'fists',
       snapP?.sneaking ?? false, snapP?.prone ?? false, snapP?.aiming ?? false,
       snapP?.helmet ?? false,
+      {
+        speed: Math.hypot(snapP?.vx ?? 0, snapP?.vz ?? 0),
+        grounded: snapP?.grounded ?? true,
+        sprinting: snapP?.sprinting ?? false,
+        reloading: snapP?.reloading ?? false,
+      },
     );
-    updateRemoteFootsteps(id, renderX, renderZ, {
+    updateRemoteFootsteps(id, renderX, renderY, renderZ, {
       alive: snapP?.alive ?? true,
       grounded: snapP?.grounded ?? false,
       sneaking: snapP?.sneaking ?? false,
@@ -1558,8 +1634,10 @@ function frame(): void {
   }
   const entityStats = entities.stats();
   const physicsStats = phys.stats();
+  const worldStats = world.stats();
   hud.setDebug(showDebug
-    ? `FPS ${fpsShown} · render ${Math.round(renderScale * 100)}% · calls ${renderer.info.render.calls} · tris ${renderer.info.render.triangles}\n`
+    ? `World-Audit ${worldStats.audit.errors} Fehler · ${worldStats.audit.warnings} Hinweise · ${worldStats.audit.walkSurfaces} Rampen · Collider orange/cyan/grün\n`
+      + `FPS ${fpsShown} · render ${Math.round(renderScale * 100)}% · calls ${renderer.info.render.calls} · tris ${renderer.info.render.triangles}\n`
       + `pos ${move.pos.x.toFixed(1)} ${move.pos.y.toFixed(1)} ${move.pos.z.toFixed(1)} · vel ${Math.hypot(move.velX, move.velZ).toFixed(1)}\n`
       + `entities P${entityStats.players} L${entityStats.pickups} J${entityStats.projectiles} FX${entityStats.effects}\n`
       + `Rapier bodies ${physicsStats.rigidBodies} · colliders ${physicsStats.colliders} · capsules ${physicsStats.playerCapsules}\n`

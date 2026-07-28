@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { io, type Socket } from 'socket.io-client';
 import { PROTOCOL_VERSION } from '../shared/src/protocol';
+import { BOT_NAMES } from '../shared/src/constants';
 import type {
   LobbyStateMsg, MatchEndMsg, MatchStartMsg, RoundEndMsg, RoundStartMsg,
   SnapshotMsg,
@@ -75,7 +76,7 @@ describe('solo practice vs bots over a real socket (accelerated ×40)', () => {
     expect(matchStart!.players).toHaveLength(4);
     const botNames = matchStart!.players.filter((p) => p.id.startsWith('bot-')).map((p) => p.name);
     expect(botNames).toHaveLength(3);
-    for (const name of botNames) expect(name).toMatch(/^Bot /);
+    expect(botNames).toEqual([...BOT_NAMES.slice(0, 3)]);
 
     await until(() => roundStarts.length === 1, 5000, 'roundStart');
     // all 4 participants have distinct spawn POIs
