@@ -35,6 +35,9 @@ import {
   footstepCue, footstepIntensity, footstepSurfaceAt, type FootstepStance,
 } from './surface-audio';
 import {
+  advanceFlashVisual, createFlashVisual, type FlashVisualState,
+} from './flash-effect';
+import {
   computeVictoryCameraPose, REDUCED_MOTION_VICTORY_SECONDS, VICTORY_CINEMATIC_SECONDS,
   type VictoryCameraPose, type VictorySubject,
 } from './victory-cinematic';
@@ -143,8 +146,7 @@ let swayPitch = 0;
 let breath = SCOPE_BREATH_MAX;
 let sniperScopeFov = DEFAULT_SNIPER_SCOPE_FOV;
 // flashbang whiteout (§F2)
-let flashLevel = 0;
-let flashDecay = 0;
+let flashVisual: FlashVisualState | null = null;
 // frag cooking beeps (§F3)
 let nextCookBeepAt = 0;
 // profile bookkeeping (§F5)
@@ -893,7 +895,7 @@ function onRoundStart(m: RoundStartMsg): void {
   swayT = 0; swayYaw = 0; swayPitch = 0;
   breath = SCOPE_BREATH_MAX;
   sniperScopeFov = DEFAULT_SNIPER_SCOPE_FOV;
-  flashLevel = 0; flashDecay = 0;
+  flashVisual = null;
   nextCookBeepAt = 0;
   inputAccumulator = 0;
   reconciliationHardSnaps = 0;
@@ -967,6 +969,7 @@ function onSnapshot(m: SnapshotMsg): void {
         grounded: p.grounded,
         sprinting: p.sprinting,
         reloading: p.reloading,
+        flashIntensity: p.flashIntensity,
       },
     );
   }
@@ -992,7 +995,7 @@ function reconcile(self: SnapPlayer): void {
     move.velX = self.vx; move.velY = self.vy; move.velZ = self.vz;
     move.grounded = self.grounded; move.stamina = self.stamina;
     move.sprinting = self.sprinting; move.sneaking = self.sneaking; move.prone = self.prone;
-    phys.setPlayerStance(myId, move.sneaking, move.prone, move.pos);
+    phys.setPlayerStance(myId, move.sneaking, move.prone, move.pos, self.yaw);
     phys.setPlayerPos(myId, move.pos);
     pending = [];
     resetRenderMovePosition();
@@ -1020,7 +1023,7 @@ function reconcile(self: SnapPlayer): void {
   move.sprinting = self.sprinting;
   move.sneaking = self.sneaking;
   move.prone = self.prone;
-  phys.setPlayerStance(myId, move.sneaking, move.prone, move.pos);
+  phys.setPlayerStance(myId, move.sneaking, move.prone, move.pos, self.yaw);
   phys.setPlayerPos(myId, move.pos);
 
   let replayPreviousX = move.pos.x;
@@ -1264,8 +1267,8 @@ function onEvent(e: GameEvent): void {
       break;
     case 'flashed':
       if (e.target === myId) {
-        flashLevel = Math.max(flashLevel, reduceMotion ? e.intensity * 0.6 : e.intensity);
-        flashDecay = flashLevel / Math.max(0.25, e.duration);
+        flashVisual = createFlashVisual(e.intensity, e.duration, flashVisual);
+        hud.setFlashWhiteout(flashVisual.opacity);
         rumble(140, 0.4, 0.3);
       }
       break;
@@ -1534,6 +1537,7 @@ function frame(): void {
         grounded: snapP?.grounded ?? true,
         sprinting: snapP?.sprinting ?? false,
         reloading: snapP?.reloading ?? false,
+        flashIntensity: snapP?.flashIntensity ?? 0,
       },
     );
     updateRemoteFootsteps(id, renderX, renderY, renderZ, {
@@ -1571,9 +1575,10 @@ function frame(): void {
   // --- environment / HUD ---
   hud.setCompass(input.yaw);
   // flashbang whiteout eases off over its duration (§F2)
-  if (flashLevel > 0) {
-    flashLevel = Math.max(0, flashLevel - flashDecay * dt);
-    hud.setFlashWhiteout(flashLevel);
+  if (flashVisual) {
+    flashVisual = advanceFlashVisual(flashVisual, dt);
+    hud.setFlashWhiteout(flashVisual.opacity);
+    if (flashVisual.opacity <= 0.005) flashVisual = null;
   }
   if (lastSnap) {
     world.update(t * matchPace, lastSnap.zone.radius, lastSnap.zone.targetRadius, lastSnap.timeOfDay);
@@ -1640,7 +1645,7 @@ function frame(): void {
       + `FPS ${fpsShown} · render ${Math.round(renderScale * 100)}% · calls ${renderer.info.render.calls} · tris ${renderer.info.render.triangles}\n`
       + `pos ${move.pos.x.toFixed(1)} ${move.pos.y.toFixed(1)} ${move.pos.z.toFixed(1)} · vel ${Math.hypot(move.velX, move.velZ).toFixed(1)}\n`
       + `entities P${entityStats.players} L${entityStats.pickups} J${entityStats.projectiles} FX${entityStats.effects}\n`
-      + `Rapier bodies ${physicsStats.rigidBodies} · colliders ${physicsStats.colliders} · capsules ${physicsStats.playerCapsules}\n`
+      + `Rapier bodies ${physicsStats.rigidBodies} · colliders ${physicsStats.colliders} · capsules ${physicsStats.playerCapsules} · prone volumes ${physicsStats.proneHitVolumes}\n`
       + `net ↓ ${bwShown} kB/s · ${net.rttMs.toFixed(0)} ms ±${net.jitterMs.toFixed(0)} · loss ${net.lossPct.toFixed(1)}% · pending ${pending.length}`
     : null);
 

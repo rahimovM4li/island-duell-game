@@ -27,6 +27,29 @@ describe('remote elimination presentation', () => {
     entities.dispose();
   });
 
+  it('aligns a prone sniper body with its actual yaw instead of leaving it diagonally skewed', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    const entities = new Entities(scene, camera, 4);
+    entities.ensurePlayer('yaw-sniper', 0);
+    const rig = scene.children.find((child) => child.type === 'Group')!;
+    const head = rig.getObjectByName('player_head')!;
+    const yaw = Math.PI / 3;
+
+    entities.updatePlayer(
+      'yaw-sniper', 0, 0, 0, yaw, 0, true, 'sniper', false, true, true, false,
+    );
+    entities.update(1, 1);
+    rig.updateMatrixWorld(true);
+    const headWorld = head.getWorldPosition(new THREE.Vector3());
+    const proneAxis = new THREE.Vector2(headWorld.x - rig.position.x, headWorld.z - rig.position.z).normalize();
+    const expectedForward = new THREE.Vector2(-Math.sin(yaw), -Math.cos(yaw));
+
+    expect(proneAxis.dot(expectedForward)).toBeGreaterThan(0.98);
+    expect(rig.rotation.z).toBeCloseTo(0, 4);
+    entities.dispose();
+  });
+
   it('shows the helmet only while the remote player has one equipped', () => {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera();
@@ -47,6 +70,28 @@ describe('remote elimination presentation', () => {
 
     entities.breakHelmet('armored');
     expect(helmet.visible).toBe(false);
+    entities.dispose();
+  });
+
+  it('makes a flash-affected opponent face visibly self-lit for remote players', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    const entities = new Entities(scene, camera, 6);
+    entities.ensurePlayer('flashed-opponent', 0);
+    const rig = scene.children.find((child) => child.type === 'Group')!;
+    const head = rig.getObjectByName('player_head') as THREE.Mesh;
+    const material = head.material as THREE.MeshLambertMaterial | THREE.MeshStandardMaterial;
+    const baseIntensity = material.emissiveIntensity;
+
+    entities.updatePlayer(
+      'flashed-opponent', 0, 0, 0, 0, 0, true, 'rifle', false, false, false, false,
+      { flashIntensity: 1 },
+    );
+    entities.update(0.25, 0.25);
+
+    expect(material.emissiveIntensity).toBeGreaterThan(baseIntensity + 2);
+    expect(material.emissive.r).toBeGreaterThan(0.8);
+    expect(material.emissive.g).toBeGreaterThan(0.8);
     entities.dispose();
   });
 

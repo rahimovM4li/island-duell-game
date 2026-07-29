@@ -273,7 +273,9 @@ export class Hud {
 
   /** Full-screen white-out after a flashbang (§F2). */
   setFlashWhiteout(opacity: number): void {
-    $('flash-overlay').style.opacity = opacity <= 0.005 ? '0' : String(Math.min(1, opacity));
+    const overlay = $('flash-overlay');
+    overlay.classList.toggle('strong', opacity >= 0.9);
+    overlay.style.opacity = opacity <= 0.005 ? '0' : String(Math.min(1, opacity));
   }
 
   setSpectating(v: boolean): void {

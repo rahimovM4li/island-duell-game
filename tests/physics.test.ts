@@ -291,6 +291,37 @@ describe('heightfield collider', () => {
     phys.removePlayer('prone');
   });
 
+  it('covers the complete yaw-aligned prone silhouette with distinct body and head hit regions', () => {
+    const start = { x: 0, y: sampleHeight(gen.params, 0, -118) + 0.2, z: -118 };
+    phys.addPlayer('prone-hitbox', start);
+    const st = freshMoveState(start);
+    for (let i = 0; i < 30; i++) {
+      stepMovement(phys, 'prone-hitbox', st, idleInput({ prone: true, yaw: -Math.PI / 2 }));
+      phys.step();
+    }
+
+    const headHit = phys.raycast(
+      { x: st.pos.x + 4, y: st.pos.y + 0.4, z: st.pos.z },
+      { x: -1, y: 0, z: 0 }, 3.1,
+    );
+    expect(headHit?.playerId).toBe('prone-hitbox');
+    expect(headHit?.playerRegion).toBe('head');
+
+    const torsoHit = phys.raycast(
+      { x: st.pos.x + 0.82, y: st.pos.y + 0.4, z: st.pos.z - 3 },
+      { x: 0, y: 0, z: 1 }, 6,
+    );
+    expect(torsoHit?.playerId).toBe('prone-hitbox');
+    expect(torsoHit?.playerRegion).toBe('body');
+
+    const excluded = phys.raycast(
+      { x: st.pos.x + 4, y: st.pos.y + 0.4, z: st.pos.z },
+      { x: -1, y: 0, z: 0 }, 3.1, ['prone-hitbox'],
+    );
+    expect(excluded?.playerId).not.toBe('prone-hitbox');
+    phys.removePlayer('prone-hitbox');
+  });
+
   it('raycast can hit a player capsule and reports the id', () => {
     phys.addPlayer('target', { x: 50, y: sampleHeight(gen.params, 50, 0), z: 0 });
     phys.step();

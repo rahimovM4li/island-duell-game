@@ -12,6 +12,7 @@ import type { WorldGen } from './worldgen';
 export type RapierModule = typeof RAPIER;
 
 export interface Vec3 { x: number; y: number; z: number }
+export type PlayerHitRegion = 'body' | 'head';
 
 const CAPSULE_HALF = (PLAYER_HEIGHT - 2 * PLAYER_RADIUS) / 2; // 0.5
 const SNEAK_CAPSULE_HALF = (PLAYER_SNEAK_HEIGHT - 2 * PLAYER_RADIUS) / 2;
@@ -36,6 +37,7 @@ export interface RayHit {
   dist: number;
   point: Vec3;
   playerId: string | null; // null → terrain / obstacle
+  playerRegion?: PlayerHitRegion;
 }
 
 export interface PhysicsStats {
@@ -46,6 +48,57 @@ export interface PhysicsStats {
   playerCapsules: number;
   ccdBodies: number;
   sensors: number;
+  proneHitVolumes: number;
+}
+
+export interface PlayerHitSphere {
+  center: Vec3;
+  radius: number;
+  region: PlayerHitRegion;
+}
+
+interface PlayerPose {
+  feet: Vec3;
+  yaw: number;
+}
+
+/** Low-poly prone silhouette: legs/hips, torso, shoulders and a separate head. */
+export function proneHitSpheres(feet: Vec3, yaw: number): PlayerHitSphere[] {
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
+  const at = (distance: number, y: number): Vec3 => ({
+    x: feet.x + forwardX * distance,
+    y: feet.y + y,
+    z: feet.z + forwardZ * distance,
+  });
+  return [
+    { center: at(0.28, 0.4), radius: 0.42, region: 'body' },
+    { center: at(0.78, 0.4), radius: 0.42, region: 'body' },
+    { center: at(1.18, 0.4), radius: 0.38, region: 'body' },
+    { center: at(1.6, 0.41), radius: 0.3, region: 'head' },
+  ];
+}
+
+function raySphereDistance(
+  origin: Vec3,
+  direction: Vec3,
+  center: Vec3,
+  radius: number,
+  maxDist: number,
+): number | null {
+  const ox = origin.x - center.x;
+  const oy = origin.y - center.y;
+  const oz = origin.z - center.z;
+  const b = ox * direction.x + oy * direction.y + oz * direction.z;
+  const c = ox * ox + oy * oy + oz * oz - radius * radius;
+  if (c <= 0) return 0;
+  const discriminant = b * b - c;
+  if (discriminant < 0) return null;
+  const root = Math.sqrt(discriminant);
+  const near = -b - root;
+  const far = -b + root;
+  const distance = near >= 0 ? near : far >= 0 ? far : -1;
+  return distance >= 0 && distance <= maxDist ? distance : null;
 }
 
 interface WalkSurface {
@@ -66,6 +119,7 @@ export class GamePhysics {
   private controller: RAPIER.KinematicCharacterController;
   private players = new Map<string, RAPIER.Collider>();
   private handleToPlayer = new Map<number, string>();
+  private playerPoses = new Map<string, PlayerPose>();
   private sneakingPlayers = new Set<string>();
   private pronePlayers = new Set<string>();
   private walkSurfaces: WalkSurface[] = [];
@@ -147,6 +201,7 @@ export class GamePhysics {
     const col = this.world.createCollider(desc);
     this.players.set(id, col);
     this.handleToPlayer.set(col.handle, id);
+    this.playerPoses.set(id, { feet: { ...feet }, yaw: 0 });
   }
 
   removePlayer(id: string): void {
@@ -155,6 +210,7 @@ export class GamePhysics {
       this.handleToPlayer.delete(col.handle);
       this.world.removeCollider(col, false);
       this.players.delete(id);
+      this.playerPoses.delete(id);
       this.sneakingPlayers.delete(id);
       this.pronePlayers.delete(id);
     }
@@ -164,16 +220,23 @@ export class GamePhysics {
     const col = this.players.get(id);
     const center = this.playerCapsuleCenter(id);
     col?.setTranslation({ x: feet.x, y: feet.y + center, z: feet.z });
+    const pose = this.playerPoses.get(id);
+    if (pose) pose.feet = { ...feet };
   }
 
   /** Keep the collision capsule aligned with the current standing/crouched pose. */
-  setPlayerSneaking(id: string, sneaking: boolean, feet: Vec3): void {
-    this.setPlayerStance(id, sneaking, false, feet);
+  setPlayerSneaking(id: string, sneaking: boolean, feet: Vec3, yaw?: number): void {
+    this.setPlayerStance(id, sneaking, false, feet, yaw);
   }
 
-  setPlayerStance(id: string, sneaking: boolean, prone: boolean, feet: Vec3): void {
+  setPlayerStance(id: string, sneaking: boolean, prone: boolean, feet: Vec3, yaw?: number): void {
     const col = this.players.get(id);
     if (!col) return;
+    const pose = this.playerPoses.get(id);
+    if (pose) {
+      pose.feet = { ...feet };
+      if (yaw !== undefined && Number.isFinite(yaw)) pose.yaw = yaw;
+    }
     const nextSneaking = sneaking && !prone;
     if (nextSneaking === this.sneakingPlayers.has(id) && prone === this.pronePlayers.has(id)) return;
     if (nextSneaking) this.sneakingPlayers.add(id);
@@ -232,30 +295,55 @@ export class GamePhysics {
     const maxR = WORLD_SIZE / 2 - 6;
     if (r > maxR) { nx *= maxR / r; nz *= maxR / r; }
     col.setTranslation({ x: nx, y: ny, z: nz });
+    const feet = { x: nx, y: ny - center, z: nz };
+    const pose = this.playerPoses.get(id);
+    if (pose) pose.feet = feet;
     return {
-      pos: { x: nx, y: ny - center, z: nz },
+      pos: feet,
       grounded: onWalkSurface || this.controller.computedGrounded(),
     };
   }
 
   /** Raycast vs terrain, obstacles and player capsules. */
   raycast(origin: Vec3, dir: Vec3, maxDist: number, excludePlayerIds?: string[]): RayHit | null {
-    const ray = new this.R.Ray(origin, dir);
-    const exclude = new Set(
-      (excludePlayerIds ?? [])
-        .map((id) => this.players.get(id)?.handle)
-        .filter((h): h is number => h !== undefined),
-    );
+    const dirLength = Math.hypot(dir.x, dir.y, dir.z);
+    if (dirLength <= 0.000001 || maxDist <= 0) return null;
+    const direction = { x: dir.x / dirLength, y: dir.y / dirLength, z: dir.z / dirLength };
+    const ray = new this.R.Ray(origin, direction);
+    const excludedIds = new Set(excludePlayerIds ?? []);
     const hit = this.world.castRay(
       ray, maxDist, true, undefined, undefined, undefined, undefined,
-      (c) => !exclude.has(c.handle),
+      (c) => {
+        const playerId = this.handleToPlayer.get(c.handle);
+        return !playerId || !excludedIds.has(playerId);
+      },
     );
-    if (!hit) return null;
-    const p = ray.pointAt(hit.timeOfImpact);
+    let closestDist = hit?.timeOfImpact ?? maxDist + 1;
+    let playerId = hit ? this.handleToPlayer.get(hit.collider.handle) ?? null : null;
+    let playerRegion: PlayerHitRegion | undefined =
+      playerId && this.pronePlayers.has(playerId) ? 'body' : undefined;
+
+    for (const id of this.pronePlayers) {
+      if (excludedIds.has(id)) continue;
+      const pose = this.playerPoses.get(id);
+      if (!pose) continue;
+      for (const volume of proneHitSpheres(pose.feet, pose.yaw)) {
+        const distance = raySphereDistance(
+          origin, direction, volume.center, volume.radius, Math.min(maxDist, closestDist),
+        );
+        if (distance === null || distance >= closestDist) continue;
+        closestDist = distance;
+        playerId = id;
+        playerRegion = volume.region;
+      }
+    }
+    if (closestDist > maxDist) return null;
+    const point = ray.pointAt(closestDist);
     return {
-      dist: hit.timeOfImpact,
-      point: { x: p.x, y: p.y, z: p.z },
-      playerId: this.handleToPlayer.get(hit.collider.handle) ?? null,
+      dist: closestDist,
+      point: { x: point.x, y: point.y, z: point.z },
+      playerId,
+      ...(playerRegion ? { playerRegion } : {}),
     };
   }
 
@@ -274,6 +362,7 @@ export class GamePhysics {
       playerCapsules: this.players.size,
       ccdBodies: 0,
       sensors: 0,
+      proneHitVolumes: this.pronePlayers.size * 4,
     };
   }
 
@@ -281,6 +370,7 @@ export class GamePhysics {
   dispose(): void {
     this.players.clear();
     this.handleToPlayer.clear();
+    this.playerPoses.clear();
     this.sneakingPlayers.clear();
     this.pronePlayers.clear();
     this.walkSurfaces.length = 0;

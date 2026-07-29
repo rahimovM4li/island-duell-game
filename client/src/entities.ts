@@ -15,6 +15,7 @@ import { gameAssets, isSharedAssetResource } from './game-assets';
 const PLAYER_COLORS = [0xe5484d, 0x3d9df2, 0x46c46e, 0xd8b43a, 0xb26ee0];
 const HIT_FLASH_BODY = new THREE.Color(0xffffff);
 const HIT_FLASH_HEAD = new THREE.Color(0xffe7a3);
+const FLASH_FACE_WHITE = new THREE.Color(0xffffff);
 
 interface PlayerRig {
   group: THREE.Group;
@@ -51,9 +52,12 @@ interface PlayerRig {
   fireT: number;
   meleeT: number;
   hitT: number;
+  blindedTarget: number;
+  blindedBlend: number;
   flashT: number;
   bodyBaseEmissive: THREE.Color;
   headBaseEmissive: THREE.Color;
+  headBaseEmissiveIntensity: number;
   alive: boolean;
   forcedDeath: boolean;
   deathT: number;
@@ -505,6 +509,9 @@ export class Entities {
     const color = PLAYER_COLORS[colorIndex % PLAYER_COLORS.length];
     const compact = gameAssets.cloneCharacter(color);
     if (compact) {
+      // Compose world yaw before the local prone pitch. XYZ leaves a prone
+      // body pointing toward world -Z regardless of the player's yaw.
+      compact.group.rotation.order = 'YXZ';
       const bodyMaterial = compact.body.material as LitPlayerMaterial;
       const headMaterial = compact.head.material as LitPlayerMaterial;
       this.scene.add(compact.group);
@@ -541,9 +548,11 @@ export class Entities {
         reloading: false,
         aiming: false,
         fireT: 0, meleeT: 0, hitT: 0,
+        blindedTarget: 0, blindedBlend: 0,
         flashT: 0,
         bodyBaseEmissive: bodyMaterial.emissive.clone(),
         headBaseEmissive: headMaterial.emissive.clone(),
+        headBaseEmissiveIntensity: headMaterial.emissiveIntensity,
         alive: true, forcedDeath: false, deathT: -1, deathSide: 1, baseY: 0,
         celebrating: false, celebrationT: 0, celebrationWeight: 0,
         celebrationYaw: 0, reducedCelebrationMotion: false,
@@ -551,11 +560,13 @@ export class Entities {
       return;
     }
     const group = new THREE.Group();
+    group.rotation.order = 'YXZ';
     const mat = new THREE.MeshLambertMaterial({ color });
     const darkMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(color).multiplyScalar(0.62) });
     const gearMat = new THREE.MeshLambertMaterial({ color: 0x2b333b });   // straps/vest/boots
     const skinMat = new THREE.MeshLambertMaterial({ color: 0xd8a878 });
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.78, 0.38), mat);
+    body.name = 'player_body';
     body.position.y = 1.08;
     // chest rig / plate carrier over the torso (reads as a survivor silhouette)
     const vest = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.42), gearMat);
@@ -584,6 +595,7 @@ export class Entities {
     handL.position.set(-0.42, 0.79, 0);
     const handR = handL.clone(); handR.position.x = 0.42;
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), skinMat);
+    head.name = 'player_head';
     head.position.y = 1.67;
     const helmet = helmetModel();
     helmet.position.y = 1.54;
@@ -616,9 +628,11 @@ export class Entities {
       animation: new CharacterAnimationStateMachine(), locomotion: 'idle', action: 'none',
       speed: 0, grounded: true, sprinting: false, sneaking: false, prone: false,
       reloading: false, aiming: false, fireT: 0, meleeT: 0, hitT: 0,
+      blindedTarget: 0, blindedBlend: 0,
       flashT: 0,
       bodyBaseEmissive: (body.material as THREE.MeshLambertMaterial).emissive.clone(),
       headBaseEmissive: (head.material as THREE.MeshLambertMaterial).emissive.clone(),
+      headBaseEmissiveIntensity: (head.material as THREE.MeshLambertMaterial).emissiveIntensity,
       alive: true, forcedDeath: false, deathT: -1, deathSide: 1, baseY: 0,
       celebrating: false, celebrationT: 0, celebrationWeight: 0,
       celebrationYaw: 0, reducedCelebrationMotion: false,
@@ -763,7 +777,13 @@ export class Entities {
     id: string, x: number, y: number, z: number, yaw: number, pitch: number,
     alive: boolean, weapon: WeaponType, sneaking: boolean, prone: boolean, aiming: boolean,
     helmetEquipped = false,
-    motion: { speed?: number; grounded?: boolean; sprinting?: boolean; reloading?: boolean } = {},
+    motion: {
+      speed?: number;
+      grounded?: boolean;
+      sprinting?: boolean;
+      reloading?: boolean;
+      flashIntensity?: number;
+    } = {},
   ): void {
     const rig = this.players.get(id);
     if (!rig) return;
@@ -790,6 +810,7 @@ export class Entities {
     rig.sneaking = sneaking;
     rig.prone = prone;
     rig.reloading = motion.reloading ?? false;
+    rig.blindedTarget = Math.max(0, Math.min(1, motion.flashIntensity ?? 0));
     rig.aiming = aiming;
     rig.lookPitch = pitch;
     rig.helmet.visible = effectiveAlive && helmetEquipped;
@@ -1339,11 +1360,16 @@ export class Entities {
         rig.aiming ? 1 : 0,
       );
       rig.flashT = Math.max(0, rig.flashT - dt);
+      rig.blindedBlend += (rig.blindedTarget - rig.blindedBlend) * (1 - Math.exp(-dt * 11));
       const flash = Math.min(1, rig.flashT / 0.08);
       const bodyMat = rig.body.material as LitPlayerMaterial;
       const headMat = rig.head.material as LitPlayerMaterial;
       bodyMat.emissive.copy(rig.bodyBaseEmissive).lerp(HIT_FLASH_BODY, flash * 0.72);
-      headMat.emissive.copy(rig.headBaseEmissive).lerp(HIT_FLASH_HEAD, flash * 0.78);
+      headMat.emissive
+        .copy(rig.headBaseEmissive)
+        .lerp(HIT_FLASH_HEAD, flash * 0.78)
+        .lerp(FLASH_FACE_WHITE, rig.blindedBlend);
+      headMat.emissiveIntensity = rig.headBaseEmissiveIntensity + rig.blindedBlend * 3.4;
     }
     this.swingT = Math.min(1, this.swingT + dt * 3.2);
     this.kickT = Math.min(1, this.kickT + dt * 7);

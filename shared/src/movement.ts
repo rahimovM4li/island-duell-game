@@ -70,7 +70,7 @@ export function stepMovement(
 
   st.prone = inp.prone === true;
   st.sneaking = inp.sneak && !st.prone;
-  phys.setPlayerStance(id, st.sneaking, st.prone, st.pos);
+  phys.setPlayerStance(id, st.sneaking, st.prone, st.pos, inp.yaw);
   const wantSprint = inp.sprint && !inp.aim && !st.sneaking && !st.prone && moving && st.stamina > 0;
   st.sprinting = wantSprint;
   st.stamina = wantSprint

@@ -4,7 +4,7 @@ import type { BotDifficulty, ItemType, MatchMode, Recipe, ThrowKind, WeaponType 
 import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
 
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 // ---------- lobby ----------
 export interface JoinMsg { v: number; name: string; resumeToken?: string }
@@ -103,6 +103,8 @@ export interface SnapPlayer {
   prone: boolean;
   aiming: boolean;
   reloading: boolean;
+  /** Replicated strength for the visible bright-face flash reaction. */
+  flashIntensity: number;
   bandaging: boolean;
   plates: number;
   shield: number;

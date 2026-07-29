@@ -116,6 +116,8 @@ interface MatchPlayer {
   cookingSince: number | null;
   /** Round time until which a flashbang keeps this player blinded (bots read it). */
   blindUntil: number;
+  /** Strongest active flash, replicated for the remote bright-face reaction. */
+  blindIntensity: number;
 }
 
 interface Projectile {
@@ -481,7 +483,7 @@ export class GameRoom {
       craftDoneAt: 0, craftRecipe: null, harvestNodeId: -1, harvestProgress: 0,
       lastDamagedBy: null, lastDamageDealtAt: -1, kills: 0, zoneDamageAcc: 0, deathTick: -1,
       stats: this.freshStats(),
-      cookingSince: null, blindUntil: 0,
+      cookingSince: null, blindUntil: 0, blindIntensity: 0,
     };
   }
 
@@ -551,6 +553,7 @@ export class GameRoom {
       p.stats = this.freshStats();
       p.cookingSince = null;
       p.blindUntil = 0;
+      p.blindIntensity = 0;
       this.phys.setPlayerStance(id, false, false, p.move.pos);
       this.phys.setPlayerPos(id, p.move.pos);
       if (!p.connected) this.eliminationGroups.push([id]); // disconnected: eliminated at start
@@ -887,7 +890,9 @@ export class GameRoom {
             const k = Math.min(1, (hit.dist - fs) / Math.max(0.01, fe - fs));
             dmg *= 1 - 0.65 * k; // down to 35 % at falloffEnd
           }
-          const headshot = isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y, target.move.prone);
+          const headshot = target.move.prone
+            ? hit.playerRegion === 'head'
+            : isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y);
           if (headshot) dmg *= 1.65;
           this.applyDamage(target, p, dmg, weapon, 'weapon', events, headshot);
         }
@@ -1014,7 +1019,9 @@ export class GameRoom {
       const intensity = flashIntensityAt(d, facing);
       if (intensity < 0.05) continue;
       const duration = FLASH_MAX_BLIND * intensity;
+      if (q.blindUntil <= this.t) q.blindIntensity = 0;
       q.blindUntil = Math.max(q.blindUntil, this.t + duration);
+      q.blindIntensity = Math.max(q.blindIntensity, intensity);
       this.sendTo(q.id, [{ type: 'flashed', target: q.id, intensity, duration }]);
     }
   }
@@ -1704,6 +1711,7 @@ export class GameRoom {
       prone: p.move.prone,
       aiming: p.aiming,
       reloading: p.reloadUntil > this.t,
+      flashIntensity: this.t < p.blindUntil ? round3(p.blindIntensity) : 0,
       bandaging: p.healRemaining > 0,
       plates: p.inv.plates,
       shield: p.inv.shield,
