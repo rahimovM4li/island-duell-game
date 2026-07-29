@@ -8,12 +8,12 @@ import {
   FLASH_FUSE, FLASH_MAX_BLIND, FLASH_RADIUS,
   GRENADE_FUSE, GRENADE_RADIUS,
   INTERACT_HOLD_SECS, INTERACT_RANGE, ItemType, LOUD_PING_SECONDS, MATCH_MODE_PACE,
-  MatchMode, MAX_BANDAGES,
+  MatchMode, MAX_BANDAGES, MAX_LAG_COMPENSATION_MS,
   MAX_FLASH, MAX_GRENADES, MAX_PLATES, MAX_PLAYERS, MAX_PRACTICE_BOTS, MAX_SMOKE,
   MELEE_CONE_COS, MIN_PLAYERS,
   MAX_SHIELD, PICKUP_RADIUS, PLAYER_EYE_HEIGHT, PLAYER_MAX_HP,
   PLAYER_PRONE_EYE_HEIGHT, PLAYER_SNEAK_EYE_HEIGHT, RECONNECT_GRACE_MS, SMOKE_DURATION, SMOKE_FUSE,
-  SMOKE_RADIUS, SNIPER_CRATE_CHANCE, SPRINT_SPEED,
+  SMOKE_RADIUS, SPRINT_SPEED,
   RECIPES, Recipe, RESOURCE_NODE_CHARGES, RESOURCE_YIELD, ROUNDS_PER_MATCH,
   MAX_SUDDEN_DEATH_ROUNDS, ROUND_END_SCOREBOARD_SECS, SERVER_TICK_HZ,
   SNAPSHOT_HZ, THROW_ORDER, THROW_WEAPON, ThrowKind, WEAPONS, WeaponType, AmmoType,
@@ -38,7 +38,7 @@ import {
 } from './bot';
 import { equipWeapon, grantStarterAmmo, weaponSlotState } from './inventory';
 import {
-  enqueueServerInput, inputForServerTick, neutralServerInput, ServerInputBuffer,
+  enqueueServerInput, inputForServerTick, neutralServerInput, sanitizeServerInput, ServerInputBuffer,
 } from './input';
 import {
   cookRemainingFuse, flashIntensityAt, nextOwnedThrow, segmentThroughSphere,
@@ -46,6 +46,11 @@ import {
 import {
   canGrantArmorPlate, grantArmorPlate, platesForShield, resolveArmorHit,
 } from './armor';
+import {
+  appendHistoricalPose, clampedRewindSeconds, sampleHistoricalPose,
+  type HistoricalPlayerPose,
+} from './lag-compensation';
+import { rollCrateLoot } from './loot';
 
 interface Conn {
   socket: Socket;
@@ -118,6 +123,8 @@ interface MatchPlayer {
   blindUntil: number;
   /** Strongest active flash, replicated for the remote bright-face reaction. */
   blindIntensity: number;
+  /** Short authoritative pose history used only for bounded hitscan rewinds. */
+  poseHistory: HistoricalPlayerPose[];
 }
 
 interface Projectile {
@@ -275,8 +282,12 @@ export class GameRoom {
       if (!this.inMatch || !isInputMsg(msg)) return;
       const p = this.players.get(socket.data.playerId as string);
       if (!p || !p.connected) return;
-      const stance = stanceForWeapon(this.activeWeapon(p).type, msg.sneak || msg.prone === true);
-      if (enqueueServerInput(p.inputBuffer, { ...msg, ...stance })) p.lastInputAt = Date.now();
+      const safeInput = sanitizeServerInput(msg);
+      const stance = stanceForWeapon(
+        this.activeWeapon(p).type,
+        safeInput.sneak || safeInput.prone === true,
+      );
+      if (enqueueServerInput(p.inputBuffer, { ...safeInput, ...stance })) p.lastInputAt = Date.now();
     });
 
     socket.on(C2S.craft, (msg: unknown) => {
@@ -483,7 +494,7 @@ export class GameRoom {
       craftDoneAt: 0, craftRecipe: null, harvestNodeId: -1, harvestProgress: 0,
       lastDamagedBy: null, lastDamageDealtAt: -1, kills: 0, zoneDamageAcc: 0, deathTick: -1,
       stats: this.freshStats(),
-      cookingSince: null, blindUntil: 0, blindIntensity: 0,
+      cookingSince: null, blindUntil: 0, blindIntensity: 0, poseHistory: [],
     };
   }
 
@@ -554,8 +565,10 @@ export class GameRoom {
       p.cookingSince = null;
       p.blindUntil = 0;
       p.blindIntensity = 0;
+      p.poseHistory = [];
       this.phys.setPlayerStance(id, false, false, p.move.pos);
       this.phys.setPlayerPos(id, p.move.pos);
+      appendHistoricalPose(p.poseHistory, this.historicalPose(p), 0);
       if (!p.connected) this.eliminationGroups.push([id]); // disconnected: eliminated at start
       const mem = this.botMems.get(id);
       if (mem) {
@@ -619,6 +632,7 @@ export class GameRoom {
     this.tickBots();
     for (const p of this.players.values()) this.processPlayerInputs(p, events, now);
     this.phys.step(1 / SERVER_TICK_HZ);
+    this.recordPlayerHistory();
 
     this.updateProjectiles(rawDt, events);
     this.updateZoneDamage(dt, events);
@@ -682,7 +696,7 @@ export class GameRoom {
       }
       if (action.reload) this.tryReload(p);
       if (p.inv.active === 3) this.handleThrowable(p, action);
-      else if (action.fire) this.tryFire(p, events);
+      else if (action.fire) this.tryFire(p, events, action.shotAgeMs);
       p.prevFire = action.fire;
     }
 
@@ -693,7 +707,7 @@ export class GameRoom {
     p.aiming = inp.aim;
     if (p.reloadUntil > 0 && inp.sprint && p.move.sprinting) this.cancelReload(p);
     if (p.inv.active === 3) this.handleThrowable(p, inp);
-    else if (inp.fire) this.tryFire(p, events);
+    else if (inp.fire) this.tryFire(p, events, inp.shotAgeMs);
     p.prevFire = inp.fire;
 
     const interactInput = interactEdge && !inp.interact ? { ...inp, interact: true } : inp;
@@ -797,7 +811,7 @@ export class GameRoom {
     return { x: -Math.sin(p.yaw) * cp, y: Math.sin(p.pitch), z: -Math.cos(p.yaw) * cp };
   }
 
-  private tryFire(p: MatchPlayer, events: GameEvent[]): void {
+  private tryFire(p: MatchPlayer, events: GameEvent[], shotAgeMs?: number): void {
     if (this.t < p.cooldownUntil || this.t < p.bandageBusyUntil) return;
     if (p.reloadUntil > 0) this.cancelReload(p); // firing intentionally interrupts reload
     const { type, slotState } = this.activeWeapon(p);
@@ -817,7 +831,7 @@ export class GameRoom {
     slotState.mag -= 1;
     p.stats.shotsFired += def.pellets ?? 1;
     p.cooldownUntil = this.t + def.cooldown;
-    this.hitscanShot(p, type, events);
+    this.hitscanShot(p, type, events, shotAgeMs);
     this.pushInventory(p);
     this.notifyLoud(p, def.loud);
     if (slotState.mag === 0) this.tryReload(p);
@@ -853,7 +867,62 @@ export class GameRoom {
     }
   }
 
-  private hitscanShot(p: MatchPlayer, weapon: WeaponType, events: GameEvent[]): void {
+  private historicalPose(p: MatchPlayer): HistoricalPlayerPose {
+    return {
+      t: this.t,
+      feet: { ...p.move.pos },
+      yaw: p.yaw,
+      sneaking: p.move.sneaking,
+      prone: p.move.prone,
+    };
+  }
+
+  private recordPlayerHistory(): void {
+    const keepSeconds = (MAX_LAG_COMPENSATION_MS / 1000 + 2 / SERVER_TICK_HZ)
+      * Math.max(0.01, this.timeScale);
+    for (const player of this.players.values()) {
+      if (!player.alive) continue;
+      appendHistoricalPose(
+        player.poseHistory,
+        this.historicalPose(player),
+        this.t - keepSeconds,
+      );
+    }
+  }
+
+  private hitscanShot(
+    p: MatchPlayer,
+    weapon: WeaponType,
+    events: GameEvent[],
+    shotAgeMs?: number,
+  ): void {
+    const rewindSeconds = clampedRewindSeconds(
+      shotAgeMs,
+      MAX_LAG_COMPENSATION_MS,
+      this.timeScale,
+    );
+    const rewoundPoses = new Map<string, HistoricalPlayerPose>();
+    const restorePoses = new Map<string, HistoricalPlayerPose>();
+    if (rewindSeconds > 0) {
+      const targetTime = this.t - rewindSeconds;
+      for (const target of this.players.values()) {
+        if (!target.alive || target.id === p.id) continue;
+        const historical = sampleHistoricalPose(target.poseHistory, targetTime);
+        if (!historical) continue;
+        restorePoses.set(target.id, this.historicalPose(target));
+        rewoundPoses.set(target.id, historical);
+        this.phys.setPlayerStance(
+          target.id,
+          historical.sneaking,
+          historical.prone,
+          historical.feet,
+          historical.yaw,
+        );
+        this.phys.setPlayerPos(target.id, historical.feet);
+      }
+    }
+
+    try {
     const def = WEAPONS[weapon];
     const eye = this.eyePos(p);
     const base = this.viewDir(p);
@@ -890,12 +959,22 @@ export class GameRoom {
             const k = Math.min(1, (hit.dist - fs) / Math.max(0.01, fe - fs));
             dmg *= 1 - 0.65 * k; // down to 35 % at falloffEnd
           }
-          const headshot = target.move.prone
+          const targetPose = rewoundPoses.get(target.id);
+          const targetProne = targetPose?.prone ?? target.move.prone;
+          const targetSneaking = targetPose?.sneaking ?? target.move.sneaking;
+          const targetFeetY = targetPose?.feet.y ?? target.move.pos.y;
+          const headshot = targetProne
             ? hit.playerRegion === 'head'
-            : isHeadshotHeight(target.move.pos.y, target.move.sneaking, hit.point.y);
+            : isHeadshotHeight(targetFeetY, targetSneaking, hit.point.y);
           if (headshot) dmg *= 1.65;
           this.applyDamage(target, p, dmg, weapon, 'weapon', events, headshot);
         }
+      }
+    }
+    } finally {
+      for (const [id, pose] of restorePoses) {
+        this.phys.setPlayerStance(id, pose.sneaking, pose.prone, pose.feet, pose.yaw);
+        this.phys.setPlayerPos(id, pose.feet);
       }
     }
   }
@@ -1065,6 +1144,7 @@ export class GameRoom {
         armor: armor.shieldAbsorbed > 0,
         shieldBreak: armor.shieldAbsorbed > 0 && armor.shield === 0,
         damage: armor.helmetBroke ? 0 : armor.hpDamage,
+        absorbed: armor.shieldAbsorbed,
       }]);
     }
 
@@ -1443,34 +1523,13 @@ export class GameRoom {
   private openCrate(pk: PickupInfo): void {
     const tier = (pk.tier ?? 'common') as CrateTier;
     const rng = this.lootRng;
-    const drops: ItemType[] = [];
-    // One contested helmet is guaranteed per round from the first opened
-    // top-tier crate. It remains rare, but players can reliably seek it out.
-    if (tier === 'top' && !this.helmetDroppedThisRound) {
-      drops.push('helmetItem');
-      this.helmetDroppedThisRound = true;
-    }
-    if (tier === 'top') {
-      const guaranteedSniper = this.gen.crates.some(
-        (crate) => crate.id === pk.id && crate.guaranteedItem === 'sniper',
-      );
-      // rare marksman roll (§F1): the sniper only ever drops from top crates
-      if (guaranteedSniper || rng() < SNIPER_CRATE_CHANCE) {
-        drops.push('sniper');
-        drops.push(guaranteedSniper || rng() < 0.6 ? 'sniperAmmo' : 'bandageItem');
-      } else {
-        drops.push(pick(rng, ['rifle', 'shotgun'] as ItemType[]));
-        drops.push(pick(rng, ['rifleAmmo', 'shellAmmo', 'grenade', 'flashGrenade', 'bandageItem'] as ItemType[]));
-      }
-      if (rng() < 0.5) drops.push('bandageItem');
-    } else if (tier === 'good') {
-      drops.push(pick(rng, ['pistol', 'pistol', 'grenade'] as ItemType[]));
-      drops.push(pick(rng, ['pistolAmmo', 'pistolAmmo', 'bandageItem', 'smokeGrenade', 'flashGrenade'] as ItemType[]));
-    } else {
-      drops.push(pick(rng, ['machete', 'spear', 'pistol', 'bandageItem'] as ItemType[]));
-      if (rng() < 0.6) drops.push('pistolAmmo');
-    }
-    drops.forEach((item, i) => {
+    const guaranteedItem = this.gen.crates.find((crate) => crate.id === pk.id)?.guaranteedItem;
+    const roll = rollCrateLoot(tier, rng, {
+      guaranteedItem,
+      guaranteeHelmet: tier === 'top' && !this.helmetDroppedThisRound,
+    });
+    if (roll.helmetDropped) this.helmetDroppedThisRound = true;
+    roll.drops.forEach((item, i) => {
       const a = rng() * Math.PI * 2 + i;
       this.addPickup(item, pk.x + Math.cos(a) * 1.2, pk.z + Math.sin(a) * 1.2);
     });

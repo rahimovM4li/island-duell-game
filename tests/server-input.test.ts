@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { InputMsg } from '@shared/protocol';
 import {
   enqueueServerInput, inputForServerTick, MAX_SERVER_INPUT_QUEUE,
-  neutralServerInput, SERVER_INPUT_DT, SERVER_INPUT_STALE_MS,
+  neutralServerInput, sanitizeServerInput, SERVER_INPUT_DT, SERVER_INPUT_STALE_MS,
 } from '../server/src/input';
 
 function input(seq: number, overrides: Partial<InputMsg> = {}): InputMsg {
@@ -58,5 +58,20 @@ describe('authoritative server input', () => {
     }
     expect(buffer.queue).toHaveLength(MAX_SERVER_INPUT_QUEUE);
     expect(buffer.lastAcceptedSeq).toBe(3 + MAX_SERVER_INPUT_QUEUE + 4);
+  });
+
+  it('sanitizes movement, look and rewind values before authoritative use', () => {
+    const safe = sanitizeServerInput(input(5, {
+      mx: 99,
+      mz: -99,
+      yaw: Math.PI * 5,
+      pitch: Math.PI,
+      shotAgeMs: 480,
+    }));
+    expect(safe.mx).toBe(1);
+    expect(safe.mz).toBe(-1);
+    expect(safe.yaw).toBeCloseTo(Math.PI);
+    expect(safe.pitch).toBeLessThan(Math.PI / 2);
+    expect(safe.shotAgeMs).toBe(220);
   });
 });

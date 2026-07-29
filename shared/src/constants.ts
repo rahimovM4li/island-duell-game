@@ -212,6 +212,8 @@ export const RESOURCE_NODE_CHARGES = 3;
 export const SNAPSHOT_HZ = 20;
 export const SERVER_TICK_HZ = 30;
 export const INTERP_DELAY_MS = 100;
+/** Hard server-side ceiling for client-requested hitscan history rewinds. */
+export const MAX_LAG_COMPENSATION_MS = 220;
 export const DEFAULT_PORT = 3000;
 export const RECONCILE_SNAP_DIST = 0.6; // m: prediction error before hard snap
 export const RECONNECT_GRACE_MS = 12_000;

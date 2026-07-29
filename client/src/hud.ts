@@ -10,6 +10,7 @@ import type {
 } from '@shared/protocol';
 import type { LandmarkPoi, SpawnPoi } from '@shared/worldgen';
 import type { HitFeedback } from './combat-feedback';
+import type { ConnectionQuality } from './network-smoothing';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -60,6 +61,18 @@ export class Hud {
   }
 
   setAlive(count: number): void { $('alive-count').textContent = `${count} übrig`; }
+
+  setConnectionQuality(
+    quality: ConnectionQuality,
+    rttMs: number,
+    jitterMs: number,
+    lossPct: number,
+  ): void {
+    const el = $('network-quality');
+    el.dataset.quality = quality;
+    el.textContent = rttMs > 0 ? `${Math.round(rttMs)} ms` : 'Netz …';
+    el.title = `Ping ${Math.round(rttMs)} ms · Jitter ${Math.round(jitterMs)} ms · Verlust ${lossPct.toFixed(1)} %`;
+  }
 
   setWeapon(weapon: WeaponType): void {
     $('hud').dataset.weapon = weapon;
@@ -151,7 +164,7 @@ export class Hud {
     el.textContent = '\u2715';
     el.dataset.label = feedback.label;
     el.style.opacity = '1';
-    setTimeout(() => { el.style.opacity = '0'; }, 130);
+    setTimeout(() => { el.style.opacity = '0'; }, feedback.kind === 'body' ? 145 : 190);
   }
 
   armorImpact(): void {

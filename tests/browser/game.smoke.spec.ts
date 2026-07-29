@@ -33,6 +33,9 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
 
   await expect(page.locator('#hud')).toHaveClass(/active/, { timeout: 30_000 });
   await expect(page.locator('canvas.game')).toBeVisible();
+  await expect(page.locator('#network-quality')).toBeVisible();
+  await expect.poll(async () => page.locator('#network-quality').textContent())
+    .toMatch(/(?:\d+ ms|Netz)/);
   await expect.poll(async () => page.evaluate(() => {
     const canvas = document.querySelector<HTMLCanvasElement>('canvas.game');
     const diagnostics = (window as Window & {
@@ -44,6 +47,8 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
     return !!canvas && canvas.width > 0 && canvas.height > 0
       && !!snapshot?.state.inMatch && !!snapshot.state.roundRunning && !!snapshot.entities;
   })).toBe(true);
+  const renderedCanvas = await page.locator('canvas.game').screenshot();
+  expect(renderedCanvas.byteLength).toBeGreaterThan(15_000);
 
   const canvas = page.locator('canvas.game');
   await canvas.click({ position: { x: 320, y: 240 }, force: true });
@@ -107,6 +112,8 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
             reconciliationSmoothCorrections: number;
             maxReconciliationError: number;
             maxPredictionStepsPerFrame: number;
+            interpolationDelayMs: number;
+            maxRemoteExtrapolationMs: number;
           };
         };
       };
@@ -144,6 +151,9 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
   expect(movementSamples.network?.maxPredictionStepsPerFrame).toBeGreaterThan(1);
   expect(movementSamples.network?.reconciliationHardSnaps).toBe(0);
   expect(movementSamples.network?.maxReconciliationError).toBeLessThan(1.5);
+  expect(movementSamples.network?.interpolationDelayMs).toBeGreaterThanOrEqual(75);
+  expect(movementSamples.network?.interpolationDelayMs).toBeLessThanOrEqual(185);
+  expect(movementSamples.network?.maxRemoteExtrapolationMs).toBeLessThanOrEqual(85);
 
   expect(Object.fromEntries(assetResponses)).toEqual({
     'island-atlas.png': 200,

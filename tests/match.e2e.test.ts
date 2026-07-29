@@ -126,7 +126,7 @@ describe('full LAN match over real sockets (accelerated ×40)', () => {
     expect(new Set(Object.values(rs.spawns)).size).toBe(5);
     // initial loot floor + 12+3×3 crates are announced
     expect(rs.pickups.filter((p) => p.item === 'crate')).toHaveLength(12 + 15);
-    expect(rs.pickups.length).toBeGreaterThanOrEqual(27 + 20); // + 5 spawns × 4 floor items
+    expect(rs.pickups.length).toBeGreaterThanOrEqual(27 + 25); // + 5 spawns × 5 floor items
 
     // lobby is locked during the match (§0 B3)
     const late = io(URL, { transports: ['websocket'] });

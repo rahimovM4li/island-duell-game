@@ -1,4 +1,4 @@
-import { SERVER_TICK_HZ } from '@shared/constants';
+import { MAX_LAG_COMPENSATION_MS, SERVER_TICK_HZ } from '@shared/constants';
 import type { InputMsg } from '@shared/protocol';
 
 export const SERVER_INPUT_DT = 1 / SERVER_TICK_HZ;
@@ -8,6 +8,26 @@ export const MAX_SERVER_INPUT_QUEUE = 12;
 export interface ServerInputBuffer {
   queue: InputMsg[];
   lastAcceptedSeq: number;
+}
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, value));
+
+/** Never let browser-provided values bypass authoritative movement/aim bounds. */
+export function sanitizeServerInput(input: InputMsg): InputMsg {
+  let yaw = input.yaw % (Math.PI * 2);
+  if (yaw > Math.PI) yaw -= Math.PI * 2;
+  if (yaw < -Math.PI) yaw += Math.PI * 2;
+  return {
+    ...input,
+    mx: clamp(input.mx, -1, 1),
+    mz: clamp(input.mz, -1, 1),
+    yaw,
+    pitch: clamp(input.pitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01),
+    shotAgeMs: input.shotAgeMs === undefined
+      ? undefined
+      : clamp(input.shotAgeMs, 0, MAX_LAG_COMPENSATION_MS),
+  };
 }
 
 /**

@@ -4,7 +4,7 @@ import type { BotDifficulty, ItemType, MatchMode, Recipe, ThrowKind, WeaponType 
 import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
 
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 // ---------- lobby ----------
 export interface JoinMsg { v: number; name: string; resumeToken?: string }
@@ -83,6 +83,8 @@ export interface InputMsg {
   jump: boolean;
   fire: boolean;         // held
   interact: boolean;     // held: harvest resources / weapon swap
+  /** Age of the rendered target when firing, clamped and verified host-side. */
+  shotAgeMs?: number;
   slot?: 1 | 2 | 3;      // weapon slot switch (3 = throwable)
   reload?: boolean;
   /** Pressing the throwable key while slot 3 is active cycles frag → smoke → flash. */
@@ -203,6 +205,7 @@ export type GameEvent =
       armor?: boolean;
       shieldBreak?: boolean;
       damage?: number;
+      absorbed?: number;
     } // shooter only
   | { type: 'care'; state: 'incoming' | 'landed' | 'taken'; x: number; z: number; by?: string }
   | { type: 'zoneStep'; tier: number; targetRadius: number; dot: number }
@@ -255,10 +258,12 @@ export function isJoinMsg(m: unknown): m is JoinMsg {
 
 export function isInputMsg(m: unknown): m is InputMsg {
   const x = m as InputMsg;
-  return !!x && isNum(x.seq) && isNum(x.dt) && isNum(x.mx) && isNum(x.mz)
+  return !!x && isNum(x.seq) && Number.isSafeInteger(x.seq) && x.seq >= 0
+    && isNum(x.dt) && isNum(x.mx) && isNum(x.mz)
     && isNum(x.yaw) && isNum(x.pitch)
     && isBool(x.sprint) && isBool(x.sneak) && (x.prone === undefined || isBool(x.prone)) && isBool(x.aim)
     && isBool(x.jump) && isBool(x.fire) && isBool(x.interact)
+    && (x.shotAgeMs === undefined || (isNum(x.shotAgeMs) && x.shotAgeMs >= 0 && x.shotAgeMs <= 500))
     && (x.slot === undefined || x.slot === 1 || x.slot === 2 || x.slot === 3)
     && (x.reload === undefined || isBool(x.reload))
     && (x.throwCycle === undefined || isBool(x.throwCycle));

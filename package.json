@@ -17,7 +17,8 @@
     "typecheck": "tsc -p shared/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit && tsc -p client/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:browser": "npm run build && playwright test"
+    "test:browser": "npm run build && playwright test",
+    "loot:audit": "node --import tsx scripts/audit-loot.ts"
   },
   "devDependencies": {
     "@gltf-transform/cli": "^4.4.1",

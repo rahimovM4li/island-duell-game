@@ -498,13 +498,13 @@ export function generateWorld(seed: number, n: number): WorldGen {
     `care-package seed ${seed}`,
   );
 
-  // ---- spawn loot floor: 1 melee + 1 ranged + 2 bandages within 20 m (§5.3)
+  // ---- spawn loot floor: melee + pistol + reserve ammo + 2 bandages (§5.3)
   const floorRng = mulberry32(deriveSeed(seed, 'floor'));
   const spawnFloorItems: GroundItem[] = [];
   for (const sp of spawns) {
     const melee = pick(floorRng, MELEE_FLOOR);
     const ranged = pick(floorRng, RANGED_FLOOR);
-    const items: ItemType[] = [melee, ranged, 'bandageItem', 'bandageItem'];
+    const items: ItemType[] = [melee, ranged, 'pistolAmmo', 'bandageItem', 'bandageItem'];
     items.forEach((item, k) => {
       const a = floorRng() * Math.PI * 2;
       const r = randRange(floorRng, 2, 9); // well within 20 m

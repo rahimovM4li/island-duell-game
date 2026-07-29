@@ -21,4 +21,13 @@ describe('combat feedback classification', () => {
     ];
     expect(new Set(sounds).size).toBe(sounds.length);
   });
+
+  it('shows readable damage or absorbed shield values without inventing helmet damage', () => {
+    expect(classifyHitFeedback({ headshot: false, damage: 22 }).label).toBe('TREFFER · 22');
+    expect(classifyHitFeedback({
+      headshot: true, armor: true, absorbed: 25, damage: 12,
+    }).label).toBe('KOPF · SCHILD · 25');
+    expect(classifyHitFeedback({ headshot: true, blocked: true, damage: 0 }).label)
+      .toBe('HELM GEBROCHEN');
+  });
 });

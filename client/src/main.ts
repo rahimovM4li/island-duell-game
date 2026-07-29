@@ -1,7 +1,7 @@
 // Island Duell client: menu/lobby → predicted first-person play (§8).
 // Own movement: client prediction with the SAME shared sim as the host,
 // snap-back reconciliation if drift > RECONCILE_SNAP_DIST.
-// Remote players: interpolated ~100 ms behind the newest snapshot.
+// Remote players: adaptively interpolated behind the newest snapshot.
 import * as THREE from 'three';
 import {
   BANDAGE_USE_TIME, GRENADE_FUSE, INTERACT_HOLD_SECS, INTERP_DELAY_MS, MATCH_MODE_PACE,
@@ -45,6 +45,11 @@ import {
   DEFAULT_SETTINGS, keyLabel, loadSettings, saveSettings,
   type BindAction, type PlayerSettings,
 } from './settings';
+import {
+  classifyConnectionQuality, recommendedShotRewindMs, sampleRemoteTransform,
+  smoothInterpolationDelay, targetInterpolationDelayMs,
+  type RemoteTransformSample,
+} from './network-smoothing';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -84,7 +89,7 @@ let matchMode: MatchMode = 'classic';
 let matchPace = MATCH_MODE_PACE.classic;
 
 // ---------- session state ----------
-interface RemoteBufEntry { at: number; x: number; y: number; z: number; yaw: number; pitch: number }
+type RemoteBufEntry = RemoteTransformSample;
 interface FootstepState { x: number; z: number; distance: number; bushId: number | null; bushDistance: number }
 
 let net: Net | null = null;
@@ -160,6 +165,9 @@ let reconciliationSmoothCorrections = 0;
 let lastReconciliationError = 0;
 let maxReconciliationError = 0;
 let maxPredictionStepsPerFrame = 0;
+let interpolationDelayMs = INTERP_DELAY_MS;
+let maxRemoteExtrapolationMs = 0;
+let networkHudAccumulator = 0;
 
 interface LastElimination {
   victimId: string;
@@ -462,6 +470,7 @@ const diagnostics = {
     network: {
       pendingInputs: pending.length, inboundKbPerSec: bwShown,
       rttMs: net?.rttMs ?? 0, jitterMs: net?.jitterMs ?? 0, lossPct: net?.lossPct ?? 0,
+      interpolationDelayMs, maxRemoteExtrapolationMs,
       reconciliationHardSnaps, lastReconciliationError, maxReconciliationError,
       reconciliationSmoothCorrections, maxPredictionStepsPerFrame,
     },
@@ -903,6 +912,9 @@ function onRoundStart(m: RoundStartMsg): void {
   lastReconciliationError = 0;
   maxReconciliationError = 0;
   maxPredictionStepsPerFrame = 0;
+  interpolationDelayMs = INTERP_DELAY_MS;
+  maxRemoteExtrapolationMs = 0;
+  networkHudAccumulator = 0;
   hud.setFlashWhiteout(0);
   hud.setCooking(null, GRENADE_FUSE);
   hud.setScoped(false);
@@ -959,7 +971,12 @@ function onSnapshot(m: SnapshotMsg): void {
       entities?.ensurePlayer(p.id, colorIndex.get(p.id) ?? 0);
     }
     const buf = remoteBufs.get(p.id)!;
-    buf.push({ at: now, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch });
+    buf.push({
+      at: now,
+      x: p.x, y: p.y, z: p.z,
+      yaw: p.yaw, pitch: p.pitch,
+      vx: p.vx, vy: p.vy, vz: p.vz,
+    });
     while (buf.length > 30) buf.shift();
     entities?.updatePlayer(
       p.id, p.x, p.y, p.z, p.yaw, p.pitch, p.alive, p.weapon,
@@ -1269,6 +1286,7 @@ function onEvent(e: GameEvent): void {
       if (e.target === myId) {
         flashVisual = createFlashVisual(e.intensity, e.duration, flashVisual);
         hud.setFlashWhiteout(flashVisual.opacity);
+        sfx.play('flashTinnitus', 0, Math.max(0.18, e.intensity));
         rumble(140, 0.4, 0.3);
       }
       break;
@@ -1422,6 +1440,9 @@ function frame(): void {
         jump: input.pointerLocked && input.jumpHeld,
         fire: input.fire,
         interact: input.interact,
+        shotAgeMs: input.fire || input.firePressed
+          ? recommendedShotRewindMs(interpolationDelayMs, net.rttMs)
+          : undefined,
       };
       // Preserve a complete press/release that happened between two 30-Hz
       // samples (important for quick clicks and cooked-grenade release).
@@ -1508,27 +1529,25 @@ function frame(): void {
     damageKick = Math.max(0, damageKick - dt * 3.4);
   }
 
-  // --- remote interpolation (~100 ms behind, §8) ---
-  const renderAt = now - INTERP_DELAY_MS;
+  // --- adaptive remote interpolation + one bounded loss-gap extrapolation (§8) ---
+  const interpolationTarget = targetInterpolationDelayMs(
+    net?.jitterMs ?? 0,
+    net?.lossPct ?? 0,
+  );
+  interpolationDelayMs = smoothInterpolationDelay(interpolationDelayMs, interpolationTarget, dt);
+  const renderAt = now - interpolationDelayMs;
   for (const [id, buf] of remoteBufs) {
     if (id === myId || buf.length === 0) continue;
-    let a = buf[0], b = buf[buf.length - 1];
-    for (let i = 0; i < buf.length - 1; i++) {
-      if (buf[i].at <= renderAt && buf[i + 1].at >= renderAt) { a = buf[i]; b = buf[i + 1]; break; }
-    }
-    const span = b.at - a.at;
-    const k = span > 0 ? Math.max(0, Math.min(1, (renderAt - a.at) / span)) : 1;
-    const lerp = (p: number, q: number) => p + (q - p) * k;
-    let yawDiff = b.yaw - a.yaw;
-    if (yawDiff > Math.PI) yawDiff -= 2 * Math.PI;
-    if (yawDiff < -Math.PI) yawDiff += 2 * Math.PI;
+    const sampled = sampleRemoteTransform(buf, renderAt);
+    if (!sampled) continue;
+    maxRemoteExtrapolationMs = Math.max(maxRemoteExtrapolationMs, sampled.extrapolatedMs);
     const snapP = lastSnap?.players.find((p) => p.id === id);
-    const renderX = lerp(a.x, b.x);
-    const renderY = lerp(a.y, b.y);
-    const renderZ = lerp(a.z, b.z);
+    const renderX = sampled.x;
+    const renderY = sampled.y;
+    const renderZ = sampled.z;
     entities.updatePlayer(
       id, renderX, renderY, renderZ,
-      a.yaw + yawDiff * k, lerp(a.pitch, b.pitch),
+      sampled.yaw, sampled.pitch,
       snapP?.alive ?? true, snapP?.weapon ?? 'fists',
       snapP?.sneaking ?? false, snapP?.prone ?? false, snapP?.aiming ?? false,
       snapP?.helmet ?? false,
@@ -1617,6 +1636,16 @@ function frame(): void {
       lastSnap.zone, lastSnap.pings, lastSnap.care, t,
     );
   }
+  networkHudAccumulator += dt;
+  if (networkHudAccumulator >= 0.25 && net) {
+    networkHudAccumulator = 0;
+    hud.setConnectionQuality(
+      classifyConnectionQuality(net.rttMs, net.jitterMs, net.lossPct),
+      net.rttMs,
+      net.jitterMs,
+      net.lossPct,
+    );
+  }
   updateInteractHint(dt);
   entities.update(dt, visualElapsed);
 
@@ -1646,7 +1675,7 @@ function frame(): void {
       + `pos ${move.pos.x.toFixed(1)} ${move.pos.y.toFixed(1)} ${move.pos.z.toFixed(1)} · vel ${Math.hypot(move.velX, move.velZ).toFixed(1)}\n`
       + `entities P${entityStats.players} L${entityStats.pickups} J${entityStats.projectiles} FX${entityStats.effects}\n`
       + `Rapier bodies ${physicsStats.rigidBodies} · colliders ${physicsStats.colliders} · capsules ${physicsStats.playerCapsules} · prone volumes ${physicsStats.proneHitVolumes}\n`
-      + `net ↓ ${bwShown} kB/s · ${net.rttMs.toFixed(0)} ms ±${net.jitterMs.toFixed(0)} · loss ${net.lossPct.toFixed(1)}% · pending ${pending.length}`
+      + `net ↓ ${bwShown} kB/s · ${net.rttMs.toFixed(0)} ms ±${net.jitterMs.toFixed(0)} · loss ${net.lossPct.toFixed(1)}% · interp ${interpolationDelayMs.toFixed(0)} ms · extra max ${maxRemoteExtrapolationMs.toFixed(0)} ms · pending ${pending.length}`
     : null);
 
   if (!roundRunning || !alive || !inMatch || !networkConnected) input.clearEdges();
