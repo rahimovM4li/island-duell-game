@@ -7,6 +7,25 @@ async function seedProfile(page: Page, name: string, skin = 'lagoon'): Promise<v
   }, { playerName: name, playerSkin: skin });
 }
 
+interface LobbyDiagnostics {
+  partyCode: string | null;
+  partyMembers: number;
+  renderedCharacters: number;
+  renderedPedestals: number;
+  memberLayout: Array<{ id: string; x: number; z: number; local: boolean }>;
+  labelAnchors: Array<{ id: string; x: number; y: number; right: number; visible: boolean }>;
+}
+
+async function readLobbyDiagnostics(page: Page): Promise<LobbyDiagnostics | null> {
+  return page.evaluate(() => (
+    (window as Window & {
+      __ISLAND_DUELL_DIAGNOSTICS__?: {
+        snapshot(): { lobby: LobbyDiagnostics };
+      };
+    }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().lobby ?? null
+  ));
+}
+
 async function expectLobbyLogoNotClipped(page: Page): Promise<void> {
   const logoLayout = await page.locator('.lobby-logo').evaluate((logo: HTMLImageElement) => {
     const brand = logo.closest<HTMLElement>('.lobby-brand')!;
@@ -165,13 +184,35 @@ test('two clients create and join one code party with two rendered lobby charact
   await expect(host.locator('#party-fill-row')).toBeVisible();
   await expect(host.getByRole('button', { name: 'Privates Schnellspiel starten' })).toBeEnabled();
   await expect(guest.getByRole('button', { name: 'Warte auf den Host' })).toBeDisabled();
-  await expect.poll(async () => host.evaluate(() => (
-    (window as Window & {
-      __ISLAND_DUELL_DIAGNOSTICS__?: {
-        snapshot(): { lobby: { partyMembers: number; renderedCharacters: number } };
-      };
-    }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().lobby
-  ))).toEqual({ partyCode: code, partyMembers: 2, renderedCharacters: 2 });
+  await expect.poll(async () => {
+    const lobby = await readLobbyDiagnostics(host);
+    return lobby && {
+      partyCode: lobby.partyCode,
+      partyMembers: lobby.partyMembers,
+      renderedCharacters: lobby.renderedCharacters,
+      renderedPedestals: lobby.renderedPedestals,
+    };
+  }).toEqual({
+    partyCode: code,
+    partyMembers: 2,
+    renderedCharacters: 2,
+    renderedPedestals: 2,
+  });
+  await expect.poll(async () => (await readLobbyDiagnostics(guest))?.renderedPedestals).toBe(2);
+  const [hostLobby, guestLobby] = await Promise.all([
+    readLobbyDiagnostics(host),
+    readLobbyDiagnostics(guest),
+  ]);
+  for (const lobby of [hostLobby!, guestLobby!]) {
+    const local = lobby.memberLayout[0];
+    const remote = lobby.memberLayout[1];
+    const localAnchor = lobby.labelAnchors.find((anchor) => anchor.id === local.id)!;
+    expect(local.local).toBe(true);
+    expect(remote.local).toBe(false);
+    expect(Math.abs(localAnchor.x - 640)).toBeLessThan(12);
+    expect(local.x * 7.4 + local.z * 9.8)
+      .toBeGreaterThan(remote.x * 7.4 + remote.z * 9.8);
+  }
   await expect(host.locator('.party-dock')).not.toContainText(/PartyHost|PartyGuest/);
   await expect(guest.locator('.party-dock')).not.toContainText(/PartyHost|PartyGuest/);
   await expect(host.locator('.party-dock').getByRole('button')).toHaveCount(2);
@@ -195,6 +236,9 @@ test('two clients create and join one code party with two rendered lobby charact
       / (Math.min(foreground, background) + 0.05);
   });
   expect(leaveButtonContrast).toBeGreaterThanOrEqual(4.5);
+  const kickButton = host.getByRole('button', { name: 'PartyGuest aus der Party entfernen' });
+  await expect(kickButton).toBeVisible();
+  await expect(guest.locator('.lobby-kick-button')).toHaveCount(0);
 
   const layout = await host.evaluate(() => {
     const party = document.querySelector('.party-dock')!.getBoundingClientRect();
@@ -208,6 +252,18 @@ test('two clients create and join one code party with two rendered lobby charact
     };
   });
   expect(layout).toEqual({ overlap: false, partyCompact: true, inside: true });
+
+  await kickButton.click();
+  await expect.poll(async () => {
+    const lobby = await readLobbyDiagnostics(host);
+    return lobby && {
+      partyMembers: lobby.partyMembers,
+      renderedCharacters: lobby.renderedCharacters,
+      renderedPedestals: lobby.renderedPedestals,
+    };
+  }).toEqual({ partyMembers: 1, renderedCharacters: 1, renderedPedestals: 1 });
+  await expect(host.locator('.lobby-kick-button')).toHaveCount(0);
+  await expect(guest.locator('#party-empty')).toBeVisible();
 
   await hostContext.close();
   await guestContext.close();

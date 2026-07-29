@@ -124,6 +124,9 @@ export class Net {
       ...(resumeToken ? { resumeToken } : {}),
     });
   }
+  kickPartyMember(playerId: string): void {
+    this.socket.emit(C2S.kickPartyMember, { playerId });
+  }
   updatePartySettings(selection: PartySelection, fillBots: boolean): void {
     this.socket.emit(C2S.updatePartySettings, { selection, fillBots });
   }

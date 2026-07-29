@@ -9,6 +9,15 @@ const disposeMaterial = (material: THREE.Material | THREE.Material[]) => {
 };
 
 const CHARACTER_FACING_CAMERA_Y = Math.PI + 0.42;
+const MAX_LOBBY_MEMBERS = 5;
+
+export interface LobbyMemberLabelAnchor {
+  id: string;
+  x: number;
+  y: number;
+  right: number;
+  visible: boolean;
+}
 
 export class LobbyScene {
   readonly scene = new THREE.Scene();
@@ -18,17 +27,28 @@ export class LobbyScene {
     asset: CharacterAsset;
     baseX: number;
     baseY: number;
+    baseZ: number;
     phase: number;
     label: THREE.Sprite;
   }[] = [];
   private currentSkin: PlayerSkinId;
-  private readonly pedestal = new THREE.Group();
+  private readonly pedestalBases = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.78, 0.9, 0.18, 12),
+    new THREE.MeshLambertMaterial({ color: 0xffffff }),
+    MAX_LOBBY_MEMBERS,
+  );
+  private readonly pedestalInsets = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.68, 0.74, 0.08, 12),
+    new THREE.MeshLambertMaterial({ color: 0xffffff }),
+    MAX_LOBBY_MEMBERS,
+  );
   private readonly nature = new THREE.Group();
   private readonly desktopDetails = new THREE.Group();
   private readonly clouds = new THREE.Group();
   private readonly reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   get memberCount(): number { return this.characters.length; }
+  get pedestalCount(): number { return this.pedestalBases.count; }
 
   constructor(skin: PlayerSkinId) {
     this.currentSkin = skin;
@@ -57,22 +77,16 @@ export class LobbyScene {
     fill.position.set(10, 6, -8);
     this.scene.add(fill);
 
-    const ring = new THREE.Mesh(
-      new THREE.CylinderGeometry(2.4, 2.65, 0.32, 20),
-      new THREE.MeshLambertMaterial({ color: 0x516a6c }),
-    );
-    ring.position.y = 0.08;
-    ring.receiveShadow = true;
-    ring.castShadow = true;
-    this.pedestal.add(ring);
-    const inset = new THREE.Mesh(
-      new THREE.CylinderGeometry(2.12, 2.24, 0.16, 20),
-      new THREE.MeshLambertMaterial({ color: 0x82a49a }),
-    );
-    inset.position.y = 0.32;
-    inset.receiveShadow = true;
-    this.pedestal.add(inset);
-    this.scene.add(this.pedestal);
+    this.pedestalBases.name = 'Lobby_PlayerPedestal_Bases';
+    this.pedestalInsets.name = 'Lobby_PlayerPedestal_Insets';
+    this.pedestalBases.count = 0;
+    this.pedestalInsets.count = 0;
+    this.pedestalBases.castShadow = true;
+    this.pedestalBases.receiveShadow = true;
+    this.pedestalInsets.receiveShadow = true;
+    this.pedestalBases.frustumCulled = false;
+    this.pedestalInsets.frustumCulled = false;
+    this.scene.add(this.pedestalBases, this.pedestalInsets);
 
     this.addLandscape();
     this.scene.add(this.nature);
@@ -356,8 +370,8 @@ export class LobbyScene {
     this.loadCharacter();
   }
 
-  setPartyMembers(members: PartyMemberInfo[]): boolean {
-    const roster = members.length > 0
+  setPartyMembers(members: PartyMemberInfo[], localMemberId?: string): boolean {
+    const incoming = members.length > 0
       ? members.slice(0, 5)
       : [{
           id: 'local-preview',
@@ -366,13 +380,22 @@ export class LobbyScene {
           isHost: false,
           connected: true,
         }];
+    const localIndex = localMemberId
+      ? incoming.findIndex((member) => member.id === localMemberId)
+      : 0;
+    const roster = localIndex > 0
+      ? [incoming[localIndex], ...incoming.filter((_, index) => index !== localIndex)]
+      : incoming;
+    const positions = this.lineupPositions(roster.length);
     const next = roster.map((member, index) => {
       const asset = gameAssets.cloneCharacter(playerSkinColor(member.skin));
       if (!asset) return null;
-      const positions = this.lineupPositions(roster.length);
-      const x = positions[index];
-      const scale = roster.length >= 4 ? 1.02 : roster.length === 3 ? 1.1 : 1.2;
-      asset.group.position.set(x, 0.4, Math.abs(x) * 0.06);
+      const { x, z } = positions[index];
+      const lineupScale = roster.length >= 5
+        ? 0.94
+        : roster.length === 4 ? 1 : roster.length === 3 ? 1.07 : roster.length === 2 ? 1.13 : 1.2;
+      const scale = lineupScale + (index === 0 ? 0.04 : 0);
+      asset.group.position.set(x, 0.26, z);
       asset.group.rotation.y = CHARACTER_FACING_CAMERA_Y + x * -0.025;
       asset.group.scale.setScalar(scale);
       asset.group.traverse((object) => {
@@ -383,13 +406,18 @@ export class LobbyScene {
         }
       });
       const label = this.makeNameLabel(member.name, member.isHost, member.connected);
-      label.position.set(x, 3.55 * scale, 0.12 + Math.abs(x) * 0.06);
+      const labelWidth = roster.length >= 5
+        ? 1.1
+        : roster.length === 4 ? 1.3 : roster.length === 3 ? 1.62 : roster.length === 2 ? 2 : 2.5;
+      label.scale.set(labelWidth, labelWidth / 4.54, 1);
+      label.position.set(x, 0.26 + 3.25 * scale, z + 0.08);
       this.scene.add(asset.group, label);
       return {
         id: member.id,
         asset,
         baseX: x,
-        baseY: 0.4,
+        baseY: 0.26,
+        baseZ: z,
         phase: index * 1.17,
         label,
       };
@@ -404,12 +432,93 @@ export class LobbyScene {
     }
     this.clearCharacters();
     this.characters = next;
+    this.updatePedestals(positions);
     return true;
   }
 
-  private lineupPositions(count: number): number[] {
-    const spacing = count >= 5 ? 1.42 : count === 4 ? 1.58 : count === 3 ? 1.85 : 2.25;
-    return Array.from({ length: count }, (_, index) => (index - (count - 1) / 2) * spacing);
+  private lineupPositions(count: number): Array<{ x: number; z: number }> {
+    const formations: Record<number, Array<{ side: number; front: number }>> = {
+      1: [{ side: 0, front: 0.72 }],
+      2: [{ side: 0, front: 0.72 }, { side: 2, front: -0.18 }],
+      3: [
+        { side: 0, front: 0.72 },
+        { side: -1.82, front: -0.28 },
+        { side: 1.82, front: -0.28 },
+      ],
+      4: [
+        { side: 0, front: 0.78 },
+        { side: -2.35, front: -0.42 },
+        { side: -0.92, front: -0.72 },
+        { side: 1.55, front: -0.48 },
+      ],
+      5: [
+        { side: 0, front: 0.82 },
+        { side: -2.58, front: -0.45 },
+        { side: -1.26, front: -0.76 },
+        { side: 1.26, front: -0.76 },
+        { side: 2.58, front: -0.45 },
+      ],
+    };
+    const cameraDistance = Math.hypot(this.camera.position.x, this.camera.position.z);
+    const towardCameraX = this.camera.position.x / cameraDistance;
+    const towardCameraZ = this.camera.position.z / cameraDistance;
+    const screenRightX = towardCameraZ;
+    const screenRightZ = -towardCameraX;
+    return formations[Math.max(1, Math.min(MAX_LOBBY_MEMBERS, count))].map(({ side, front }) => ({
+      x: screenRightX * side + towardCameraX * front,
+      z: screenRightZ * side + towardCameraZ * front,
+    }));
+  }
+
+  private updatePedestals(positions: Array<{ x: number; z: number }>): void {
+    const transform = new THREE.Object3D();
+    const localBase = new THREE.Color(0x607979);
+    const remoteBase = new THREE.Color(0x516a6c);
+    const localInset = new THREE.Color(0x99b7aa);
+    const remoteInset = new THREE.Color(0x82a49a);
+    this.pedestalBases.count = positions.length;
+    this.pedestalInsets.count = positions.length;
+    positions.forEach(({ x, z }, index) => {
+      transform.position.set(x, 0.09, z);
+      transform.updateMatrix();
+      this.pedestalBases.setMatrixAt(index, transform.matrix);
+      this.pedestalBases.setColorAt(index, index === 0 ? localBase : remoteBase);
+      transform.position.y = 0.22;
+      transform.updateMatrix();
+      this.pedestalInsets.setMatrixAt(index, transform.matrix);
+      this.pedestalInsets.setColorAt(index, index === 0 ? localInset : remoteInset);
+    });
+    this.pedestalBases.instanceMatrix.needsUpdate = true;
+    this.pedestalInsets.instanceMatrix.needsUpdate = true;
+    if (this.pedestalBases.instanceColor) this.pedestalBases.instanceColor.needsUpdate = true;
+    if (this.pedestalInsets.instanceColor) this.pedestalInsets.instanceColor.needsUpdate = true;
+  }
+
+  memberLayout(): Array<{ id: string; x: number; z: number; local: boolean }> {
+    return this.characters.map((entry, index) => ({
+      id: entry.id,
+      x: entry.baseX,
+      z: entry.baseZ,
+      local: index === 0,
+    }));
+  }
+
+  projectMemberLabels(width: number, height: number): LobbyMemberLabelAnchor[] {
+    this.camera.updateMatrixWorld();
+    const cameraRight = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).normalize();
+    return this.characters.map((entry) => {
+      const center = entry.label.getWorldPosition(new THREE.Vector3());
+      const right = center.clone().addScaledVector(cameraRight, entry.label.scale.x * 0.42);
+      center.project(this.camera);
+      right.project(this.camera);
+      return {
+        id: entry.id,
+        x: (center.x * 0.5 + 0.5) * width,
+        y: (-center.y * 0.5 + 0.5) * height,
+        right: (right.x * 0.5 + 0.5) * width,
+        visible: center.z >= -1 && center.z <= 1,
+      };
+    });
   }
 
   private makeNameLabel(name: string, host: boolean, connected: boolean): THREE.Sprite {
@@ -473,7 +582,6 @@ export class LobbyScene {
       entry.asset.armLeft.rotation.x = 0.04 + breathe * 0.025;
       entry.asset.armRight.rotation.x = -0.04 - breathe * 0.025;
     }
-    this.pedestal.rotation.y = this.reduceMotion ? 0 : Math.sin(elapsed * 0.18) * 0.018;
     if (!this.reduceMotion) {
       this.clouds.children.forEach((cloud, index) => {
         cloud.position.x = Number(cloud.userData.baseX)

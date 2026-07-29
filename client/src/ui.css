@@ -187,6 +187,39 @@ button.lobby-tool:hover:not(:disabled) { background: rgba(19, 42, 51, .94); }
 .lobby-player-label small { display: block; }
 .lobby-player-label strong { font-size: 13px; }
 .lobby-player-label small { margin-top: 1px; color: var(--muted); font-size: 10px; }
+#lobby-kick-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+button.lobby-kick-button {
+  position: absolute;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 167, 172, .55);
+  border-radius: 7px;
+  background: #4b2228;
+  color: #ffd9db;
+  box-shadow: 0 2px 6px rgba(5, 12, 16, .42);
+  font-size: 17px;
+  line-height: 1;
+  pointer-events: auto;
+}
+button.lobby-kick-button:hover:not(:disabled) {
+  transform: translate(-50%, -50%) scale(1.05);
+  background: #633039;
+  color: #fff1f2;
+}
+button.lobby-kick-button:active:not(:disabled) {
+  transform: translate(-50%, -50%) scale(.96);
+  background: #3e1b20;
+}
+button.lobby-kick-button:focus-visible { outline-color: rgba(240, 93, 98, .62); }
 .party-dock {
   position: absolute;
   left: 28px;

@@ -12,6 +12,7 @@ interface TestClient {
   party: PartyStateMsg | null;
   partyStates: PartyStateMsg[];
   partyErrors: PartyErrorMsg[];
+  kicked: string[];
   matches: MatchStartMsg[];
   lobbies: Array<{
     roomId: string;
@@ -48,6 +49,7 @@ async function client(name: string, skin: PlayerSkinId = 'lagoon'): Promise<Test
     party: null,
     partyStates: [],
     partyErrors: [],
+    kicked: [],
     matches: [],
     lobbies: [],
   };
@@ -57,6 +59,7 @@ async function client(name: string, skin: PlayerSkinId = 'lagoon'): Promise<Test
     if (message) result.partyStates.push(message);
   });
   socket.on('partyError', (message: PartyErrorMsg) => { result.partyErrors.push(message); });
+  socket.on('kicked', (message: { reason: string }) => { result.kicked.push(message.reason); });
   socket.on('matchStart', (message: MatchStartMsg) => { result.matches.push(message); });
   socket.on('lobbyState', (message) => { result.lobbies.push(message); });
   await new Promise<void>((resolve, reject) => {
@@ -99,6 +102,37 @@ afterEach(async () => {
 });
 
 describe('persistent code parties', () => {
+  it('lets only the idle party host kick another member', async () => {
+    const port = ++portSequence;
+    server = await startServer(port, { countdownMs: 250, partyReconnectGraceMs: 500 });
+    const host = await client('KickHost', 'lagoon');
+    const guest = await client('KickGuest', 'coral');
+    createParty(host);
+    await until(() => !!host.party, 'kick party created');
+    joinParty(guest, host.party!.code);
+    await until(() => host.party?.members.length === 2, 'kick guest joined');
+
+    guest.socket.emit('kickPartyMember', { playerId: host.session!.playerId });
+    await until(
+      () => guest.partyErrors.some((error) => error.operation === 'kick'),
+      'non-host kick rejected',
+    );
+    expect(host.party?.members).toHaveLength(2);
+
+    host.socket.emit('kickPartyMember', { playerId: host.session!.playerId });
+    await until(
+      () => host.partyErrors.some((error) => error.operation === 'kick'),
+      'self kick rejected',
+    );
+    expect(host.party?.members).toHaveLength(2);
+
+    host.socket.emit('kickPartyMember', { playerId: guest.session!.playerId });
+    await until(() => host.party?.members.length === 1, 'guest removed from party');
+    await until(() => guest.kicked.length === 1, 'guest receives kick reason');
+    expect(guest.kicked[0]).toMatch(/party-host/i);
+    expect(host.party?.members[0].id).toBe(host.session!.playerId);
+  });
+
   it('creates readable case-insensitive codes, enforces capacity/host rights, reconnects, migrates host and cleans up', async () => {
     const port = ++portSequence;
     server = await startServer(port, { countdownMs: 250, partyReconnectGraceMs: 500 });

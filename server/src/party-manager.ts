@@ -4,6 +4,7 @@ import { MAX_PLAYERS, RECONNECT_GRACE_MS } from '@shared/constants';
 import {
   C2S,
   isCreatePartyMsg,
+  isKickMsg,
   isJoinPartyMsg,
   isPartySettingsMsg,
   S2C,
@@ -102,6 +103,7 @@ export class PartyManager {
       this.leaveParty(socket);
       if (typeof ack === 'function') (ack as () => void)();
     });
+    socket.on(C2S.kickPartyMember, (payload: unknown) => this.kickMember(socket, payload));
     socket.on(C2S.updatePartySettings, (payload: unknown) => this.updateSettings(socket, payload));
     socket.on(C2S.startPartyQuickMatch, () => this.startPrivateMatch(socket));
     socket.on(C2S.startPartyQueue, () => this.startPublicQueue(socket));
@@ -265,6 +267,34 @@ export class PartyManager {
     }
     if (party.roomId) this.cancelPartyRoom(party);
     this.removeMember(party, member.id, true);
+  }
+
+  private kickMember(socket: Socket, payload: unknown): void {
+    const party = this.requireHost(socket, 'kick');
+    if (!party) return;
+    if (!isKickMsg(payload)) {
+      this.error(socket, 'kick', 'Dieses Party-Mitglied ist ungültig.');
+      return;
+    }
+    if (party.queueStatus !== 'idle' || party.roomId) {
+      this.error(socket, 'kick', 'Während der Suche oder eines Matches können Spieler nicht entfernt werden.');
+      return;
+    }
+    if (payload.playerId === party.hostId) {
+      this.error(socket, 'kick', 'Der Party-Host kann sich nicht selbst entfernen.');
+      return;
+    }
+    const target = party.members.get(payload.playerId);
+    if (!target) {
+      this.error(socket, 'kick', 'Dieses Party-Mitglied wurde nicht gefunden.');
+      return;
+    }
+
+    target.socket.emit(S2C.kicked, {
+      reason: 'Du wurdest vom Party-Host aus der Lobby entfernt.',
+    });
+    this.removeMember(party, target.id, false);
+    setTimeout(() => target.socket.disconnect(true), 0);
   }
 
   private updateSettings(socket: Socket, payload: unknown): void {

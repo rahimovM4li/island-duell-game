@@ -481,6 +481,9 @@ const diagnostics = {
       partyCode: currentPartyState?.code ?? null,
       partyMembers: currentPartyState?.members.length ?? 0,
       renderedCharacters: lobbyScene.memberCount,
+      renderedPedestals: lobbyScene.pedestalCount,
+      memberLayout: lobbyScene.memberLayout(),
+      labelAnchors: lobbyScene.projectMemberLabels(window.innerWidth, window.innerHeight),
     },
     entities: entities?.stats() ?? null,
     environment: world?.stats() ?? null,
@@ -700,6 +703,51 @@ $('party-fill-bots').addEventListener('change', () => {
   net?.updatePartySettings('quick', ($('party-fill-bots') as HTMLInputElement).checked);
 });
 
+function renderLobbyKickControls(
+  party: PartyStateMsg | null,
+  host: boolean,
+  locked: boolean,
+): void {
+  const root = $('lobby-kick-controls');
+  if (!party || !host || locked) {
+    root.replaceChildren();
+    return;
+  }
+  root.replaceChildren(...party.members
+    .filter((member) => member.id !== myId)
+    .map((member) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'lobby-kick-button';
+      button.dataset.memberId = member.id;
+      button.textContent = '×';
+      button.hidden = true;
+      button.title = `${member.name} aus der Party entfernen`;
+      button.setAttribute('aria-label', `${member.name} aus der Party entfernen`);
+      button.addEventListener('click', () => {
+        net?.kickPartyMember(member.id);
+        $('party-status').textContent = `${member.name} wird aus der Party entfernt.`;
+        sfx.play('click');
+      });
+      return button;
+    }));
+  updateLobbyKickControlPositions();
+}
+
+function updateLobbyKickControlPositions(): void {
+  const anchors = new Map(
+    lobbyScene.projectMemberLabels(window.innerWidth, window.innerHeight)
+      .map((anchor) => [anchor.id, anchor]),
+  );
+  for (const button of document.querySelectorAll<HTMLButtonElement>('.lobby-kick-button')) {
+    const anchor = anchors.get(button.dataset.memberId ?? '');
+    button.hidden = !anchor?.visible;
+    if (!anchor?.visible) continue;
+    button.style.left = `${anchor.right - 15}px`;
+    button.style.top = `${anchor.y}px`;
+  }
+}
+
 async function handlePrimaryLobbyAction(): Promise<void> {
   if (matchmakingBusy) return;
   if (currentPartyState) {
@@ -740,7 +788,7 @@ function renderLobbyControls(): void {
     $('party-status').textContent = locked
       ? party.queueStatus === 'match' ? 'Party ist im Match.' : 'Die Party sucht gemeinsam eine öffentliche Insel.'
       : host ? 'Du steuerst Modus und Start.' : 'Nur der Host kann Modus und Start ändern.';
-    lobbyScene.setPartyMembers(party.members);
+    lobbyScene.setPartyMembers(party.members, myId);
   } else {
     $('party-status').textContent = '';
     lobbyScene.setPartyMembers([{
@@ -749,8 +797,9 @@ function renderLobbyControls(): void {
       skin: lobbyProfile.skin,
       isHost: false,
       connected: true,
-    }]);
+    }], 'local-preview');
   }
+  renderLobbyKickControls(party, host, locked);
 
   if (party && lobbyMode === 'training') lobbyMode = party.selection;
   if (party && !locked) lobbyMode = party.selection;
@@ -1764,6 +1813,7 @@ function frame(): void {
     input.clearEdges();
     updateWaitingCountdown();
     lobbyScene.update(visualElapsed);
+    updateLobbyKickControlPositions();
     renderer.render(lobbyScene.scene, lobbyScene.camera);
     return;
   }

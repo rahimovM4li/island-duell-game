@@ -5,7 +5,7 @@ import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
 import type { PlayerSkinId } from './multiplayer';
 
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 
 // ---------- lobby ----------
 export interface PlayerProfileMsg {
@@ -84,7 +84,7 @@ export interface UpdatePartySettingsMsg {
   fillBots: boolean;
 }
 export interface PartyErrorMsg {
-  operation: 'create' | 'join' | 'leave' | 'settings' | 'start' | 'queue' | 'cancel';
+  operation: 'create' | 'join' | 'leave' | 'kick' | 'settings' | 'start' | 'queue' | 'cancel';
   reason: string;
 }
 
@@ -286,6 +286,7 @@ export const C2S = {
   createParty: 'createParty',
   joinPartyByCode: 'joinPartyByCode',
   leaveParty: 'leaveParty',
+  kickPartyMember: 'kickPartyMember',
   updatePartySettings: 'updatePartySettings',
   startPartyQuickMatch: 'startPartyQuickMatch',
   startPartyQueue: 'startPartyQueue',
