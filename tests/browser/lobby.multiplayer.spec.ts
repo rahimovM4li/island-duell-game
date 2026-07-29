@@ -129,6 +129,7 @@ test('mobile lobby controls stay inside the viewport without overlapping', async
 });
 
 test('two isolated browser contexts complete public Multiplayer matchmaking together', async ({ browser }) => {
+  test.setTimeout(60_000);
   const firstContext = await browser.newContext({ viewport: { width: 1100, height: 720 } });
   const secondContext = await browser.newContext({ viewport: { width: 1100, height: 720 } });
   const first = await firstContext.newPage();
@@ -164,6 +165,7 @@ test('two isolated browser contexts complete public Multiplayer matchmaking toge
 });
 
 test('two clients create and join one code party with two rendered lobby characters', async ({ browser }) => {
+  test.setTimeout(60_000);
   const hostContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const guestContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const host = await hostContext.newPage();

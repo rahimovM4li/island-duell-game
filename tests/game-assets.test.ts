@@ -153,3 +153,43 @@ describe('helmet GLB assets', () => {
     expect(readNodes('character.glb')).toContain('player_forearm_r_pivot');
   });
 });
+
+describe('tactical survivor GLB', () => {
+  it('exports the recolourable carrier, articulated limbs and first-person glove', () => {
+    const buffer = readFileSync(path.resolve('client/public/assets/character.glb'));
+    const jsonLength = buffer.readUInt32LE(12);
+    const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLength)) as {
+      nodes?: Array<{ name?: string }>;
+      meshes?: Array<{
+        name?: string;
+        primitives?: Array<{ indices?: number; attributes?: { POSITION?: number } }>;
+      }>;
+      accessors?: Array<{ count?: number }>;
+    };
+    const nodes = new Set((gltf.nodes ?? []).flatMap((node) => node.name ? [node.name] : []));
+    for (const name of [
+      'player_accent_chest',
+      'player_accent_leg_l',
+      'player_accent_leg_r',
+      'player_accent_wrist_l',
+      'player_accent_wrist_r',
+      'player_forearm_l_pivot',
+      'player_forearm_r_pivot',
+      'view_hand_root',
+      'view_hand_body',
+      'view_hand_accent',
+    ]) {
+      expect(nodes).toContain(name);
+    }
+
+    const triangles = (gltf.meshes ?? []).reduce((sum, mesh) =>
+      sum + (mesh.primitives ?? []).reduce((meshSum, primitive) => {
+        const accessor = primitive.indices ?? primitive.attributes?.POSITION;
+        return meshSum + Math.floor(
+          (accessor === undefined ? 0 : gltf.accessors?.[accessor]?.count ?? 0) / 3,
+        );
+      }, 0), 0);
+    expect(triangles).toBeGreaterThanOrEqual(2_500);
+    expect(triangles).toBeLessThanOrEqual(5_000);
+  });
+});

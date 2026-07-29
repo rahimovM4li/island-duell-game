@@ -19,7 +19,7 @@ const ENVIRONMENT_NAMES = [
   'bush', 'grass', 'stump', 'rock_chips', 'rubble', 'barrel',
   'brazier', 'torch', 'spawn_marker', 'ruin_wall', 'ruin_cap',
 ] as const;
-const ASSET_REVISION = '2026-07-28-prone-machete-v2';
+const ASSET_REVISION = '2026-07-29-tactical-survivor-v2';
 
 type AssetWeapon = (typeof WEAPON_NAMES)[number];
 type AssetLandmark = (typeof LANDMARK_NAMES)[number];
@@ -38,6 +38,10 @@ export interface CharacterAsset {
   forearmRight: THREE.Object3D;
   legLeft: THREE.Object3D;
   legRight: THREE.Object3D;
+}
+
+export interface ViewHandAsset {
+  group: THREE.Group;
 }
 
 function publicAsset(path: string): string {
@@ -81,6 +85,7 @@ class GameAssetLibrary {
   private props = new Map<AssetProp, THREE.Object3D>();
   private environment = new Map<AssetEnvironment, THREE.Object3D>();
   private character: THREE.Object3D | null = null;
+  private viewHand: THREE.Object3D | null = null;
   private middleIsland: THREE.Object3D | null = null;
   private atlasMaterial: THREE.MeshStandardMaterial | null = null;
 
@@ -137,6 +142,8 @@ class GameAssetLibrary {
       this.landmarks = collectTemplates(landmarkGltf.scene, LANDMARK_NAMES, 'poi');
       this.character = characterGltf.scene.getObjectByName('player_survivor') ?? null;
       if (!this.character) throw new Error('Asset template missing: player_survivor');
+      this.viewHand = characterGltf.scene.getObjectByName('view_hand_root') ?? null;
+      if (!this.viewHand) throw new Error('Asset template missing: view_hand_root');
       this.middleIsland = middleIslandGltf.scene.getObjectByName('middle_island') ?? null;
       if (!this.middleIsland) throw new Error('Asset template missing: middle_island');
       baseMaterial.userData.assetShared = true;
@@ -149,6 +156,7 @@ class GameAssetLibrary {
       this.environment.clear();
       this.landmarks.clear();
       this.character = null;
+      this.viewHand = null;
       this.middleIsland = null;
       console.warn('Compact game assets unavailable; using procedural fallback.', error);
       return false;
@@ -299,7 +307,7 @@ class GameAssetLibrary {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
       const material = this.instanceMaterial();
-      if (mesh === body) material.color.setHex(color);
+      if (mesh.name.startsWith('player_accent')) material.color.setHex(color);
       mesh.material = material;
     });
     helmet.visible = false;
@@ -308,6 +316,20 @@ class GameAssetLibrary {
       group, body, head, helmet, weaponSocket,
       armLeft, armRight, forearmLeft, forearmRight, legLeft, legRight,
     };
+  }
+
+  cloneViewHand(color: number): ViewHandAsset | null {
+    if (!this.viewHand || !this.atlasMaterial) return null;
+    const group = this.viewHand.clone(true) as THREE.Group;
+    group.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const material = this.instanceMaterial();
+      if (mesh.name.startsWith('view_hand_accent')) material.color.setHex(color);
+      mesh.material = material;
+    });
+    group.userData.compactAsset = true;
+    return { group };
   }
 }
 

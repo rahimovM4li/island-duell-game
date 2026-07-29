@@ -261,6 +261,29 @@ function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
   return gameAssets.cloneWeapon(weapon) ?? proceduralWeaponModel(weapon);
 }
 
+function proceduralViewHand(color: number): THREE.Group {
+  const g = new THREE.Group();
+  const glove = 0x171d22;
+  const armour = 0x30383f;
+  const skin = 0xd8a878;
+  addCylinder(g, 0.14, 0.48, [0, -0.07, 0.34], 0x20272e, [Math.PI / 2, 0, 0], 8);
+  addBox(g, [0.25, 0.17, 0.17], [0, -0.05, 0.08], armour);
+  addBox(g, [0.22, 0.13, 0.23], [0, -0.01, -0.06], glove);
+  addBox(g, [0.18, 0.04, 0.14], [0, 0.07, -0.06], armour);
+  addCylinder(g, 0.155, 0.075, [0, -0.075, 0.23], color, [Math.PI / 2, 0, 0], 10);
+  for (const x of [-0.073, -0.025, 0.025, 0.073]) {
+    addBox(g, [0.04, 0.06, 0.12], [x, 0, -0.18], glove);
+    addBox(g, [0.036, 0.055, 0.07], [x, 0, -0.275], skin);
+  }
+  addBox(g, [0.065, 0.07, 0.12], [-0.135, -0.01, -0.11], glove, [0, 0.35, -0.42]);
+  addBox(g, [0.055, 0.06, 0.07], [-0.17, -0.01, -0.19], skin, [0, 0.35, -0.42]);
+  return g;
+}
+
+function viewHandModel(color: number): THREE.Group {
+  return gameAssets.cloneViewHand(color)?.group ?? proceduralViewHand(color);
+}
+
 function crateModel(color: number, care = false): THREE.Group {
   const g = new THREE.Group();
   const w = care ? 1.35 : 1.05, h = care ? 0.9 : 0.68, d = care ? 1.08 : 0.86;
@@ -417,8 +440,33 @@ function pickupLabel(p: PickupInfo): THREE.Sprite {
   return sprite;
 }
 
-function viewmodelFor(weapon: WeaponType | 'none'): THREE.Group {
-  const g = weaponModel(weapon);
+function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Group {
+  const g = new THREE.Group();
+  if (weapon !== 'fists' && weapon !== 'none') g.add(weaponModel(weapon));
+
+  const addHand = (
+    x: number, y: number, z: number, mirrored = false, yaw = 0,
+  ): THREE.Group => {
+    const hand = viewHandModel(skinColor);
+    hand.position.set(x, y, z);
+    hand.rotation.y = yaw;
+    if (mirrored) hand.scale.x = -1;
+    g.add(hand);
+    return hand;
+  };
+
+  if (weapon === 'fists') {
+    const right = addHand(0.10, -0.04, -0.08, false, 0.08);
+    right.rotation.z = 0.12;
+  } else if (weapon !== 'none') {
+    addHand(0.02, -0.08, 0.035);
+    if (weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper' || weapon === 'spear') {
+      const supportZ = weapon === 'sniper' ? -0.70 : weapon === 'spear' ? -0.58 : -0.55;
+      const support = addHand(-0.13, -0.035, supportZ, true, -0.12);
+      support.rotation.z = -0.18;
+    }
+  }
+
   const scale = weapon === 'rifle' || weapon === 'shotgun' || weapon === 'spear' || weapon === 'sniper'
     ? 0.36 : 0.54;
   g.scale.setScalar(scale);
@@ -487,6 +535,7 @@ export class Entities {
   readonly viewRoot = new THREE.Group();
   private viewWeapon: THREE.Group | null = null;
   private viewWeaponType: WeaponType | 'none' | null = null;
+  private viewSkinColor = PLAYER_COLORS[1];
   private swingT = 1; // 0..1 melee swing animation
   private kickT = 1;  // fire recoil
   private aiming = false;
@@ -1212,10 +1261,20 @@ export class Entities {
       this.viewRoot.remove(this.viewWeapon);
       disposeObject(this.viewWeapon);
     }
-    this.viewWeapon = viewmodelFor(weapon);
+    this.viewWeapon = viewmodelFor(weapon, this.viewSkinColor);
     this.viewWeaponType = weapon;
     this.reloadT = -1;
     this.viewRoot.add(this.viewWeapon);
+  }
+
+  setViewSkin(colorIndex: number): void {
+    const next = PLAYER_COLORS[colorIndex % PLAYER_COLORS.length];
+    if (next === this.viewSkinColor) return;
+    this.viewSkinColor = next;
+    if (this.viewWeaponType === null) return;
+    const current = this.viewWeaponType;
+    this.viewWeaponType = null;
+    this.setViewWeapon(current);
   }
 
   setAiming(aiming: boolean): void { this.aiming = aiming; }
@@ -1426,6 +1485,46 @@ export class Entities {
         this.fx.splice(i, 1);
       }
     }
+  }
+
+  viewmodelStats(): {
+    weapon: WeaponType | 'none' | null;
+    visible: boolean;
+    hands: Array<{
+      ndcMin: { x: number; y: number; z: number };
+      ndcMax: { x: number; y: number; z: number };
+    }>;
+  } {
+    this.camera.updateMatrixWorld(true);
+    this.viewRoot.updateMatrixWorld(true);
+    const hands: Array<{
+      ndcMin: { x: number; y: number; z: number };
+      ndcMax: { x: number; y: number; z: number };
+    }> = [];
+    this.viewWeapon?.traverse((object) => {
+      if (object.name !== 'view_hand_root') return;
+      const bounds = new THREE.Box3().setFromObject(object);
+      const ndcMin = new THREE.Vector3(Infinity, Infinity, Infinity);
+      const ndcMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+      for (const x of [bounds.min.x, bounds.max.x]) {
+        for (const y of [bounds.min.y, bounds.max.y]) {
+          for (const z of [bounds.min.z, bounds.max.z]) {
+            const projected = new THREE.Vector3(x, y, z).project(this.camera);
+            ndcMin.min(projected);
+            ndcMax.max(projected);
+          }
+        }
+      }
+      hands.push({
+        ndcMin: { x: ndcMin.x, y: ndcMin.y, z: ndcMin.z },
+        ndcMax: { x: ndcMax.x, y: ndcMax.y, z: ndcMax.z },
+      });
+    });
+    return {
+      weapon: this.viewWeaponType,
+      visible: this.viewRoot.visible,
+      hands,
+    };
   }
 
   stats(): { players: number; pickups: number; projectiles: number; effects: number } {

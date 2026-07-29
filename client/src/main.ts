@@ -485,7 +485,10 @@ const diagnostics = {
       memberLayout: lobbyScene.memberLayout(),
       labelAnchors: lobbyScene.projectMemberLabels(window.innerWidth, window.innerHeight),
     },
-    entities: entities?.stats() ?? null,
+    entities: entities ? {
+      ...entities.stats(),
+      viewmodel: entities.viewmodelStats(),
+    } : null,
     environment: world?.stats() ?? null,
     physics: phys?.stats() ?? null,
     network: {
@@ -1308,6 +1311,7 @@ function onMatchStart(m: MatchStartMsg): void {
   world.setColliderDebugVisible(showDebug);
   world.scene.add(camera);
   entities = new Entities(world.scene, camera, m.seed);
+  entities.setViewSkin(colorIndex.get(myId) ?? skinIndex(lobbyProfile.skin));
   phys = new GamePhysics(rapier, gen);
   phys.addPlayer(myId, { x: 0, y: 20, z: 0 });
   hud.initIsland(gen.params, gen.spawns, gen.pois);
@@ -1752,11 +1756,11 @@ function updateViewmodel(
     activeThrow: InventoryState['activeThrow'];
   },
 ): WeaponType | 'none' {
-  let w: WeaponType | 'none' = 'none';
+  let w: WeaponType | 'none' = 'fists';
   if (active === 3) w = THROW_WEAPON[inv.activeThrow];
   else {
     const slot = active === 1 ? inv.primary : inv.secondary;
-    w = slot ? slot.type : 'none';
+    w = slot ? slot.type : 'fists';
   }
   entities?.setViewWeapon(w);
   return w;

@@ -46,6 +46,35 @@ test('player can enter training from the new 3D lobby and render the match', asy
   const renderedCanvas = await page.locator('canvas.game').screenshot();
   expect(renderedCanvas.byteLength).toBeGreaterThan(15_000);
 
+  const fistViewmodel = await page.evaluate(() => (
+    (window as Window & {
+      __ISLAND_DUELL_DIAGNOSTICS__?: {
+        snapshot(): {
+          entities: {
+            viewmodel: {
+              weapon: string | null;
+              visible: boolean;
+              hands: Array<{
+                ndcMin: { x: number; y: number; z: number };
+                ndcMax: { x: number; y: number; z: number };
+              }>;
+            };
+          } | null;
+        };
+      };
+    }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().entities?.viewmodel
+  ));
+  expect(fistViewmodel?.weapon).toBe('fists');
+  expect(fistViewmodel?.visible).toBe(true);
+  expect(fistViewmodel?.hands).toHaveLength(1);
+  const handsWithVisibleArea = fistViewmodel?.hands.filter((hand) => {
+    const visibleWidth = Math.min(1, hand.ndcMax.x) - Math.max(-1, hand.ndcMin.x);
+    const visibleHeight = Math.min(1, hand.ndcMax.y) - Math.max(-1, hand.ndcMin.y);
+    return visibleWidth > 0.2 && visibleHeight > 0.2
+      && hand.ndcMax.z >= -1 && hand.ndcMin.z <= 1;
+  });
+  expect(handsWithVisibleArea).toHaveLength(1);
+
   const canvas = page.locator('canvas.game');
   await canvas.click({ position: { x: 320, y: 240 }, force: true });
   await expect.poll(async () => page.evaluate(() => (
