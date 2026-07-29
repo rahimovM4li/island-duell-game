@@ -1,23 +1,50 @@
 # Island Duell (v0.1)
 
-Browser-basiertes 3D-Multiplayer-Duell (FFA, 2–5 Spieler) auf einer prozeduralen Insel — LAN-only, ein Spieler hostet. Umsetzung des PRD v0.1.
+Browser-basiertes 3D-Multiplayer-Duell (FFA, 2–5 Spieler) auf einer prozeduralen
+Insel mit serverautoritativem öffentlichen Matchmaking und persistenten
+Code-Partys. Eine Party garantiert nur, dass Freunde in derselben Runde landen;
+auf der Insel kämpft weiterhin jeder gegen jeden.
 
-## Schnellstart (LAN)
+## Spielen und lokal starten
+
+Öffentlich: [https://island-duell-game.onrender.com](https://island-duell-game.onrender.com)
 
 ```bash
-npm install        # einmalig
-npm run build      # einmalig (Client-Produktionsbuild)
-npm start          # startet den Host-Server auf Port 3000
+npm install
+npm run build
+npm start          # Express, Socket.IO und Client auf Port 3000
 ```
 
-Der Server druckt die LAN-URLs, z. B. `http://192.168.1.42:3000`. Alle Mitspieler
-öffnen diese URL im Browser (Chrome/Edge/Firefox, WebGL2 nötig). Der erste
-Spieler in der Lobby ist Host und startet das Match, sobald 2–5 Spieler da und
-alle bereit sind.
+Danach `http://localhost:3000` öffnen. Im Vite-Dev-Modus (`npm run dev`) verbindet
+sich der Client automatisch mit `http://localhost:3000`; im Produktionsbuild
+verwendet er dieselbe Origin. Eine abweichende öffentliche Adresse kann beim
+Build über `VITE_MULTIPLAYER_URL` gesetzt werden. Es gibt keine IP-Eingabe in
+der Spieleroberfläche.
 
 Anderer Port (PowerShell): `$env:PORT=4000; npm start`
 
 Anderer Port (macOS/Linux): `PORT=4000 npm start`.
+
+Zusätzliche Browser-Origins werden serverseitig als kommaseparierte Allowlist
+über `CORS_ORIGINS` ergänzt. Standardmäßig sind localhost und die Render-Origin
+erlaubt. Cookies oder Credentials werden nicht verwendet.
+
+## Lobby und Spielmodi
+
+- **Schnellspiel:** privates Match nur für die aktuelle Code-Party, ab zwei
+  echten Mitgliedern. Der Host kann bei zwei bis vier Spielern optional auf fünf
+  Gegner mit Bots auffüllen. Diese Matches zählen als normale Matches, nicht als
+  Training.
+- **Multiplayer:** öffentliche Queue nur mit echten Spielern. Singles und ganze
+  Partys werden kombiniert, wobei eine Party immer atomar in denselben Raum
+  wechselt. Ab zwei Menschen läuft ein serverautoritärer 15-Sekunden-Countdown;
+  bis fünf Spieler können währenddessen beitreten.
+- **Training:** separates Solo-Match gegen konfigurierbare Bots. Mit aktiver
+  Party ist Training gesperrt.
+
+Teamcodes sind sechs Zeichen lang, nicht case-sensitiv und vermeiden
+verwechselbare Zeichen. Party-Host, Mitglieder und Code bleiben nach einem Match
+erhalten; bei einem Host-Austritt übernimmt ein verbundener Spieler.
 
 ## Steuerung
 
@@ -79,7 +106,7 @@ wichtigsten Tasten dauerhaft konfigurieren.
   neue Insel (neuer Seed). Der Death Recap zeigt Ursache, Distanz, letzten
   Schaden und Rest-HP des Gegners; die Wertung zeigt Kills, Schaden,
   Präzision und Loot.
-- **LAN-Ausfälle:** Spieleridentitäten bleiben bei kurzen Aussetzern 12 Sekunden
+- **Verbindungsausfälle:** Spieleridentitäten bleiben bei kurzen Aussetzern 12 Sekunden
   reserviert. Reconnect/Reload desselben Browser-Tabs nimmt die laufende Runde
   wieder auf; Hostwechsel und Verbindungsstatus werden verständlich angezeigt.
 
@@ -110,7 +137,10 @@ damit das Aufräumen und Neuaufbauen der Physikwelt.
 shared/   deterministische Spiellogik: Konstanten (§-Balancing), Seed-RNG,
           Terrain (analytische Höhenfunktion), Worldgen, Timeline/Zone,
           Scoring, Protokoll (+Type Guards), Rapier-Physik, Movement-Sim
-server/   Host-autoritativer GameRoom: Lobby, fester 30-Hz-Input-/Physik-Tick,
+server/   PartyManager für Codes, Hostwechsel und Party-Reconnect; RoomManager
+          für atomare Gruppen-Zuweisung sowie isolierte öffentliche, private
+          Schnellspiel-, Trainings- und Legacy-Räume; pro Raum ein
+          hostautoritatives GameRoom mit festem 30-Hz-Input-/Physik-Tick,
           begrenzte monotone Input-Queues, Kampf (Melee/Hitscan/Projektile/
           Granaten), Kampfstatistiken, Reconnect-Sitzungen,
           Zone, Loot/Kisten, Crafting,
@@ -126,7 +156,12 @@ client/   Three.js-Renderer (Chunk-Terrain 8×8 à 32 m, instanzierte Vegetation
 - Host sendet nur den **Seed** — Insel, Spawns, Kisten-Positionen und Vegetation
   generiert jeder Client deterministisch identisch (mulberry32 + Streams).
 - Snapshots sind **vollständig** (20 Hz), Events (Schüsse, Treffer, Loot, …)
-  kommen zusätzlich als Batch pro Tick. Kein Rollback/Lag-Compensation — LAN.
+  kommen zusätzlich als Batch pro Tick und ausschließlich in den zugehörigen
+  Socket.IO-Raum.
+
+PartyManager und RoomManager sind bewusst In-Memory und für genau eine
+Render-Instanz ausgelegt. Horizontale Skalierung benötigt später geteilten
+Party-/Room-/Token-State und einen Socket.IO-Adapter, beispielsweise Redis.
 
 ### Kompakte 3D-Assets
 
@@ -155,4 +190,4 @@ Ablauf steht in `docs/ASSET_PIPELINE.md`.
 
 ## Nicht enthalten (out of scope v1, per PRD)
 
-Mobile, Teams, Internet-Hosting/NAT, Anti-Cheat, Progression, Voice.
+Mobile Touch-Steuerung, Teams, Anti-Cheat, Konten/Cloud-Progression und Voice.

@@ -2,13 +2,19 @@
 import { io, Socket } from 'socket.io-client';
 import { C2S, S2C, PROTOCOL_VERSION } from '@shared/protocol';
 import type {
-  GameEvent, InputMsg, KickedMsg, LobbyStateMsg, MatchEndMsg, MatchStartMsg,
+  GameEvent, InputMsg, KickedMsg, LobbyStateMsg, MatchEndMsg, MatchmakingStateMsg,
+  MatchStartMsg, PartyErrorMsg, PartySelection, PartyStateMsg, RoomAssignedMsg,
   RoundEndMsg, RoundStartMsg, SessionMsg, SnapshotMsg,
 } from '@shared/protocol';
 import type { BotDifficulty, MatchMode, Recipe } from '@shared/constants';
+import type { PlayerSkinId } from '@shared/multiplayer';
 
 export interface NetHandlers {
   onLobby(m: LobbyStateMsg): void;
+  onParty(m: PartyStateMsg | null): void;
+  onPartyError(m: PartyErrorMsg): void;
+  onRoomAssigned(m: RoomAssignedMsg): void;
+  onMatchmakingState(m: MatchmakingStateMsg): void;
   onJoinError(msg: string): void;
   onKicked(msg: KickedMsg): void;
   onMatchStart(m: MatchStartMsg): void;
@@ -39,12 +45,21 @@ export class Net {
 
   constructor(url: string | undefined, h: NetHandlers) {
     const options = {
-      transports: ['websocket'] as ('websocket')[],
-      reconnection: true, reconnectionDelay: 500, reconnectionDelayMax: 2500,
+      transports: ['polling', 'websocket'] as ('polling' | 'websocket')[],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 650,
+      reconnectionDelayMax: 8_000,
+      randomizationFactor: 0.45,
+      timeout: 20_000,
     };
     this.socket = url ? io(url, options) : io(options);
 
     this.socket.on(S2C.lobbyState, (m) => h.onLobby(m));
+    this.socket.on(S2C.partyState, (m: PartyStateMsg | null) => h.onParty(m));
+    this.socket.on(S2C.partyError, (m: PartyErrorMsg) => h.onPartyError(m));
+    this.socket.on(S2C.roomAssigned, (m: RoomAssignedMsg) => h.onRoomAssigned(m));
+    this.socket.on(S2C.matchmakingState, (m: MatchmakingStateMsg) => h.onMatchmakingState(m));
     this.socket.on(S2C.session, (m: SessionMsg) => { this.playerId = m.playerId; h.onSession(m); });
     this.socket.on(S2C.connectionNotice, (m) => h.onConnectionNotice(m));
     this.socket.on(S2C.joinError, (m) => h.onJoinError(typeof m === 'string' ? m : m?.reason ?? 'Beitritt abgelehnt'));
@@ -63,8 +78,64 @@ export class Net {
 
   get id(): string { return this.playerId; }
 
-  join(name: string, resumeToken?: string): void {
-    this.socket.emit(C2S.join, { v: PROTOCOL_VERSION, name, ...(resumeToken ? { resumeToken } : {}) });
+  join(name: string, skin?: PlayerSkinId, resumeToken?: string): void {
+    this.socket.emit(C2S.join, {
+      v: PROTOCOL_VERSION,
+      name,
+      ...(skin ? { skin } : {}),
+      ...(resumeToken ? { resumeToken } : {}),
+    });
+  }
+  quickPlay(name: string, skin: PlayerSkinId, resumeToken?: string): void {
+    this.socket.emit(C2S.quickPlay, {
+      v: PROTOCOL_VERSION,
+      name,
+      skin,
+      ...(resumeToken ? { resumeToken } : {}),
+    });
+  }
+  startTrainingRoom(
+    name: string,
+    skin: PlayerSkinId,
+    bots: number,
+    difficulty: BotDifficulty,
+    mode: MatchMode,
+    resumeToken?: string,
+  ): void {
+    this.socket.emit(C2S.startTrainingRoom, {
+      v: PROTOCOL_VERSION,
+      name,
+      skin,
+      bots,
+      difficulty,
+      mode,
+      ...(resumeToken ? { resumeToken } : {}),
+    });
+  }
+  createParty(name: string, skin: PlayerSkinId): void {
+    this.socket.emit(C2S.createParty, { v: PROTOCOL_VERSION, name, skin });
+  }
+  joinPartyByCode(name: string, skin: PlayerSkinId, code: string, resumeToken?: string): void {
+    this.socket.emit(C2S.joinPartyByCode, {
+      v: PROTOCOL_VERSION,
+      name,
+      skin,
+      code,
+      ...(resumeToken ? { resumeToken } : {}),
+    });
+  }
+  updatePartySettings(selection: PartySelection, fillBots: boolean): void {
+    this.socket.emit(C2S.updatePartySettings, { selection, fillBots });
+  }
+  startPartyQuickMatch(): void { this.socket.emit(C2S.startPartyQuickMatch); }
+  startPartyQueue(): void { this.socket.emit(C2S.startPartyQueue); }
+  cancelPartyQueue(): void { this.socket.emit(C2S.cancelPartyQueue); }
+  leaveParty(): Promise<void> {
+    if (!this.socket.connected) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, 800);
+      this.socket.emit(C2S.leaveParty, () => { clearTimeout(timer); resolve(); });
+    });
   }
   setReady(ready: boolean): void { this.socket.emit(C2S.setReady, { ready }); }
   startMatch(mode: MatchMode): void { this.socket.emit(C2S.startMatch, { mode }); }

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('host can enter a quick solo match and render the 3D scene', async ({ page }) => {
+test('player can enter training from the new 3D lobby and render the match', async ({ page }) => {
   const pageErrors: string[] = [];
   const assetResponses = new Map<string, number>();
   const assetWarnings: string[] = [];
@@ -22,14 +22,10 @@ test('host can enter a quick solo match and render the 3D scene', async ({ page 
 
   await page.goto('/');
   await expect(page).toHaveTitle('Island Duell');
-  await page.getByLabel('Spielername').fill('BrowserTest');
-  await page.getByRole('button', { name: 'Beitreten' }).click();
-
-  await expect(page.locator('#lobby-screen')).not.toHaveClass(/hidden/, { timeout: 30_000 });
-  await expect(page.locator('#lobby-players li')).toHaveCount(1);
-  await page.locator('#match-mode').selectOption('quick');
+  await expect(page.locator('#lobby-player-name')).toContainText(/IslandPlayer\d{3}/);
+  await page.getByRole('radio', { name: /Training/ }).click();
   await page.locator('#practice-bots').selectOption('1');
-  await page.getByRole('button', { name: /Solo/ }).click();
+  await page.getByRole('button', { name: /Training starten/ }).click();
 
   await expect(page.locator('#hud')).toHaveClass(/active/, { timeout: 30_000 });
   await expect(page.locator('canvas.game')).toBeVisible();

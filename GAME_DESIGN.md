@@ -2,16 +2,18 @@
 
 ## Spieler-Versprechen
 
-Ein kurzes, taktisches First-Person-LAN-Duell, in dem Loot, Geräusche, Sichtlinien
-und die schrumpfende Zone wichtiger sind als reine Reaktionsgeschwindigkeit.
+Ein kurzes, taktisches First-Person-Duell, in dem Freunde über einen leicht
+teilbaren Code zuverlässig zusammenbleiben können, ohne dass aus dem freien
+Jeder-gegen-jeden ein Teammodus wird. Loot, Geräusche, Sichtlinien und die
+schrumpfende Zone sind wichtiger als reine Reaktionsgeschwindigkeit.
 
 ## Kernloop
 
-1. An einem Rand-POI spawnen und die erste Ausrüstung lesen.
-2. Waffen, Heilung und Materialien looten oder craften.
-3. Zwischen sicherer Deckung, guter Sicht und hochwertigem Loot abwägen.
+1. Allein öffentlich suchen, trainieren oder eine persistente Code-Party bilden.
+2. Als vollständige Party oder Single in eine Runde wechseln.
+3. An einem Rand-POI spawnen, looten und zwischen Deckung, Sicht und Risiko abwägen.
 4. Über Schritte, Schüsse, Minimap-Pings und Sichtkontakt Gegner orten.
-5. Kämpfen, Platzierungspunkte erhalten und nach kurzer Wertung neu starten.
+5. Kämpfen, Platzierungspunkte erhalten und nach der Wertung in dieselbe Party zurückkehren.
 
 Primäre Verben: bewegen, schleichen/sprinten, zielen, kämpfen, looten, sammeln,
 craften und heilen. Druck entsteht durch knappe Ausrüstung, verräterische laute
@@ -82,5 +84,5 @@ Probeverlust; Hostwechsel und Serverausfälle haben sichtbare Statusmeldungen.
 
 ## Bewusste Nicht-Ziele
 
-Mobile Steuerung, Teams, Cloud-Matchmaking/NAT-Traversal, Meta-Progression,
+Mobile Touch-Steuerung, verbündete Teams/Friendly-Fire-Schutz, Meta-Progression,
 Lag-Compensation/Rollback, Anti-Cheat und Voice-Chat bleiben außerhalb von v1.

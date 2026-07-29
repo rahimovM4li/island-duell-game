@@ -2,6 +2,7 @@
 // projectiles, care package, tracer/explosion FX and the first-person viewmodel.
 import * as THREE from 'three';
 import { WEAPONS, type WeaponType } from '@shared/constants';
+import { PLAYER_SKINS } from '@shared/multiplayer';
 import type { PickupInfo, SmokeSnap, SnapProjectile } from '@shared/protocol';
 import { deriveSeed, mulberry32, type Rng } from '@shared/rng';
 import {
@@ -12,7 +13,7 @@ import {
 } from './character-animation';
 import { gameAssets, isSharedAssetResource } from './game-assets';
 
-const PLAYER_COLORS = [0xe5484d, 0x3d9df2, 0x46c46e, 0xd8b43a, 0xb26ee0];
+const PLAYER_COLORS = PLAYER_SKINS.map((skin) => skin.color);
 const HIT_FLASH_BODY = new THREE.Color(0xffffff);
 const HIT_FLASH_HEAD = new THREE.Color(0xffe7a3);
 const FLASH_FACE_WHITE = new THREE.Color(0xffffff);

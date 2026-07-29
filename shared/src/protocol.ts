@@ -3,26 +3,90 @@
 import type { BotDifficulty, ItemType, MatchMode, Recipe, ThrowKind, WeaponType } from './constants';
 import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
+import type { PlayerSkinId } from './multiplayer';
 
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 14;
 
 // ---------- lobby ----------
-export interface JoinMsg { v: number; name: string; resumeToken?: string }
+export interface PlayerProfileMsg {
+  v: number;
+  name: string;
+  skin: PlayerSkinId;
+  resumeToken?: string;
+}
+export interface JoinMsg { v: number; name: string; skin?: PlayerSkinId; resumeToken?: string }
+export type QuickPlayMsg = PlayerProfileMsg;
+export interface TrainingMsg extends PlayerProfileMsg {
+  bots: number;
+  difficulty: BotDifficulty;
+  mode: MatchMode;
+}
 export interface SessionMsg {
   playerId: string;
   resumeToken: string;
   resumed: boolean;
   reconnectGraceMs: number;
+  roomId?: string;
+  partyCode?: string;
 }
-export interface PlayerInfo { id: string; name: string; ready: boolean; isHost: boolean; connected: boolean }
+export interface PlayerInfo {
+  id: string;
+  name: string;
+  skin: PlayerSkinId;
+  ready: boolean;
+  isHost: boolean;
+  connected: boolean;
+}
+export type RoomKind = 'quick' | 'party-quick' | 'training' | 'legacy';
+export type RoomStatus = 'waiting' | 'countdown' | 'match';
 export interface LobbyStateMsg {
   players: PlayerInfo[];
   maxPlayers: number;
   inMatch: boolean; // lobby locked (§0 B3)
   canStart: boolean;
+  roomId: string;
+  kind: RoomKind;
+  status: RoomStatus;
+  countdownEndsAt: number | null;
+}
+export interface RoomAssignedMsg { roomId: string; kind: RoomKind; resumed: boolean }
+export interface MatchmakingStateMsg {
+  state: 'connecting' | 'searching' | 'assigned' | 'cancelled';
+  message: string;
 }
 export interface KickMsg { playerId: string }
 export interface KickedMsg { reason: string }
+
+export type PartySelection = 'quick' | 'multiplayer';
+export type PartyQueueStatus = 'idle' | 'queued' | 'countdown' | 'match';
+export interface PartyMemberInfo {
+  id: string;
+  name: string;
+  skin: PlayerSkinId;
+  isHost: boolean;
+  connected: boolean;
+}
+export interface PartyStateMsg {
+  code: string;
+  hostId: string;
+  members: PartyMemberInfo[];
+  maxPlayers: number;
+  selection: PartySelection;
+  fillBots: boolean;
+  queueStatus: PartyQueueStatus;
+  roomId?: string;
+  countdownEndsAt: number | null;
+}
+export type CreatePartyMsg = PlayerProfileMsg;
+export interface JoinPartyMsg extends PlayerProfileMsg { code: string }
+export interface UpdatePartySettingsMsg {
+  selection: PartySelection;
+  fillBots: boolean;
+}
+export interface PartyErrorMsg {
+  operation: 'create' | 'join' | 'leave' | 'settings' | 'start' | 'queue' | 'cancel';
+  reason: string;
+}
 
 // ---------- match / round ----------
 export interface MatchStartMsg {
@@ -217,6 +281,15 @@ export type GameEvent =
 // ---------- socket.io event names ----------
 export const C2S = {
   join: 'join',
+  quickPlay: 'quickPlay',
+  startTrainingRoom: 'startTrainingRoom',
+  createParty: 'createParty',
+  joinPartyByCode: 'joinPartyByCode',
+  leaveParty: 'leaveParty',
+  updatePartySettings: 'updatePartySettings',
+  startPartyQuickMatch: 'startPartyQuickMatch',
+  startPartyQueue: 'startPartyQueue',
+  cancelPartyQueue: 'cancelPartyQueue',
   setReady: 'setReady',
   startMatch: 'startMatch',
   startPractice: 'startPractice',
@@ -234,6 +307,10 @@ export interface StartPracticeMsg { bots: number; difficulty: BotDifficulty; mod
 
 export const S2C = {
   lobbyState: 'lobbyState',
+  partyState: 'partyState',
+  partyError: 'partyError',
+  roomAssigned: 'roomAssigned',
+  matchmakingState: 'matchmakingState',
   session: 'session',
   connectionNotice: 'connectionNotice',
   joinError: 'joinError',
@@ -252,8 +329,35 @@ const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
 
 export function isJoinMsg(m: unknown): m is JoinMsg {
   const x = m as JoinMsg;
-  return !!x && x.v === PROTOCOL_VERSION && typeof x.name === 'string' && x.name.length >= 1 && x.name.length <= 24
+  return !!x && x.v === PROTOCOL_VERSION && typeof x.name === 'string' && x.name.length >= 1 && x.name.length <= 48
+    && (x.skin === undefined || typeof x.skin === 'string')
     && (x.resumeToken === undefined || (typeof x.resumeToken === 'string' && x.resumeToken.length <= 96));
+}
+
+export function isQuickPlayMsg(m: unknown): m is QuickPlayMsg {
+  const x = m as QuickPlayMsg;
+  return isJoinMsg(x) && typeof x.skin === 'string';
+}
+
+export function isTrainingMsg(m: unknown): m is TrainingMsg {
+  const x = m as TrainingMsg;
+  return isQuickPlayMsg(x) && isStartPracticeMsg(x);
+}
+
+export function isCreatePartyMsg(m: unknown): m is CreatePartyMsg {
+  return isQuickPlayMsg(m);
+}
+
+export function isJoinPartyMsg(m: unknown): m is JoinPartyMsg {
+  const x = m as JoinPartyMsg;
+  return isQuickPlayMsg(x) && typeof x.code === 'string' && x.code.length >= 4 && x.code.length <= 12;
+}
+
+export function isPartySettingsMsg(m: unknown): m is UpdatePartySettingsMsg {
+  const x = m as UpdatePartySettingsMsg;
+  return !!x
+    && (x.selection === 'quick' || x.selection === 'multiplayer')
+    && isBool(x.fillBots);
 }
 
 export function isInputMsg(m: unknown): m is InputMsg {

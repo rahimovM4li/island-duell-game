@@ -127,3 +127,35 @@ export function saveProfile(name: string, profile: PlayerProfile): void {
     localStorage.setItem(keyFor(name), JSON.stringify(profile));
   } catch { /* storage full/blocked: profile is a nice-to-have */ }
 }
+
+export function renameStoredProfile(fromName: string, toName: string): void {
+  if (!fromName || fromName.toLocaleLowerCase() === toName.toLocaleLowerCase()) return;
+  const source = loadProfile(fromName);
+  const target = loadProfile(toName);
+  const sourceHasData = source.career.matches > 0 || source.history.length > 0;
+  if (!sourceHasData) return;
+  const bestPlacements = [source.career.bestPlacement, target.career.bestPlacement].filter((value) => value > 0);
+  const merged: PlayerProfile = {
+    version: 1,
+    career: {
+      matches: source.career.matches + target.career.matches,
+      wins: source.career.wins + target.career.wins,
+      kills: source.career.kills + target.career.kills,
+      deaths: source.career.deaths + target.career.deaths,
+      damageDealt: source.career.damageDealt + target.career.damageDealt,
+      damageTaken: source.career.damageTaken + target.career.damageTaken,
+      headshots: source.career.headshots + target.career.headshots,
+      shotsFired: source.career.shotsFired + target.career.shotsFired,
+      hits: source.career.hits + target.career.hits,
+      roundsPlayed: source.career.roundsPlayed + target.career.roundsPlayed,
+      bestPlacement: bestPlacements.length ? Math.min(...bestPlacements) : 0,
+    },
+    history: [...source.history, ...target.history]
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, HISTORY_LIMIT),
+  };
+  saveProfile(toName, merged);
+  try {
+    localStorage.removeItem(keyFor(fromName));
+  } catch { /* storage cleanup is best effort */ }
+}

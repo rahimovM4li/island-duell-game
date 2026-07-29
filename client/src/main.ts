@@ -15,9 +15,12 @@ import { freshMoveState, stanceForWeapon, stepMovement, type MoveState } from '@
 import { bushAt, generateWorld, type WorldGen } from '@shared/worldgen';
 import type {
   GameEvent, InputMsg, InventoryState, LobbyStateMsg, MatchStartMsg, PickupInfo,
-  MatchEndMsg, RoundEndMsg, RoundStartMsg, SessionMsg, SnapPlayer, SnapshotMsg,
+  MatchEndMsg, PartySelection, PartyStateMsg, RoundEndMsg, RoundStartMsg, SessionMsg,
+  SnapPlayer, SnapshotMsg,
 } from '@shared/protocol';
+import { PLAYER_SKINS, type PlayerSkinId } from '@shared/multiplayer';
 import { recordProfileMatch, renderProfile } from './profile-ui';
+import { renameStoredProfile } from './profile';
 import { Net } from './net';
 import { InputState } from './input';
 import { World } from './world';
@@ -50,6 +53,9 @@ import {
   smoothInterpolationDelay, targetInterpolationDelayMs,
   type RemoteTransformSample,
 } from './network-smoothing';
+import { loadLobbyProfile, saveLobbyProfile, type LobbyProfile } from './lobby-profile';
+import { LobbyScene } from './lobby-scene';
+import { currentMultiplayerUrl } from './multiplayer-url';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -65,11 +71,16 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.domElement.classList.add('game');
 $('app').appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.08, 400);
+let lobbyProfile: LobbyProfile = loadLobbyProfile();
+const lobbyScene = new LobbyScene(lobbyProfile.skin);
+lobbyScene.resize(window.innerWidth, window.innerHeight);
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  lobbyScene.resize(window.innerWidth, window.innerHeight);
 });
+void gameAssets.preload(renderer).then(() => lobbyScene.loadCharacter());
 
 let settings: PlayerSettings = loadSettings();
 const input = new InputState(renderer.domElement, settings);
@@ -98,6 +109,7 @@ let rapierPromise: Promise<RapierModule> | null = null;
 let myId = '';
 let myName = '';
 let isHost = false;
+let currentPartyState: PartyStateMsg | null = null;
 let inMatch = false;
 let names = new Map<string, string>();
 let colorIndex = new Map<string, number>();
@@ -228,6 +240,7 @@ function finishMatchEnd(m: MatchEndMsg): void {
   roundRunning = false;
   inMatch = false;
   hud.showMatchEnd(m.standings, m.totals, m.winnerName, myId, m.winnerId === myId, m.stats);
+  if (currentPartyState) $('rematch-btn').textContent = 'Zurück zur Party';
   document.exitPointerLock?.();
   recordProfileMatch({
     name: myName, playerId: myId, seed: matchSeed ?? 0,
@@ -464,6 +477,11 @@ const diagnostics = {
       geometries: renderer.info.memory.geometries,
       textures: renderer.info.memory.textures,
     },
+    lobby: {
+      partyCode: currentPartyState?.code ?? null,
+      partyMembers: currentPartyState?.members.length ?? 0,
+      renderedCharacters: lobbyScene.memberCount,
+    },
     entities: entities?.stats() ?? null,
     environment: world?.stats() ?? null,
     physics: phys?.stats() ?? null,
@@ -568,12 +586,232 @@ applyRuntimeSettings();
 
 // ---------- menu / lobby wiring ----------
 const nameInput = $('name-input') as HTMLInputElement;
-const serverInput = $('server-input') as HTMLInputElement;
 const joinButton = $('join-btn') as HTMLButtonElement;
-nameInput.value = localStorage.getItem('islandName') ?? '';
+const customizeDialog = $('customize-dialog') as HTMLDialogElement;
+type LobbyMode = 'quick' | 'multiplayer' | 'training';
+type ConnectionIntent = 'play' | 'createParty' | 'joinParty' | 'resumeParty';
+let lobbyMode: LobbyMode = 'quick';
+let matchmakingBusy = false;
+let currentLobbyState: LobbyStateMsg | null = null;
+let coldStartTimer: ReturnType<typeof setTimeout> | null = null;
+nameInput.value = lobbyProfile.name;
+$('lobby-player-name').textContent = lobbyProfile.name;
 
-$('join-btn').addEventListener('click', () => { void joinServer(); });
-nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') void joinServer(); });
+$('join-btn').addEventListener('click', () => { void handlePrimaryLobbyAction(); });
+
+function skinIndex(skin: PlayerSkinId): number {
+  const index = PLAYER_SKINS.findIndex((entry) => entry.id === skin);
+  return index >= 0 ? index : 0;
+}
+
+function renderSkinSwatches(): void {
+  const root = $('skin-swatches');
+  root.replaceChildren(...PLAYER_SKINS.map((skin) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `skin-swatch${skin.id === lobbyProfile.skin ? ' active' : ''}`;
+    button.setAttribute('role', 'radio');
+    button.setAttribute('aria-checked', String(skin.id === lobbyProfile.skin));
+    const sample = document.createElement('i');
+    sample.style.background = `#${skin.color.toString(16).padStart(6, '0')}`;
+    const label = document.createElement('span');
+    label.textContent = skin.label;
+    button.append(sample, label);
+    button.addEventListener('click', () => {
+      lobbyProfile = { ...lobbyProfile, skin: skin.id };
+      saveLobbyProfile(lobbyProfile);
+      lobbyScene.setSkin(skin.id);
+      renderSkinSwatches();
+      sfx.play('click');
+    });
+    return button;
+  }));
+}
+renderSkinSwatches();
+
+$('customize-btn').addEventListener('click', () => {
+  if (!customizeDialog.open) customizeDialog.showModal();
+  sfx.play('click');
+});
+for (const button of document.querySelectorAll<HTMLButtonElement>('[data-lobby-mode]')) {
+  button.addEventListener('click', () => {
+    const requested = button.dataset.lobbyMode;
+    lobbyMode = requested === 'training' ? 'training' : requested === 'multiplayer' ? 'multiplayer' : 'quick';
+    if (currentPartyState && isHost && lobbyMode !== 'training') {
+      net?.updatePartySettings(lobbyMode as PartySelection, currentPartyState.fillBots);
+    }
+    for (const candidate of document.querySelectorAll<HTMLButtonElement>('[data-lobby-mode]')) {
+      const active = candidate === button;
+      candidate.classList.toggle('active', active);
+      candidate.setAttribute('aria-checked', String(active));
+    }
+    $('training-options').hidden = lobbyMode !== 'training';
+    renderLobbyControls();
+    sfx.play('click');
+  });
+}
+
+$('party-create-btn').addEventListener('click', () => {
+  sfx.play('click');
+  void joinServer('createParty');
+});
+$('party-join-toggle').addEventListener('click', () => {
+  const form = $('party-join-form');
+  form.hidden = !form.hidden;
+  if (!form.hidden) ($('party-code-input') as HTMLInputElement).focus();
+  sfx.play('click');
+});
+const submitPartyCode = () => {
+  const input = $('party-code-input') as HTMLInputElement;
+  const code = input.value.trim().toUpperCase().replace(/[^A-Z2-9]/g, '');
+  input.value = code;
+  if (code.length < 4) {
+    $('party-error').textContent = 'Gib einen vollständigen Teamcode ein.';
+    return;
+  }
+  void joinServer('joinParty', code);
+};
+$('party-join-btn').addEventListener('click', submitPartyCode);
+$('party-code-input').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    submitPartyCode();
+  }
+});
+$('party-copy-btn').addEventListener('click', () => {
+  const code = currentPartyState?.code;
+  if (!code) return;
+  const button = $('party-copy-btn') as HTMLButtonElement;
+  void navigator.clipboard?.writeText(code).then(() => {
+    button.dataset.copied = 'true';
+    $('party-status').textContent = 'Teamcode kopiert.';
+    setTimeout(() => { delete button.dataset.copied; }, 900);
+  }).catch(() => {
+    $('party-error').textContent = `Teamcode: ${code}`;
+  });
+  sfx.play('click');
+});
+$('party-leave-btn').addEventListener('click', () => {
+  sfx.play('click');
+  void net?.leaveParty();
+});
+$('party-fill-bots').addEventListener('change', () => {
+  if (!currentPartyState || !isHost) return;
+  net?.updatePartySettings('quick', ($('party-fill-bots') as HTMLInputElement).checked);
+});
+
+async function handlePrimaryLobbyAction(): Promise<void> {
+  if (matchmakingBusy) return;
+  if (currentPartyState) {
+    if (!isHost) return;
+    setJoinBusy(true);
+    if (currentPartyState.queueStatus === 'queued' || currentPartyState.queueStatus === 'countdown') {
+      net?.cancelPartyQueue();
+    } else if (lobbyMode === 'quick') {
+      net?.startPartyQuickMatch();
+    } else if (lobbyMode === 'multiplayer') {
+      net?.startPartyQueue();
+    }
+    return;
+  }
+  if (lobbyMode === 'quick') await joinServer('createParty');
+  else await joinServer('play');
+}
+
+function renderLobbyControls(): void {
+  const party = currentPartyState;
+  const memberCount = party?.members.length ?? 0;
+  const host = !!party && party.hostId === myId;
+  isHost = party ? host : isHost;
+  const locked = !!party && party.queueStatus !== 'idle';
+
+  $('party-empty').hidden = !!party;
+  $('party-active').hidden = !party;
+  ($('customize-btn') as HTMLButtonElement).disabled = !!party;
+  ($('party-create-btn') as HTMLButtonElement).disabled = matchmakingBusy || !!party;
+  ($('party-join-btn') as HTMLButtonElement).disabled = matchmakingBusy || !!party;
+  ($('party-join-toggle') as HTMLButtonElement).disabled = matchmakingBusy || !!party;
+  ($('party-leave-btn') as HTMLButtonElement).disabled = party?.queueStatus === 'match';
+
+  if (party) {
+    $('party-code').textContent = party.code;
+    const copyButton = $('party-copy-btn') as HTMLButtonElement;
+    copyButton.setAttribute('aria-label', `Teamcode ${party.code} kopieren`);
+    $('party-status').textContent = locked
+      ? party.queueStatus === 'match' ? 'Party ist im Match.' : 'Die Party sucht gemeinsam eine öffentliche Insel.'
+      : host ? 'Du steuerst Modus und Start.' : 'Nur der Host kann Modus und Start ändern.';
+    lobbyScene.setPartyMembers(party.members);
+  } else {
+    $('party-status').textContent = '';
+    lobbyScene.setPartyMembers([{
+      id: 'local-preview',
+      name: lobbyProfile.name,
+      skin: lobbyProfile.skin,
+      isHost: false,
+      connected: true,
+    }]);
+  }
+
+  if (party && lobbyMode === 'training') lobbyMode = party.selection;
+  if (party && !locked) lobbyMode = party.selection;
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-lobby-mode]')) {
+    const mode = button.dataset.lobbyMode as LobbyMode;
+    const active = mode === lobbyMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-checked', String(active));
+    button.disabled = !!party && (mode === 'training' || !host || locked);
+  }
+  $('training-options').hidden = lobbyMode !== 'training';
+
+  const fillVisible = !!party
+    && lobbyMode === 'quick'
+    && memberCount >= 2
+    && memberCount <= 4;
+  $('party-fill-row').hidden = !fillVisible;
+  const fill = $('party-fill-bots') as HTMLInputElement;
+  fill.checked = party?.fillBots ?? false;
+  fill.disabled = !host || locked;
+
+  let label = 'Spielen';
+  let help = '';
+  let disabled = matchmakingBusy;
+  if (!party) {
+    if (lobbyMode === 'quick') {
+      label = 'Code-Party erstellen';
+      help = 'Schnellspiel ist privat und startet ab zwei Party-Mitgliedern.';
+    } else if (lobbyMode === 'multiplayer') {
+      label = 'Multiplayer suchen';
+      help = 'Öffentliches Matchmaking mit echten Spielern.';
+    } else {
+      label = 'Training starten';
+    }
+  } else if (!host) {
+    label = 'Warte auf den Host';
+    help = 'Der Host wählt den Modus und startet für die gesamte Party.';
+    disabled = true;
+  } else if (locked) {
+    label = party.queueStatus === 'match' ? 'Match läuft' : 'Suche abbrechen';
+    help = party.queueStatus === 'countdown'
+      ? 'Der 15-Sekunden-Countdown läuft; weitere Spieler können noch beitreten.'
+      : 'Die Party bleibt dabei garantiert zusammen.';
+    disabled = party.queueStatus === 'match';
+  } else if (lobbyMode === 'quick') {
+    label = 'Privates Schnellspiel starten';
+    help = memberCount < 2
+      ? 'Mindestens zwei echte Party-Mitglieder werden benötigt.'
+      : 'Nur eure Party spielt; Bots sind optional und normale Gegner.';
+    disabled ||= memberCount < 2;
+  } else {
+    label = 'Party-Multiplayer suchen';
+    help = 'Die gesamte Party wechselt atomar in die öffentliche Queue.';
+  }
+  joinButton.disabled = disabled;
+  const labelNode = joinButton.querySelector('span');
+  if (labelNode) labelNode.textContent = label;
+  $('mode-help').textContent = help;
+}
+
+renderLobbyControls();
 
 function ensureRapier(): Promise<RapierModule> {
   if (rapier) return Promise.resolve(rapier);
@@ -588,47 +826,145 @@ function ensureRapier(): Promise<RapierModule> {
 }
 
 function setJoinBusy(busy: boolean): void {
-  joinButton.disabled = busy;
+  matchmakingBusy = busy;
   joinButton.setAttribute('aria-busy', String(busy));
-  joinButton.textContent = busy ? 'Spiel wird geladen…' : 'Beitreten';
+  renderLobbyControls();
+  if (busy) {
+    const label = joinButton.querySelector('span');
+    if (label) label.textContent = 'Verbindung wird aufgebaut …';
+  }
 }
 
-async function joinServer(): Promise<void> {
-  const name = nameInput.value.trim();
-  if (!name) { $('menu-error').textContent = 'Bitte einen Namen eingeben.'; return; }
-  localStorage.setItem('islandName', name);
-  myName = name;
-  resumeToken = localStorage.getItem(`islandResumeToken:${name.toLocaleLowerCase()}`) ?? '';
+function setMenuStatus(message: string, error = false): void {
+  $('menu-error').textContent = message;
+  $('menu-error').classList.toggle('error', error);
+}
+
+async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode = ''): Promise<void> {
+  if (matchmakingBusy) return;
+  if (net) {
+    setJoinBusy(true);
+    if (intent === 'createParty') net.createParty(lobbyProfile.name, lobbyProfile.skin);
+    else if (intent === 'joinParty' || intent === 'resumeParty') {
+      net.joinPartyByCode(
+        lobbyProfile.name,
+        lobbyProfile.skin,
+        requestedPartyCode,
+        intent === 'resumeParty' ? resumeToken || undefined : undefined,
+      );
+    } else if (lobbyMode === 'training') {
+      const bots = Number(($('practice-bots') as HTMLSelectElement).value);
+      const difficulty = ($('practice-difficulty') as HTMLSelectElement).value as BotDifficulty;
+      net.startTrainingRoom(myName || lobbyProfile.name, lobbyProfile.skin, bots, difficulty, 'quick');
+    } else {
+      net.quickPlay(myName || lobbyProfile.name, lobbyProfile.skin);
+    }
+    return;
+  }
+  myName = lobbyProfile.name;
+  resumeToken = localStorage.getItem('islandResumeToken')
+    ?? localStorage.getItem(`islandResumeToken:${myName.toLocaleLowerCase()}`)
+    ?? '';
   sfx.unlock();
-  $('menu-error').textContent = 'Lade Physik und kompakte Spielmodelle…';
+  setMenuStatus('Spiel wird vorbereitet …');
   setJoinBusy(true);
   leavingGame = false;
 
   try {
     await Promise.all([ensureRapier(), gameAssets.preload(renderer)]);
   } catch {
-    $('menu-error').textContent = 'Die Spielphysik konnte nicht geladen werden. Bitte Seite neu laden.';
+    setMenuStatus('Die Spielinhalte konnten nicht geladen werden. Bitte lade die Seite neu.', true);
     setJoinBusy(false);
     return;
   }
 
   let url: string | undefined;
-  const manual = serverInput.value.trim();
-  if (manual) url = manual.startsWith('http') ? manual : `http://${manual}`;
-  else if (location.port === '5173') url = 'http://localhost:3000'; // vite dev
-
-  net?.dispose();
-  net = null;
+  try {
+    url = currentMultiplayerUrl();
+  } catch (error) {
+    setMenuStatus(error instanceof Error ? error.message : 'Die Multiplayer-Konfiguration ist ungültig.', true);
+    setJoinBusy(false);
+    return;
+  }
   networkConnected = false;
   joinedTransportId = '';
+  const connectionStartedAt = performance.now();
+  coldStartTimer = setTimeout(() => {
+    if (!networkConnected) setMenuStatus('Server wird gestartet … Das kann beim ersten Mal kurz dauern.');
+  }, 1_400);
 
   let nextNet!: Net;
+  let assignmentCount = 0;
+  const sendAssignment = () => {
+    const rememberedCode = currentPartyState?.code ?? localStorage.getItem('islandPartyCode') ?? '';
+    const reconnectingParty = assignmentCount > 0 && rememberedCode && resumeToken;
+    assignmentCount += 1;
+    if (reconnectingParty || intent === 'resumeParty') {
+      nextNet.joinPartyByCode(myName, lobbyProfile.skin, rememberedCode || requestedPartyCode, resumeToken || undefined);
+    } else if (intent === 'createParty') {
+      nextNet.createParty(myName, lobbyProfile.skin);
+    } else if (intent === 'joinParty') {
+      const canResume = rememberedCode.toUpperCase() === requestedPartyCode.toUpperCase();
+      nextNet.joinPartyByCode(
+        myName,
+        lobbyProfile.skin,
+        requestedPartyCode,
+        canResume ? resumeToken || undefined : undefined,
+      );
+    } else if (rememberedCode && resumeToken) {
+      nextNet.joinPartyByCode(myName, lobbyProfile.skin, rememberedCode, resumeToken);
+    } else if (lobbyMode === 'training') {
+      const bots = Number(($('practice-bots') as HTMLSelectElement).value);
+      const difficulty = ($('practice-difficulty') as HTMLSelectElement).value as BotDifficulty;
+      nextNet.startTrainingRoom(myName, lobbyProfile.skin, bots, difficulty, 'quick', resumeToken || undefined);
+    } else {
+      nextNet.quickPlay(myName, lobbyProfile.skin, resumeToken || undefined);
+    }
+  };
   nextNet = new Net(url, {
     onLobby: (m) => onLobby(m),
+    onParty: (party) => {
+      currentPartyState = party;
+      $('party-error').textContent = '';
+      setJoinBusy(false);
+      if (party) {
+        localStorage.setItem('islandPartyCode', party.code);
+        lobbyMode = party.selection;
+        if (!inMatch && party.queueStatus === 'idle' && $('scoreboard-screen').classList.contains('hidden')) {
+          showScreen('menu-screen');
+        }
+      } else {
+        localStorage.removeItem('islandPartyCode');
+        localStorage.removeItem('islandResumeToken');
+        resumeToken = '';
+        myId = '';
+        isHost = false;
+        if (!inMatch) showScreen('menu-screen');
+      }
+      renderLobbyControls();
+    },
+    onPartyError: (error) => {
+      $('party-error').textContent = error.reason;
+      setMenuStatus(error.reason, true);
+      setJoinBusy(false);
+      if (error.operation === 'join' && !currentPartyState) {
+        localStorage.removeItem('islandPartyCode');
+      }
+    },
+    onRoomAssigned: () => {
+      setJoinBusy(false);
+      showScreen('lobby-screen');
+    },
+    onMatchmakingState: (state) => {
+      if (!inMatch) setMenuStatus(state.message);
+    },
     onJoinError: (msg) => {
-      $('menu-error').textContent = msg;
+      setMenuStatus(msg, true);
       $('lobby-error').textContent = msg;
       setJoinBusy(false);
+      nextNet.dispose();
+      if (net === nextNet) net = null;
+      showScreen('menu-screen');
     },
     onKicked: (msg) => { void leaveToMenu(msg.reason, false, nextNet); },
     onMatchStart: (m) => onMatchStart(m),
@@ -652,7 +988,8 @@ async function joinServer(): Promise<void> {
     onSession: (session: SessionMsg) => {
       myId = session.playerId;
       resumeToken = session.resumeToken;
-      localStorage.setItem(`islandResumeToken:${myName.toLocaleLowerCase()}`, resumeToken);
+      localStorage.setItem('islandResumeToken', resumeToken);
+      if (session.partyCode) localStorage.setItem('islandPartyCode', session.partyCode);
       forceAuthority = session.resumed;
       if (session.resumed) {
         hud.setNetworkStatus('Verbindung wiederhergestellt', false);
@@ -661,11 +998,13 @@ async function joinServer(): Promise<void> {
     },
     onConnectionState: (state, detail) => {
       if (state === 'connected') {
+        if (coldStartTimer) clearTimeout(coldStartTimer);
+        coldStartTimer = null;
         networkConnected = true;
         const transportId = nextNet.socket.id ?? '';
         if (transportId && transportId !== joinedTransportId) {
           joinedTransportId = transportId;
-          nextNet.join(myName, resumeToken || undefined);
+          sendAssignment();
         }
       } else if (state === 'disconnected') {
         networkConnected = false;
@@ -674,9 +1013,14 @@ async function joinServer(): Promise<void> {
           ? 'Verbindung unterbrochen — Wiederverbindung läuft …'
           : 'Serververbindung getrennt — neuer Versuch läuft …');
       } else {
-        if (!inMatch) $('menu-error').textContent = `Server nicht erreichbar${detail ? ` (${detail})` : ''}.`;
-        hud.setNetworkStatus('Host/Server nicht erreichbar — neuer Versuch läuft …');
-        setJoinBusy(false);
+        const warming = performance.now() - connectionStartedAt < 30_000;
+        if (!inMatch) setMenuStatus(
+          warming
+            ? 'Server wird gestartet … Wir verbinden dich automatisch.'
+            : 'Verbindung dauert länger als erwartet. Neuer Versuch läuft automatisch.',
+        );
+        hud.setNetworkStatus('Verbindung unterbrochen — neuer Versuch läuft …');
+        if (detail && !warming) console.warn('Multiplayer connection:', detail);
       }
     },
     onConnectionNotice: (notice) => {
@@ -695,51 +1039,69 @@ async function joinServer(): Promise<void> {
   if (nextNet.socket.connected) {
     networkConnected = true;
     joinedTransportId = nextNet.socket.id ?? '';
-    nextNet.join(myName, resumeToken || undefined);
+    sendAssignment();
   }
 }
 
 $('profile-btn').addEventListener('click', () => {
-  renderProfile(nameInput.value.trim() || myName);
+  nameInput.value = lobbyProfile.name;
+  $('profile-error').textContent = '';
+  renderProfile(lobbyProfile.name);
   showScreen('profile-screen');
   sfx.play('click');
 });
-$('profile-back-btn').addEventListener('click', () => {
-  showScreen(net ? 'lobby-screen' : 'menu-screen');
+$('profile-save-btn').addEventListener('click', () => {
+  const previousName = lobbyProfile.name;
+  const saved = saveLobbyProfile({ name: nameInput.value, skin: lobbyProfile.skin });
+  if (!saved) {
+    $('profile-error').textContent = 'Verwende 2–16 Buchstaben, Zahlen, Leerzeichen, _ oder -.';
+    return;
+  }
+  renameStoredProfile(previousName, saved.name);
+  lobbyProfile = saved;
+  myName = saved.name;
+  $('lobby-player-name').textContent = saved.name;
+  $('profile-error').textContent = 'Name gespeichert.';
+  renderProfile(saved.name);
   sfx.play('click');
 });
-
-// ---------- solo practice (§F4) ----------
-$('practice-btn').addEventListener('click', () => {
-  const bots = Number(($('practice-bots') as HTMLSelectElement).value);
-  const difficulty = ($('practice-difficulty') as HTMLSelectElement).value as BotDifficulty;
-  const mode = ($('match-mode') as HTMLSelectElement).value as MatchMode;
-  net?.startPractice(bots, difficulty, mode);
+$('profile-back-btn').addEventListener('click', () => {
+  showScreen('menu-screen');
   sfx.play('click');
 });
 
 let myReady = false;
-$('ready-btn').addEventListener('click', () => {
-  myReady = !myReady;
-  net?.setReady(myReady);
-  sfx.play('click');
-});
-$('start-btn').addEventListener('click', () => {
-  net?.startMatch(($('match-mode') as HTMLSelectElement).value as MatchMode);
-  sfx.play('click');
-});
 $('rematch-btn').addEventListener('click', () => {
-  net?.rematch();
   hud.hideScoreboard();
   hud.hide();
-  myReady = true;
-  showScreen('lobby-screen');
+  if (currentPartyState) {
+    $('rematch-btn').textContent = 'Rematch (neue Insel)';
+    showScreen('menu-screen');
+    renderLobbyControls();
+  } else {
+    net?.rematch();
+    myReady = true;
+    showScreen('lobby-screen');
+  }
 });
-for (const id of ['lobby-leave-btn', 'pause-leave-btn', 'scoreboard-leave-btn']) {
+$('lobby-leave-btn').addEventListener('click', (event) => {
+  event.stopPropagation();
+  sfx.play('click');
+  if (currentPartyState) {
+    if (isHost && (currentPartyState.queueStatus === 'queued' || currentPartyState.queueStatus === 'countdown')) {
+      net?.cancelPartyQueue();
+    }
+    showScreen('menu-screen');
+    return;
+  }
+  void leaveToMenu('Du hast die Wartelobby verlassen.', true);
+});
+for (const id of ['pause-leave-btn', 'scoreboard-leave-btn']) {
   $(id).addEventListener('click', (event) => {
     event.stopPropagation();
     sfx.play('click');
-    void leaveToMenu('Du hast das Spiel verlassen.', true);
+    if (currentPartyState) void leaveCurrentMatchToParty();
+    else void leaveToMenu('Du hast das Spiel verlassen.', true);
   });
 }
 
@@ -759,6 +1121,8 @@ async function leaveToMenu(message: string, notifyServer: boolean, targetNet: Ne
   targetNet?.dispose();
   if (net === targetNet) net = null;
 
+  localStorage.removeItem('islandResumeToken');
+  localStorage.removeItem('islandPartyCode');
   localStorage.removeItem(`islandResumeToken:${myName.toLocaleLowerCase()}`);
   resumeToken = '';
   joinedTransportId = '';
@@ -771,6 +1135,8 @@ async function leaveToMenu(message: string, notifyServer: boolean, targetNet: Ne
   myId = '';
   names.clear();
   colorIndex.clear();
+  currentLobbyState = null;
+  currentPartyState = null;
   disposeMatchScene();
   hud.hideScoreboard();
   hud.hide();
@@ -778,21 +1144,45 @@ async function leaveToMenu(message: string, notifyServer: boolean, targetNet: Ne
   hud.setScopeZoom(null);
   hud.setNetworkStatus(null);
   showScreen('menu-screen');
-  $('menu-error').textContent = message;
+  setMenuStatus(message);
   setJoinBusy(false);
   leavingGame = false;
+  renderLobbyControls();
+}
+
+async function leaveCurrentMatchToParty(): Promise<void> {
+  if (leavingGame) return;
+  leavingGame = true;
+  document.exitPointerLock?.();
+  await net?.leaveGame();
+  inMatch = false;
+  roundRunning = false;
+  alive = false;
+  disposeMatchScene();
+  hud.hideScoreboard();
+  hud.hide();
+  showScreen('menu-screen');
+  setMenuStatus('Du hast das Match verlassen. Deine Party bleibt bestehen.');
+  leavingGame = false;
+  renderLobbyControls();
 }
 
 function onLobby(m: LobbyStateMsg): void {
+  currentLobbyState = m;
   setJoinBusy(false);
   if (!inMatch) hud.setNetworkStatus(null);
   names = new Map(m.players.map((p) => [p.id, p.name]));
-  m.players.forEach((p, i) => colorIndex.set(p.id, i));
+  m.players.forEach((p) => colorIndex.set(p.id, skinIndex(p.skin)));
   const me = m.players.find((p) => p.id === myId);
   if (!me) return; // unjoined sockets must never be promoted into the lobby UI
-  isHost = !!me?.isHost;
+  renameStoredProfile(lobbyProfile.name, me.name);
+  myName = me.name;
+  lobbyProfile = { name: me.name, skin: me.skin };
+  saveLobbyProfile(lobbyProfile);
+  $('lobby-player-name').textContent = me.name;
+  isHost = currentPartyState ? currentPartyState.hostId === myId : !!me?.isHost;
   if (me) myReady = me.ready;
-  if (inMatch) return; // lobby updates during a match don't change the screen
+  if (inMatch || !$('scoreboard-screen').classList.contains('hidden')) return;
 
   showScreen('lobby-screen');
   const ul = $('lobby-players');
@@ -800,36 +1190,42 @@ function onLobby(m: LobbyStateMsg): void {
   for (const p of m.players) {
     const li = document.createElement('li');
     const left = document.createElement('span');
-    left.textContent = p.name + (p.id === myId ? ' (du)' : '');
-    const actions = document.createElement('span');
-    actions.className = 'lobby-player-actions';
-    const right = document.createElement('span');
-    right.className = 'tag' + (p.ready ? ' ready' : '');
-    right.textContent = (p.isHost ? '👑 Host · ' : '') + (p.ready ? 'bereit ✓' : 'wartet…');
-    actions.appendChild(right);
-    if (isHost && p.id !== myId) {
-      const kick = document.createElement('button');
-      kick.type = 'button';
-      kick.className = 'kick-player';
-      kick.textContent = 'Kicken';
-      kick.setAttribute('aria-label', `${p.name} aus der Lobby kicken`);
-      kick.addEventListener('click', () => net?.kickPlayer(p.id));
-      actions.appendChild(kick);
-    }
-    li.append(left, actions);
+    left.className = 'waiting-player';
+    const swatch = document.createElement('i');
+    swatch.className = 'waiting-player-skin';
+    swatch.style.background = `#${PLAYER_SKINS[skinIndex(p.skin)].color.toString(16).padStart(6, '0')}`;
+    const label = document.createElement('span');
+    label.className = 'waiting-player-name';
+    label.textContent = p.name + (p.id === myId ? ' (du)' : '');
+    left.append(swatch, label);
+    const state = document.createElement('span');
+    state.className = 'waiting-player-state';
+    state.textContent = p.connected ? 'verbunden ✓' : 'verbindet neu …';
+    li.append(left, state);
     ul.appendChild(li);
   }
-  $('ready-btn').textContent = myReady ? 'Bereit ✓ (klicken zum Ändern)' : 'Bereit';
-  const startBtn = $('start-btn') as HTMLButtonElement;
-  startBtn.style.display = isHost ? 'block' : 'none';
-  startBtn.disabled = !m.canStart;
-  $('mode-block').style.display = isHost ? 'flex' : 'none';
-  $('practice-block').style.display = isHost ? 'block' : 'none';
-  const maxBots = Math.max(1, 5 - m.players.length);
-  for (const opt of ($('practice-bots') as HTMLSelectElement).options) {
-    opt.disabled = Number(opt.value) > maxBots;
+  $('waiting-kicker').textContent = m.kind === 'training'
+    ? 'TRAINING'
+    : m.kind === 'party-quick' ? 'PRIVATES SCHNELLSPIEL' : 'MULTIPLAYER';
+  $('waiting-title').textContent = m.status === 'countdown' ? 'Match startet gleich' : 'Warte auf Mitspieler';
+  $('waiting-progress-bar').style.width = `${Math.min(100, m.players.length / m.maxPlayers * 100)}%`;
+  $('lobby-error').textContent = m.status === 'countdown'
+    ? 'Alle bereit. Der Countdown wird vom Server gesteuert.'
+    : `${m.players.length}/${m.maxPlayers} Spieler · mindestens 2 werden benötigt.`;
+  $('lobby-leave-btn').textContent = currentPartyState
+    ? (isHost ? 'Suche abbrechen und zur Party' : 'Zur Party-Ansicht')
+    : 'Wartelobby verlassen';
+  updateWaitingCountdown();
+}
+
+function updateWaitingCountdown(): void {
+  const state = currentLobbyState;
+  if (!state?.countdownEndsAt) {
+    $('waiting-countdown').textContent = '–';
+    return;
   }
-  $('lobby-error').textContent = m.players.length < 2 ? 'Warte auf weitere Spieler (min. 2) — oder starte Solo-Training…' : '';
+  const remaining = Math.max(0, state.countdownEndsAt - Date.now());
+  $('waiting-countdown').textContent = `${Math.ceil(remaining / 1000)}`;
 }
 
 // ---------- match / round ----------
@@ -852,7 +1248,10 @@ function onMatchStart(m: MatchStartMsg): void {
   roundsThisMatch = 0;
   lastElimination = null;
   lastInv = null;
-  m.players.forEach((p, i) => { names.set(p.id, p.name); colorIndex.set(p.id, i); });
+  m.players.forEach((p) => {
+    names.set(p.id, p.name);
+    colorIndex.set(p.id, skinIndex(p.skin));
+  });
 
   gen = generateWorld(m.seed, m.n);
   world = new World(gen);
@@ -1361,7 +1760,13 @@ function frame(): void {
     input.debugToggled = false;
   }
 
-  if (!world || !entities || !phys || !net) { input.clearEdges(); renderer.clear(); return; }
+  if (!world || !entities || !phys || !net) {
+    input.clearEdges();
+    updateWaitingCountdown();
+    lobbyScene.update(visualElapsed);
+    renderer.render(lobbyScene.scene, lobbyScene.camera);
+    return;
+  }
 
   const t = lastSnap ? snapClock.t + (now - snapClock.at) / 1000 : 0;
 

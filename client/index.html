@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1920" />
+  <link rel="icon" type="image/webp" href="/assets/branding/island-duell-logo.webp" />
   <title>Island Duell</title>
   <style>
     :root {
@@ -312,58 +314,95 @@
     <button id="pause-leave-btn" class="secondary danger-button">Spiel verlassen</button>
   </div>
 
-  <div id="menu-screen" class="screen">
-    <div class="panel">
-      <div class="brand-row"><div class="brand-mark">ID</div><h1>ISLAND DUELL</h1></div>
-      <div class="sub">LAN Battle-Royale-Duell für 2–5 Spieler · 3 Runden · letzter Überlebender gewinnt</div>
-      <div class="session-facts"><span>Gleiches WLAN</span><span>Keine Installation</span><span>8–11 Minuten</span></div>
-      <label for="name-input">Spielername</label>
-      <input type="text" id="name-input" maxlength="24" placeholder="Name eingeben…" />
-      <label for="server-input">Server (leer = dieser Host)</label>
-      <input type="text" id="server-input" placeholder="z.B. 192.168.1.42:3000" />
-      <button id="join-btn">Beitreten</button>
-      <button id="profile-btn" class="secondary">📊 Profil & Historie</button>
-      <button id="menu-settings-btn" class="secondary">Einstellungen</button>
-      <div class="error" id="menu-error"></div>
-    </div>
+  <div id="menu-screen" class="screen main-lobby">
+    <header class="lobby-header">
+      <a class="lobby-brand" href="/" aria-label="Island Duell Startseite">
+        <img
+          class="lobby-logo"
+          src="/assets/branding/island-duell-logo.webp"
+          width="1536"
+          height="1024"
+          alt="Island Duell"
+          decoding="async"
+          fetchpriority="high"
+        />
+      </a>
+      <nav class="lobby-tools" aria-label="Spielermenü">
+        <button id="profile-btn" class="lobby-tool" type="button" aria-label="Profil öffnen" title="Profil">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>Profil</span>
+        </button>
+        <button id="customize-btn" class="lobby-tool" type="button" aria-label="Charakter anpassen" title="Anpassen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 3 4 5 1-3 4 .5 5L12 14l-5.5 2 .5-5-3-4 5-1 3-4Z"/></svg><span>Anpassen</span>
+        </button>
+        <button id="menu-settings-btn" class="lobby-tool" type="button" aria-label="Einstellungen öffnen" title="Einstellungen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg><span>Einstellungen</span>
+        </button>
+      </nav>
+    </header>
+    <div class="lobby-player-label" aria-live="polite"><span class="online-dot"></span><strong id="lobby-player-name"></strong><small>bereit für die Insel</small></div>
+    <aside class="party-dock" aria-label="Code-Party">
+      <div id="party-empty">
+        <div class="party-actions">
+          <button id="party-create-btn" type="button">Party erstellen</button>
+          <button id="party-join-toggle" class="secondary" type="button">Party beitreten</button>
+        </div>
+        <div id="party-join-form" class="party-join-form" hidden>
+          <div><input id="party-code-input" type="text" maxlength="8" autocomplete="off" spellcheck="false" placeholder="TEAMCODE" aria-label="Teamcode" /><button id="party-join-btn" type="button">Beitreten</button></div>
+        </div>
+      </div>
+      <div id="party-active" hidden>
+        <div class="party-code-row">
+          <button id="party-copy-btn" class="party-code-copy" type="button" title="Teamcode kopieren">
+            <strong id="party-code">------</strong>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+          </button>
+          <button id="party-leave-btn" class="party-leave-button danger-button" type="button" aria-label="Party verlassen" title="Party verlassen">×</button>
+        </div>
+        <p id="party-status" class="visually-hidden" role="status" aria-live="polite"></p>
+      </div>
+      <p id="party-error" class="matchmaking-status error" role="alert"></p>
+    </aside>
+    <section class="play-dock" aria-labelledby="play-title">
+      <h1 id="play-title">Deine nächste Insel wartet.</h1>
+      <div class="mode-switch" role="radiogroup" aria-label="Spielmodus">
+        <button type="button" class="mode-option active" data-lobby-mode="quick" role="radio" aria-checked="true"><strong>Schnellspiel</strong></button>
+        <button type="button" class="mode-option" data-lobby-mode="multiplayer" role="radio" aria-checked="false"><strong>Multiplayer</strong></button>
+        <button type="button" class="mode-option" data-lobby-mode="training" role="radio" aria-checked="false"><strong>Training</strong></button>
+      </div>
+      <div id="training-options" class="training-options" hidden>
+        <label>Bots<select id="practice-bots"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option></select></label>
+        <label>Stärke<select id="practice-difficulty"><option value="easy">Leicht</option><option value="normal" selected>Normal</option><option value="hard">Schwer</option></select></label>
+      </div>
+      <label id="party-fill-row" class="party-fill-row" hidden><span>Mit Bots auf 5 auffüllen</span><input id="party-fill-bots" type="checkbox" /></label>
+      <p id="mode-help" class="mode-help">Erstelle zuerst eine Code-Party mit mindestens zwei Spielern.</p>
+      <button id="join-btn" class="play-button" type="button"><span>Spielen</span><b aria-hidden="true">→</b></button>
+      <div class="matchmaking-status" id="menu-error" role="status" aria-live="polite"></div>
+    </section>
   </div>
 
-  <div id="lobby-screen" class="screen hidden">
-    <div class="panel">
-      <h2>Lobby</h2>
-      <div class="sub">2–5 Spieler · der Host startet das Match, wenn alle bereit sind</div>
-      <ul id="lobby-players"></ul>
-      <div id="mode-block" class="practice-row">
-        <label>Matchtempo
-          <select id="match-mode">
-            <option value="classic">Klassisch &middot; 8&ndash;11 Min.</option>
-            <option value="quick" selected>Schnell &middot; 5&ndash;7 Min.</option>
-          </select>
-        </label>
+  <div id="lobby-screen" class="screen waiting-lobby hidden">
+    <section class="waiting-panel">
+      <div class="waiting-heading">
+        <div><small id="waiting-kicker">QUICK PLAY</small><h2 id="waiting-title">Warte auf Mitspieler</h2></div>
+        <div id="waiting-countdown" class="waiting-countdown" aria-live="polite">–</div>
       </div>
-      <button id="ready-btn" class="secondary">Bereit</button>
-      <button id="start-btn" disabled>Match starten</button>
-      <div id="practice-block">
-        <div class="sub" style="margin-bottom:0">Allein hier? Übe ein volles 3-Runden-Match gegen Bots.</div>
-        <div class="practice-row">
-          <label>Bots
-            <select id="practice-bots"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option></select>
-          </label>
-          <label>Stärke
-            <select id="practice-difficulty"><option value="easy">Leicht</option><option value="normal" selected>Normal</option><option value="hard">Schwer</option></select>
-          </label>
-        </div>
-        <button id="practice-btn" class="secondary">🤖 Solo üben (gegen Bots)</button>
-      </div>
-      <button id="lobby-leave-btn" class="secondary danger-button">Spiel verlassen</button>
-      <div class="error" id="lobby-error"></div>
-    </div>
+      <div class="waiting-progress"><span id="waiting-progress-bar"></span></div>
+      <ul id="lobby-players" aria-label="Spieler im Raum"></ul>
+      <p id="lobby-error" class="waiting-message">Sobald mindestens zwei Spieler da sind, startet der Countdown.</p>
+      <button id="lobby-leave-btn" class="secondary waiting-leave" type="button">Wartelobby verlassen</button>
+    </section>
   </div>
 
   <div id="profile-screen" class="screen hidden">
     <div class="panel">
-      <h2>📊 Profil</h2>
+      <h2>Profil</h2>
       <div class="sub" id="profile-name"></div>
+      <label for="name-input">Anzeigename</label>
+      <div class="profile-name-editor">
+        <input type="text" id="name-input" maxlength="16" autocomplete="nickname" />
+        <button id="profile-save-btn" type="button">Speichern</button>
+      </div>
+      <div class="error" id="profile-error" role="status"></div>
       <div id="profile-tiles"></div>
       <div id="profile-history-wrap">
         <table class="scores"><thead><tr><th>Datum</th><th>Platz</th><th>K</th><th>Schaden</th><th>Punkte</th><th></th></tr></thead><tbody id="profile-history-body"></tbody></table>
@@ -382,6 +421,17 @@
       <button id="scoreboard-leave-btn" class="secondary danger-button">Spiel verlassen</button>
     </div>
   </div>
+
+  <dialog id="customize-dialog" aria-labelledby="customize-title">
+    <form method="dialog" class="customize-panel">
+      <div class="settings-heading">
+        <div><h2 id="customize-title">Charakter anpassen</h2><p>Die Auswahl ist sofort in der Lobby sichtbar.</p></div>
+        <button class="icon-button secondary" value="cancel" aria-label="Anpassung schließen">×</button>
+      </div>
+      <div id="skin-swatches" class="skin-swatches" role="radiogroup" aria-label="Charakterfarbe"></div>
+      <div class="settings-actions"><button value="default">Fertig</button></div>
+    </form>
+  </dialog>
 
   <dialog id="settings-dialog" aria-labelledby="settings-title">
     <form method="dialog" class="settings-panel">

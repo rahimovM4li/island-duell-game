@@ -22,9 +22,13 @@ import { GamePhysics, RapierModule, Vec3 } from '@shared/physics';
 import { freshMoveState, MoveState, stanceForWeapon, stepMovement } from '@shared/movement';
 import {
   C2S, CombatStats, GameEvent, InputMsg, InventoryState, isCraftMsg, isInputMsg, isJoinMsg, isKickMsg,
-  isReadyMsg, isStartMatchMsg, isStartPracticeMsg, LobbyStateMsg, PickupInfo, PlacementEntry, PlayerInfo, S2C,
+  isReadyMsg, isStartMatchMsg, isStartPracticeMsg, JoinMsg, LobbyStateMsg, PickupInfo, PlacementEntry,
+  PlayerInfo, RoomKind, S2C,
   SmokeSnap, SnapPlayer, SnapProjectile, SnapshotMsg, WeaponSlotState,
 } from '@shared/protocol';
+import {
+  DEFAULT_PLAYER_SKIN, isPlayerSkinId, normalizePlayerName, type PlayerSkinId, uniquePlayerName,
+} from '@shared/multiplayer';
 import { decideMatch, scoreRound } from '@shared/scoring';
 import {
   fogAt, lightingPresetForRound, loudPingActiveAt, phaseAt, timeOfDayAt, zoneAt,
@@ -56,9 +60,21 @@ interface Conn {
   socket: Socket;
   id: string;
   name: string;
+  skin: PlayerSkinId;
   ready: boolean;
   token: string;
   connected: boolean;
+  partyCode?: string;
+  externalToken?: boolean;
+}
+
+export interface PreparedRoomMember {
+  socket: Socket;
+  id: string;
+  token: string;
+  name: string;
+  skin: PlayerSkinId;
+  partyCode: string;
 }
 
 interface Inventory {
@@ -145,6 +161,16 @@ interface AddPickupOptions {
 
 export interface GameRoomOptions {
   timeScale?: number; // accelerates the round clock (tests)
+  roomId?: string;
+  kind?: RoomKind;
+  autoStart?: boolean;
+  countdownMs?: number;
+  onEmpty?: (roomId: string) => void;
+  onTokenIssued?: (token: string, roomId: string) => void;
+  onTokenRevoked?: (token: string) => void;
+  onSocketReleased?: (socket: Socket, roomId: string) => void;
+  onLobbyChanged?: (roomId: string, state: LobbyStateMsg, partyCodes: string[]) => void;
+  onMatchFinished?: (roomId: string, partyCodes: string[]) => void;
 }
 
 const dist2d = (ax: number, az: number, bx: number, bz: number) => Math.hypot(ax - bx, az - bz);
@@ -156,6 +182,18 @@ export class GameRoom {
   private hostId: string | null = null;
   private disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private timeScale: number;
+  readonly roomId: string;
+  readonly kind: RoomKind;
+  private autoStart: boolean;
+  private countdownMs: number;
+  private countdownEndsAt: number | null = null;
+  private countdownHandle: ReturnType<typeof setTimeout> | null = null;
+  private onEmpty?: (roomId: string) => void;
+  private onTokenIssued?: (token: string, roomId: string) => void;
+  private onTokenRevoked?: (token: string) => void;
+  private onSocketReleased?: (socket: Socket, roomId: string) => void;
+  private onLobbyChanged?: (roomId: string, state: LobbyStateMsg, partyCodes: string[]) => void;
+  private onMatchFinished?: (roomId: string, partyCodes: string[]) => void;
 
   // ----- match state -----
   private inMatch = false;
@@ -184,10 +222,12 @@ export class GameRoom {
   private smokes = new Map<number, SmokeCloud>();
   private smokeSeq = 0;
   private practice = false;
+  private allowSoloHumanWithBots = false;
   private matchMode: MatchMode = 'classic';
   private botDifficulty: BotDifficulty = 'normal';
   private botMems = new Map<string, BotMemory>();
   private matchRoster: PlayerInfo[] = [];
+  private matchPartyCodes: string[] = [];
   private care: { state: 'none' | 'incoming' | 'landed'; x: number; z: number; landsAt: number } =
     { state: 'none', x: 0, z: 0, landsAt: 0 };
   private careSpawned = false;
@@ -205,63 +245,238 @@ export class GameRoom {
     this.io = io;
     this.R = rapier;
     this.timeScale = opts.timeScale ?? Number(process.env.TIME_SCALE ?? 1);
-    io.on('connection', (socket) => this.onConnection(socket));
+    this.roomId = opts.roomId ?? 'legacy-default';
+    this.kind = opts.kind ?? 'legacy';
+    this.autoStart = opts.autoStart ?? false;
+    this.countdownMs = opts.countdownMs ?? 5_000;
+    this.onEmpty = opts.onEmpty;
+    this.onTokenIssued = opts.onTokenIssued;
+    this.onTokenRevoked = opts.onTokenRevoked;
+    this.onSocketReleased = opts.onSocketReleased;
+    this.onLobbyChanged = opts.onLobbyChanged;
+    this.onMatchFinished = opts.onMatchFinished;
   }
 
   // =============================== lobby ===============================
 
-  private onConnection(socket: Socket): void {
-    socket.on(C2S.join, (msg: unknown) => {
-      if (!isJoinMsg(msg)) return socket.emit(S2C.joinError, { reason: 'bad join message' });
-      const resumed = msg.resumeToken
-        ? [...this.conns.values()].find((conn) => conn.token === msg.resumeToken)
-        : undefined;
-      if (resumed) {
-        if (resumed.connected && resumed.socket.id !== socket.id) {
-          return socket.emit(S2C.joinError, { reason: 'Diese Sitzung ist bereits verbunden' });
-        }
-        const timer = this.disconnectTimers.get(resumed.id);
-        if (timer) clearTimeout(timer);
-        this.disconnectTimers.delete(resumed.id);
-        resumed.socket = socket;
-        resumed.connected = true;
-        socket.data.playerId = resumed.id;
-        const player = this.players.get(resumed.id);
-        if (player) {
-          player.connected = true;
-          player.inputBuffer.queue = [];
-          player.lastInput = neutralServerInput(player.lastSeq, player.yaw, player.pitch);
-          player.lastInputAt = Date.now();
-        }
-        socket.emit(S2C.session, {
-          playerId: resumed.id, resumeToken: resumed.token, resumed: true,
-          reconnectGraceMs: RECONNECT_GRACE_MS,
-        });
-        if (this.inMatch) this.resumeMatchFor(resumed);
-        this.io.emit(S2C.connectionNotice, { type: 'reconnected', playerId: resumed.id });
-        this.broadcastLobby();
-        return;
+  get playerCount(): number { return this.conns.size; }
+  get started(): boolean { return this.inMatch; }
+
+  canAcceptNewPlayer(): boolean {
+    return !this.inMatch && this.conns.size < MAX_PLAYERS;
+  }
+
+  canAcceptGroup(size: number): boolean {
+    return Number.isInteger(size) && size > 0 && !this.inMatch && this.conns.size + size <= MAX_PLAYERS;
+  }
+
+  hasResumeToken(token: string): boolean {
+    return [...this.conns.values()].some((conn) => conn.token === token);
+  }
+
+  public attachSocket(socket: Socket, msg: JoinMsg): boolean {
+    if (!isJoinMsg(msg)) {
+      socket.emit(S2C.joinError, { reason: 'Die Profildaten sind ungültig.' });
+      return false;
+    }
+    const normalizedName = normalizePlayerName(msg.name);
+    if (!normalizedName) {
+      socket.emit(S2C.joinError, { reason: 'Der Name muss 2–16 erlaubte Zeichen enthalten.' });
+      return false;
+    }
+    if (msg.skin !== undefined && !isPlayerSkinId(msg.skin)) {
+      socket.emit(S2C.joinError, { reason: 'Diese Charakterfarbe ist nicht verfügbar.' });
+      return false;
+    }
+
+    const resumed = msg.resumeToken
+      ? [...this.conns.values()].find((conn) => conn.token === msg.resumeToken)
+      : undefined;
+    if (resumed) {
+      if (resumed.connected && resumed.socket.id !== socket.id) {
+        socket.emit(S2C.joinError, { reason: 'Diese Sitzung ist bereits verbunden.' });
+        return false;
       }
-      if (this.inMatch) return socket.emit(S2C.joinError, { reason: 'Match läuft — Lobby ist gesperrt' });
-      if (this.conns.size >= MAX_PLAYERS) return socket.emit(S2C.joinError, { reason: 'Lobby voll (max 5)' });
-      const id = randomBytes(8).toString('hex');
-      const conn: Conn = {
-        socket, id, name: msg.name.trim().slice(0, 16) || 'Player', ready: false,
-        token: randomBytes(24).toString('hex'), connected: true,
-      };
-      socket.data.playerId = id;
-      this.conns.set(id, conn);
-      if (!this.hostId) this.hostId = id;
+      const timer = this.disconnectTimers.get(resumed.id);
+      if (timer) clearTimeout(timer);
+      this.disconnectTimers.delete(resumed.id);
+      resumed.socket = socket;
+      resumed.connected = true;
+      if (!this.inMatch) {
+        resumed.name = uniquePlayerName(
+          normalizedName,
+          [...this.conns.values()].filter((conn) => conn.id !== resumed.id).map((conn) => conn.name),
+        );
+        resumed.skin = msg.skin ?? resumed.skin;
+      }
+      socket.data.playerId = resumed.id;
+      socket.data.roomId = this.roomId;
+      void socket.join(this.roomId);
+      this.registerSocketEvents(socket);
+      const player = this.players.get(resumed.id);
+      if (player) {
+        player.connected = true;
+        player.inputBuffer.queue = [];
+        player.lastInput = neutralServerInput(player.lastSeq, player.yaw, player.pitch);
+        player.lastInputAt = Date.now();
+      }
+      socket.emit(S2C.roomAssigned, { roomId: this.roomId, kind: this.kind, resumed: true });
       socket.emit(S2C.session, {
-        playerId: id, resumeToken: conn.token, resumed: false,
-        reconnectGraceMs: RECONNECT_GRACE_MS,
+        playerId: resumed.id, resumeToken: resumed.token, resumed: true,
+        reconnectGraceMs: RECONNECT_GRACE_MS, roomId: this.roomId,
       });
+      if (this.inMatch) this.resumeMatchFor(resumed);
+      this.roomEmit(S2C.connectionNotice, { type: 'reconnected', playerId: resumed.id });
       this.broadcastLobby();
+      return true;
+    }
+
+    if (this.inMatch) {
+      socket.emit(S2C.joinError, { reason: 'Match läuft — Lobby ist gesperrt.' });
+      return false;
+    }
+    if (this.conns.size >= MAX_PLAYERS) {
+      socket.emit(S2C.joinError, { reason: `Der Raum ist voll (maximal ${MAX_PLAYERS}).` });
+      return false;
+    }
+    const id = randomBytes(8).toString('hex');
+    const conn: Conn = {
+      socket,
+      id,
+      name: uniquePlayerName(normalizedName, [...this.conns.values()].map((entry) => entry.name)),
+      skin: msg.skin ?? DEFAULT_PLAYER_SKIN,
+      ready: this.autoStart,
+      token: randomBytes(24).toString('hex'),
+      connected: true,
+      externalToken: false,
+    };
+    socket.data.playerId = id;
+    socket.data.roomId = this.roomId;
+    void socket.join(this.roomId);
+    this.registerSocketEvents(socket);
+    this.conns.set(id, conn);
+    if (!this.hostId) this.hostId = id;
+    this.onTokenIssued?.(conn.token, this.roomId);
+    socket.emit(S2C.roomAssigned, { roomId: this.roomId, kind: this.kind, resumed: false });
+    socket.emit(S2C.session, {
+      playerId: id, resumeToken: conn.token, resumed: false,
+      reconnectGraceMs: RECONNECT_GRACE_MS, roomId: this.roomId,
     });
+    this.broadcastLobby();
+    return true;
+  }
+
+  public attachPreparedGroup(members: PreparedRoomMember[]): boolean {
+    if (!this.canAcceptGroup(members.length)) return false;
+    if (members.some((member) =>
+      (typeof member.socket.data.roomId === 'string' && member.socket.data.roomId !== this.roomId)
+      || [...this.conns.values()].some((conn) => conn.id === member.id || conn.token === member.token))) {
+      return false;
+    }
+    for (const member of members) this.attachPreparedSocket(member);
+    this.broadcastLobby();
+    return true;
+  }
+
+  public resumePreparedSocket(member: PreparedRoomMember): boolean {
+    const existing = [...this.conns.values()].find((conn) => conn.token === member.token);
+    if (!existing) {
+      if (!this.canAcceptGroup(1)) return false;
+      this.attachPreparedSocket(member);
+      this.broadcastLobby();
+      return true;
+    }
+    if (existing.connected && existing.socket.id !== member.socket.id) return false;
+    const timer = this.disconnectTimers.get(existing.id);
+    if (timer) clearTimeout(timer);
+    this.disconnectTimers.delete(existing.id);
+    existing.socket = member.socket;
+    existing.connected = true;
+    existing.name = member.name;
+    existing.skin = member.skin;
+    member.socket.data.playerId = existing.id;
+    member.socket.data.roomId = this.roomId;
+    void member.socket.join(this.roomId);
+    this.registerSocketEvents(member.socket);
+    const player = this.players.get(existing.id);
+    if (player) {
+      player.connected = true;
+      player.inputBuffer.queue = [];
+      player.lastInput = neutralServerInput(player.lastSeq, player.yaw, player.pitch);
+      player.lastInputAt = Date.now();
+    }
+    member.socket.emit(S2C.roomAssigned, { roomId: this.roomId, kind: this.kind, resumed: true });
+    member.socket.emit(S2C.session, {
+      playerId: existing.id,
+      resumeToken: existing.token,
+      resumed: true,
+      reconnectGraceMs: RECONNECT_GRACE_MS,
+      roomId: this.roomId,
+      partyCode: existing.partyCode,
+    });
+    if (this.inMatch) this.resumeMatchFor(existing);
+    this.roomEmit(S2C.connectionNotice, { type: 'reconnected', playerId: existing.id });
+    this.broadcastLobby();
+    return true;
+  }
+
+  private attachPreparedSocket(member: PreparedRoomMember): void {
+    const conn: Conn = {
+      socket: member.socket,
+      id: member.id,
+      name: member.name,
+      skin: member.skin,
+      ready: true,
+      token: member.token,
+      connected: true,
+      partyCode: member.partyCode,
+      externalToken: true,
+    };
+    member.socket.data.playerId = member.id;
+    member.socket.data.roomId = this.roomId;
+    void member.socket.join(this.roomId);
+    this.registerSocketEvents(member.socket);
+    this.conns.set(member.id, conn);
+    if (!this.hostId) this.hostId = member.id;
+    member.socket.emit(S2C.roomAssigned, { roomId: this.roomId, kind: this.kind, resumed: false });
+    member.socket.emit(S2C.session, {
+      playerId: member.id,
+      resumeToken: member.token,
+      resumed: false,
+      reconnectGraceMs: RECONNECT_GRACE_MS,
+      roomId: this.roomId,
+      partyCode: member.partyCode,
+    });
+  }
+
+  public partyCodes(): string[] {
+    return [...new Set([...this.conns.values()]
+      .map((conn) => conn.partyCode)
+      .filter((code): code is string => typeof code === 'string'))];
+  }
+
+  public releasePartyConnections(code: string): number {
+    let released = 0;
+    for (const [id, conn] of [...this.conns]) {
+      if (conn.partyCode !== code) continue;
+      const timer = this.disconnectTimers.get(id);
+      if (timer) clearTimeout(timer);
+      this.disconnectTimers.delete(id);
+      this.conns.delete(id);
+      this.onSocketReleased?.(conn.socket, this.roomId);
+      released += 1;
+    }
+    if (this.hostId && !this.conns.has(this.hostId)) this.migrateHost(this.hostId);
+    this.broadcastLobby();
+    this.notifyIfEmpty();
+    return released;
+  }
+
+  private registerSocketEvents(socket: Socket): void {
 
     socket.on(C2S.setReady, (msg: unknown) => {
       const c = this.connFor(socket);
-      if (!c || !isReadyMsg(msg) || this.inMatch) return;
+      if (!c || !isReadyMsg(msg) || this.inMatch || this.autoStart) return;
       c.ready = msg.ready;
       this.broadcastLobby();
     });
@@ -324,7 +539,6 @@ export class GameRoom {
     socket.on(C2S.pingProbe, (sent: unknown, ack: unknown) => {
       if (typeof sent === 'number' && typeof ack === 'function') (ack as (value: number) => void)(sent);
     });
-    socket.on('disconnect', () => this.handleDisconnect(socket));
   }
 
   private connFor(socket: Socket): Conn | undefined {
@@ -332,31 +546,37 @@ export class GameRoom {
     return typeof id === 'string' ? this.conns.get(id) : undefined;
   }
 
-  private handleDisconnect(socket: Socket): void {
+  public handleDisconnect(socket: Socket): void {
     const c = this.connFor(socket);
     if (!c || c.socket.id !== socket.id) return;
     c.connected = false;
     const p = this.players.get(c.id);
     if (!this.inMatch || !p) {
       this.conns.delete(c.id);
+      if (!c.externalToken) this.onTokenRevoked?.(c.token);
+      this.onSocketReleased?.(socket, this.roomId);
       this.migrateHost(c.id);
       this.broadcastLobby();
+      this.notifyIfEmpty();
       return;
     }
     p.connected = false;
     p.inputBuffer.queue = [];
     p.lastInput = neutralServerInput(p.lastSeq, p.yaw, p.pitch);
-    this.io.emit(S2C.connectionNotice, { type: 'lost', playerId: c.id, graceMs: RECONNECT_GRACE_MS });
+    this.roomEmit(S2C.connectionNotice, { type: 'lost', playerId: c.id, graceMs: RECONNECT_GRACE_MS });
     const timer = setTimeout(() => {
       this.disconnectTimers.delete(c.id);
       if (c.connected) return;
       this.conns.delete(c.id);
+      if (!c.externalToken) this.onTokenRevoked?.(c.token);
       if (p.alive && this.roundActive) this.kill(p, null, 'zone');
       this.migrateHost(c.id);
       // bots keep `connected` forever — a match must end when the humans are gone
       const humansInMatch = [...this.players.values()].filter((q) => q.connected && !q.isBot).length;
-      if (humansInMatch < 1 || (!this.practice && humansInMatch < 2)) this.endMatchEarly();
+      if (humansInMatch < 1
+        || (!this.practice && !this.allowSoloHumanWithBots && humansInMatch < 2)) this.endMatchEarly();
       this.broadcastLobby();
+      this.notifyIfEmpty();
     }, RECONNECT_GRACE_MS);
     this.disconnectTimers.set(c.id, timer);
     this.broadcastLobby();
@@ -370,6 +590,8 @@ export class GameRoom {
     if (timer) clearTimeout(timer);
     this.disconnectTimers.delete(id);
     this.conns.delete(id);
+    if (!c.externalToken) this.onTokenRevoked?.(c.token);
+    this.onSocketReleased?.(c.socket, this.roomId);
     c.connected = false;
 
     const p = this.players.get(id);
@@ -383,15 +605,19 @@ export class GameRoom {
     this.migrateHost(id);
     if (this.inMatch) {
       const humans = [...this.players.values()].filter((player) => player.connected && !player.isBot).length;
-      if (humans < 1 || (!this.practice && humans < 2)) this.endMatchEarly();
+      if (humans < 1
+        || (!this.practice && !this.allowSoloHumanWithBots && humans < 2)) this.endMatchEarly();
     }
     this.broadcastLobby();
+    this.notifyIfEmpty();
   }
 
   private migrateHost(oldHost: string): void {
     if (this.hostId !== oldHost) return;
     this.hostId = [...this.conns.values()].find((conn) => conn.connected)?.id ?? null;
-    if (this.hostId) this.io.emit(S2C.connectionNotice, { type: 'hostChanged', playerId: this.hostId });
+    if (this.hostId && !this.autoStart) {
+      this.roomEmit(S2C.connectionNotice, { type: 'hostChanged', playerId: this.hostId });
+    }
   }
 
   private canStart(): boolean {
@@ -403,49 +629,132 @@ export class GameRoom {
   private lobbyState(): LobbyStateMsg {
     return {
       players: [...this.conns.values()].map((c): PlayerInfo => ({
-        id: c.id, name: c.name, ready: c.ready || c.id === this.hostId,
-        isHost: c.id === this.hostId, connected: c.connected,
+        id: c.id,
+        name: c.name,
+        skin: c.skin,
+        ready: this.autoStart || c.ready || c.id === this.hostId,
+        isHost: !this.autoStart && c.id === this.hostId,
+        connected: c.connected,
       })),
       maxPlayers: MAX_PLAYERS,
       inMatch: this.inMatch,
       canStart: this.canStart(),
+      roomId: this.roomId,
+      kind: this.kind,
+      status: this.inMatch ? 'match' : this.countdownEndsAt ? 'countdown' : 'waiting',
+      countdownEndsAt: this.countdownEndsAt,
     };
   }
 
   private broadcastLobby(): void {
+    this.updateAutoCountdown();
     const state = this.lobbyState();
     for (const conn of this.conns.values()) if (conn.connected) conn.socket.emit(S2C.lobbyState, state);
+    this.onLobbyChanged?.(this.roomId, state, this.partyCodes());
+  }
+
+  private roomEmit(event: string, payload: unknown): void {
+    this.io.to(this.roomId).emit(event, payload);
+  }
+
+  private updateAutoCountdown(): void {
+    if (!this.autoStart || this.inMatch) {
+      this.cancelCountdown(false);
+      return;
+    }
+    const connected = [...this.conns.values()].filter((conn) => conn.connected).length;
+    if (connected < MIN_PLAYERS) {
+      this.cancelCountdown(false);
+      return;
+    }
+    if (this.countdownHandle) return;
+    this.countdownEndsAt = Date.now() + this.countdownMs;
+    this.countdownHandle = setTimeout(() => {
+      this.countdownHandle = null;
+      this.countdownEndsAt = null;
+      const current = [...this.conns.values()].filter((conn) => conn.connected).length;
+      if (!this.inMatch && current >= MIN_PLAYERS) this.startMatch('quick');
+      else this.broadcastLobby();
+    }, this.countdownMs);
+  }
+
+  private cancelCountdown(broadcast: boolean): void {
+    const wasActive = this.countdownHandle !== null;
+    if (this.countdownHandle) clearTimeout(this.countdownHandle);
+    this.countdownHandle = null;
+    this.countdownEndsAt = null;
+    if (broadcast && wasActive) this.broadcastLobby();
+  }
+
+  private notifyIfEmpty(): void {
+    if (this.conns.size === 0 && !this.inMatch) this.onEmpty?.(this.roomId);
   }
 
   // =============================== match ===============================
 
   private startMatch(mode: MatchMode): void {
     this.beginMatch(
-      [...this.conns.values()].map((c) => ({ id: c.id, name: c.name, bot: false })),
+      [...this.conns.values()].filter((c) => c.connected)
+        .map((c) => ({ id: c.id, name: c.name, skin: c.skin, bot: false })),
       false, mode,
     );
   }
 
   /** Solo practice (§F4): every connected lobby human + K tactical bots. */
-  private startPractice(botCount: number, difficulty: BotDifficulty, mode: MatchMode): void {
+  public startPractice(botCount: number, difficulty: BotDifficulty, mode: MatchMode): void {
     const humans = [...this.conns.values()].filter((c) => c.connected);
     if (humans.length < 1) return;
     const bots = Math.min(botCount, MAX_PRACTICE_BOTS, MAX_PLAYERS - humans.length);
     if (bots < 1) return;
     this.botDifficulty = difficulty;
     const participants = [
-      ...humans.map((c) => ({ id: c.id, name: c.name, bot: false })),
-      ...Array.from({ length: bots }, (_, k) => ({ id: `bot-${k}`, name: BOT_NAMES[k], bot: true })),
+      ...humans.map((c) => ({ id: c.id, name: c.name, skin: c.skin, bot: false })),
+      ...Array.from({ length: bots }, (_, k) => ({
+        id: `bot-${k}`,
+        name: BOT_NAMES[k],
+        skin: ['coral', 'jungle', 'sun', 'orchid'][k % 4] as PlayerSkinId,
+        bot: true,
+      })),
     ];
     this.beginMatch(participants, true, mode);
   }
 
+  public startPartyQuickMatch(fillBots: boolean, mode: MatchMode = 'quick'): boolean {
+    if (this.inMatch) return false;
+    const humans = [...this.conns.values()].filter((conn) => conn.connected);
+    if (humans.length < MIN_PLAYERS || humans.length > MAX_PLAYERS) return false;
+    const botCount = fillBots ? Math.max(0, MAX_PLAYERS - humans.length) : 0;
+    this.botDifficulty = 'normal';
+    const participants = [
+      ...humans.map((conn) => ({
+        id: conn.id,
+        name: conn.name,
+        skin: conn.skin,
+        bot: false,
+      })),
+      ...Array.from({ length: botCount }, (_, index) => ({
+        id: `party-bot-${index}`,
+        name: BOT_NAMES[index],
+        skin: ['coral', 'jungle', 'sun', 'orchid'][index % 4] as PlayerSkinId,
+        bot: true,
+      })),
+    ];
+    this.allowSoloHumanWithBots = botCount > 0;
+    this.beginMatch(participants, false, mode);
+    return true;
+  }
+
   private beginMatch(
-    participants: { id: string; name: string; bot: boolean }[], practice: boolean, mode: MatchMode,
+    participants: { id: string; name: string; skin: PlayerSkinId; bot: boolean }[],
+    practice: boolean,
+    mode: MatchMode,
   ): void {
+    this.cancelCountdown(false);
     this.inMatch = true;
     this.practice = practice;
+    if (practice) this.allowSoloHumanWithBots = true;
     this.matchMode = mode;
+    this.matchPartyCodes = this.partyCodes();
     this.seed = randomBytes(4).readUInt32LE(0); // rematch => fresh, OS-backed seed
     this.n = participants.length;
     this.gen = generateWorld(this.seed, this.n);
@@ -467,10 +776,10 @@ export class GameRoom {
       if (part.bot) this.botMems.set(part.id, freshBotMemory(mulberry32(deriveSeed(this.seed, `bot-${part.id}-${botRng()}`))));
     }
     this.matchRoster = participants.map((part): PlayerInfo => ({
-      id: part.id, name: part.name, ready: true,
-      isHost: part.id === this.hostId, connected: true,
+      id: part.id, name: part.name, skin: part.skin, ready: true,
+      isHost: !this.autoStart && part.id === this.hostId, connected: true,
     }));
-    this.io.emit(S2C.matchStart, {
+    this.roomEmit(S2C.matchStart, {
       n: this.n, seed: this.seed, players: this.matchRoster,
       mode: this.matchMode,
       ...(practice ? { practice: true } : {}),
@@ -589,7 +898,7 @@ export class GameRoom {
     const totals: Record<string, number> = {};
     for (const [id, v] of this.totals) totals[id] = v;
     this.roundActive = true;
-    this.io.emit(S2C.roundStart, {
+    this.roomEmit(S2C.roundStart, {
       round: this.round, suddenDeath, spawns: spawnRecord, totals,
       lightingPreset: this.currentLighting,
       pickups: [...this.pickups.values()],
@@ -644,12 +953,12 @@ export class GameRoom {
     this.announceZoneSteps(events);
 
     this.flushDeaths(events);
-    if (events.length) this.io.emit(S2C.event, events);
+    if (events.length) this.roomEmit(S2C.event, events);
 
     this.snapshotAcc += rawDt;
     if (this.snapshotAcc >= 1 / SNAPSHOT_HZ) {
       this.snapshotAcc = 0;
-      this.io.emit(S2C.snapshot, this.buildSnapshot());
+      this.roomEmit(S2C.snapshot, this.buildSnapshot());
     }
 
     this.checkRoundEnd();
@@ -1199,7 +1508,7 @@ export class GameRoom {
       },
       { type: 'kill', killer: attacker?.id ?? null, victim: target.id, weapon: cause === 'zone' ? 'zone' : (weapon ?? 'fists') },
     ];
-    this.io.emit(S2C.event, ev);
+    this.roomEmit(S2C.event, ev);
   }
 
   /** Group deaths for shared placement / double-KO rule (§6.4). */
@@ -1566,7 +1875,7 @@ export class GameRoom {
       weaponMag: options.weaponMag,
     };
     this.pickups.set(id, info);
-    if (this.roundActive) this.io.emit(S2C.event, [{ type: 'pickupSpawn', pickup: info } satisfies GameEvent]);
+    if (this.roundActive) this.roomEmit(S2C.event, [{ type: 'pickupSpawn', pickup: info } satisfies GameEvent]);
   }
 
   private removePickup(id: string, by: string | null, events: GameEvent[]): void {
@@ -1875,7 +2184,7 @@ export class GameRoom {
       }
     }
 
-    this.io.emit(S2C.roundEnd, {
+    this.roomEmit(S2C.roundEnd, {
       round: this.round,
       placements: placementEntries,
       totals,
@@ -1909,7 +2218,7 @@ export class GameRoom {
       .map(([id, pts], i) => ({
         id, name: this.players.get(id)?.name ?? '?', place: i + 1, points: pts,
       }));
-    this.io.emit(S2C.matchEnd, {
+    this.roomEmit(S2C.matchEnd, {
       totals, winnerId,
       winnerName: this.players.get(winnerId)?.name ?? '?',
       standings,
@@ -1917,7 +2226,7 @@ export class GameRoom {
       stats: this.statsRecord(true),
       ...(this.practice ? { practice: true } : {}),
     });
-    this.cleanupMatch();
+    this.cleanupMatch(true);
   }
 
   private endMatchEarly(): void {
@@ -1926,7 +2235,8 @@ export class GameRoom {
     this.endMatch();
   }
 
-  private cleanupMatch(): void {
+  private cleanupMatch(notifyFinished = false): void {
+    const finishedPartyCodes = [...this.matchPartyCodes];
     if (this.tickHandle) clearInterval(this.tickHandle);
     if (this.roundTransitionHandle) clearTimeout(this.roundTransitionHandle);
     this.tickHandle = null;
@@ -1935,25 +2245,41 @@ export class GameRoom {
     this.inMatch = false;
     this.roundActive = false;
     this.practice = false;
+    this.allowSoloHumanWithBots = false;
     this.players.clear();
     this.botMems.clear();
     this.matchRoster = [];
+    this.matchPartyCodes = [];
     this.pickups.clear();
     this.projectiles.clear();
     this.smokes.clear();
     for (const timer of this.disconnectTimers.values()) clearTimeout(timer);
     this.disconnectTimers.clear();
-    for (const [id, conn] of [...this.conns]) if (!conn.connected) this.conns.delete(id);
+    for (const [id, conn] of [...this.conns]) {
+      if (!conn.connected) {
+        this.conns.delete(id);
+        if (!conn.externalToken) this.onTokenRevoked?.(conn.token);
+      }
+    }
     if (this.hostId && !this.conns.has(this.hostId)) this.migrateHost(this.hostId);
     for (const c of this.conns.values()) c.ready = false;
     this.broadcastLobby(); // lobby unlocked again → rematch with new seed
+    this.notifyIfEmpty();
+    if (notifyFinished) {
+      queueMicrotask(() => this.onMatchFinished?.(this.roomId, finishedPartyCodes));
+    }
   }
 
   /** Stop timers and release Rapier memory when the host itself shuts down. */
   dispose(): void {
-    if (this.inMatch) this.cleanupMatch();
+    if (this.inMatch) this.cleanupMatch(false);
+    this.cancelCountdown(false);
     for (const timer of this.disconnectTimers.values()) clearTimeout(timer);
     this.disconnectTimers.clear();
+    for (const conn of this.conns.values()) {
+      if (!conn.externalToken) this.onTokenRevoked?.(conn.token);
+    }
+    this.conns.clear();
   }
 
   private statsRecord(match: boolean): Record<string, CombatStats> {
