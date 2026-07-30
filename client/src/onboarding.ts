@@ -7,13 +7,31 @@ export interface OnboardingStage {
   eyebrow: string;
   title: string;
   body: string;
+  /** Wording for touch devices \u2014 the default body references mouse/keyboard. */
+  touchBody: string;
 }
 
 export const ONBOARDING_STAGES: readonly OnboardingStage[] = [
-  { event: 'move', eyebrow: '1 / 4', title: 'In Bewegung bleiben', body: 'WASD zum Laufen, Umschalt zum Sprinten und Strg zum Schleichen.' },
-  { event: 'loot', eyebrow: '2 / 4', title: 'Ausr\u00fcsten', body: 'Laufe \u00fcber Beute oder Kisten. Zwei Waffen passen in deine Slots.' },
-  { event: 'aim', eyebrow: '3 / 4', title: 'Kontrolliert schie\u00dfen', body: 'Halte die rechte Maustaste zum Zielen. Kurze Feuerst\u00f6\u00dfe bleiben pr\u00e4ziser.' },
-  { event: 'cover', eyebrow: '4 / 4', title: 'Sicht brechen', body: 'B\u00fcsche verdecken dich. Schleichen verursacht deutlich weniger Ger\u00e4usche.' },
+  {
+    event: 'move', eyebrow: '1 / 4', title: 'In Bewegung bleiben',
+    body: 'WASD zum Laufen, Umschalt zum Sprinten und Strg zum Schleichen.',
+    touchBody: 'Linker Stick zum Laufen \u2014 voll auslenken zum Sprinten.',
+  },
+  {
+    event: 'loot', eyebrow: '2 / 4', title: 'Ausr\u00fcsten',
+    body: 'Laufe \u00fcber Beute oder Kisten. Zwei Waffen passen in deine Slots.',
+    touchBody: 'Laufe \u00fcber Beute oder Kisten. Zwei Waffen passen in deine Slots.',
+  },
+  {
+    event: 'aim', eyebrow: '3 / 4', title: 'Kontrolliert schie\u00dfen',
+    body: 'Halte die rechte Maustaste zum Zielen. Kurze Feuerst\u00f6\u00dfe bleiben pr\u00e4ziser.',
+    touchBody: 'Tippe auf \u201eZielen\u201c f\u00fcr die Visierung. Kurze Feuerst\u00f6\u00dfe bleiben pr\u00e4ziser.',
+  },
+  {
+    event: 'cover', eyebrow: '4 / 4', title: 'Sicht brechen',
+    body: 'B\u00fcsche verdecken dich. Schleichen verursacht deutlich weniger Ger\u00e4usche.',
+    touchBody: 'B\u00fcsche verdecken dich und brechen die Sichtlinie der Gegner.',
+  },
 ] as const;
 
 export function advanceOnboarding(index: number, event: OnboardingEvent): number {
@@ -26,6 +44,7 @@ const STORAGE_KEY = 'islandDuell:onboardingComplete:v1';
 export class OnboardingGuide {
   private index = 0;
   private active = false;
+  private touchMode = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -34,6 +53,10 @@ export class OnboardingGuide {
     private readonly body: HTMLElement,
     private readonly storage: Pick<StorageBackend, 'getItem' | 'setItem'> = safeStorage,
   ) {}
+
+  setTouchMode(touchMode: boolean): void {
+    this.touchMode = touchMode;
+  }
 
   start(practice: boolean): void {
     this.active = practice && this.storage.getItem(STORAGE_KEY) !== '1';
@@ -65,6 +88,6 @@ export class OnboardingGuide {
     if (!stage) return;
     this.eyebrow.textContent = stage.eyebrow;
     this.title.textContent = stage.title;
-    this.body.textContent = stage.body;
+    this.body.textContent = this.touchMode ? stage.touchBody : stage.body;
   }
 }

@@ -70,6 +70,8 @@ interface ButtonSpec {
   id: string;
   label: string;
   title: string;
+  /** Short caption rendered under the icon — icons alone proved unreadable. */
+  caption?: string;
   press: () => void;
   release?: () => void;
 }
@@ -109,7 +111,7 @@ export class TouchControls implements TouchInputSource {
 
     const buttons: ButtonSpec[] = [
       {
-        id: 'touch-fire', label: '◉', title: 'Schießen',
+        id: 'touch-fire', label: '◉', title: 'Schießen', caption: 'Feuer',
         press: () => {
           if (!this.fireHeld) this.input.firePressed = true;
           this.fireHeld = true;
@@ -120,28 +122,28 @@ export class TouchControls implements TouchInputSource {
         },
       },
       {
-        id: 'touch-aim', label: '⊕', title: 'Zielen',
+        id: 'touch-aim', label: '⊕', title: 'Zielen', caption: 'Zielen',
         press: () => {
           this.aimHeld = !this.aimHeld;
           this.aimButton.classList.toggle('on', this.aimHeld);
         },
       },
       {
-        id: 'touch-jump', label: '⤒', title: 'Springen',
+        id: 'touch-jump', label: '⤒', title: 'Springen', caption: 'Sprung',
         press: () => { this.jumpHeld = true; },
         release: () => { this.jumpHeld = false; },
       },
       {
-        id: 'touch-reload', label: '⟳', title: 'Nachladen',
+        id: 'touch-reload', label: '⟳', title: 'Nachladen', caption: 'Laden',
         press: () => { this.input.reloadPressed = true; },
       },
       {
-        id: 'touch-interact', label: '✋', title: 'Interagieren',
+        id: 'touch-interact', label: '✋', title: 'Interagieren', caption: 'Nutzen',
         press: () => { this.interactHeld = true; },
         release: () => { this.interactHeld = false; },
       },
       {
-        id: 'touch-heal', label: '✚', title: 'Heilen',
+        id: 'touch-heal', label: '✚', title: 'Heilen', caption: 'Heilen',
         press: () => { this.input.bandagePressed = true; },
       },
       {
@@ -198,7 +200,16 @@ export class TouchControls implements TouchInputSource {
     const button = document.createElement('div');
     button.id = spec.id;
     button.className = 'touch-btn';
-    button.textContent = spec.label;
+    const icon = document.createElement('span');
+    icon.className = 'touch-btn-icon';
+    icon.textContent = spec.label;
+    button.appendChild(icon);
+    if (spec.caption) {
+      const caption = document.createElement('span');
+      caption.className = 'touch-btn-caption';
+      caption.textContent = spec.caption;
+      button.appendChild(caption);
+    }
     button.setAttribute('role', 'button');
     button.setAttribute('aria-label', spec.title);
     button.addEventListener('pointerdown', (event) => {

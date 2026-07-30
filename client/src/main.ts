@@ -114,20 +114,23 @@ function resumeGameplayInput(): void {
   input.requestLock();
 }
 
+// portrait is blocked everywhere (lobby included) — the layout needs landscape
 const portraitQuery = window.matchMedia('(orientation: portrait)');
 let rotateHintShown = false;
 function updateRotateHint(): void {
-  const show = touchControls !== null && inMatch && portraitQuery.matches;
+  const show = touchControls !== null && portraitQuery.matches;
   if (show === rotateHintShown) return;
   rotateHintShown = show;
   $('rotate-hint').style.display = show ? 'flex' : 'none';
 }
+updateRotateHint();
 
 const hud = new Hud();
 const sfx = new Sfx();
 const onboarding = new OnboardingGuide(
   $('onboarding-tip'), $('onboarding-step'), $('onboarding-title'), $('onboarding-body'),
 );
+if (touchControls) onboarding.setTouchMode(true);
 $('onboarding-skip').addEventListener('click', (event) => {
   event.stopPropagation();
   onboarding.dismiss();

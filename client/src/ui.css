@@ -917,13 +917,48 @@ body.touch-mode #hud { z-index: 12; }
 body.touch-mode #slots .slot,
 body.touch-mode #craft-recipes span { pointer-events: auto; }
 body.touch-mode #slots {
-  left: 50%; right: auto; bottom: 8px; transform: translateX(-50%);
+  left: 50%; right: auto; bottom: 6px; transform: translateX(-50%);
 }
-body.touch-mode #slots .slot { width: 78px; padding: 6px 6px 5px; }
+body.touch-mode #slots .slot { width: 64px; padding: 4px 5px 4px; font-size: 10px; }
+body.touch-mode #slots .slot .wname { font-size: 10px; margin: 1px 0; }
+body.touch-mode #slots .slot .key { font-size: 8px; }
 body.touch-mode #consumables {
-  right: 50%; bottom: 96px; transform: translateX(50%); text-align: center;
+  right: 50%; bottom: 74px; transform: translateX(50%); text-align: center; font-size: 10px;
 }
-body.touch-mode #bottombar { bottom: 108px; width: 230px; }
+
+/* compact HUD: phones need the screen for the game, not the chrome */
+body.touch-mode #bottombar {
+  left: 66px; top: 10px; bottom: auto; width: 180px; padding: 6px 8px 6px;
+}
+body.touch-mode #bottombar .status-labels { margin-bottom: 3px; }
+body.touch-mode #bottombar .status-labels span:first-child { font-size: 9px; }
+body.touch-mode #hp-num { font-size: 13px; }
+body.touch-mode #hp-bar-wrap { height: 8px; }
+body.touch-mode #plates-row { margin-top: 3px; font-size: 9px; min-height: 11px; }
+body.touch-mode #stamina-wrap { margin-top: 3px; height: 3px; }
+body.touch-mode #mats-row { margin-top: 3px; font-size: 9px; }
+body.touch-mode #craft-recipes span { font-size: 9px; }
+body.touch-mode #topbar { top: 8px; padding: 3px 12px; }
+body.touch-mode #compass { font-size: 8px; margin-bottom: 1px; }
+body.touch-mode #round-timer { font-size: 15px; }
+body.touch-mode #phase-label { margin-top: 1px; font-size: 9px; }
+body.touch-mode #zone-info { font-size: 9px; min-height: 11px; }
+body.touch-mode #minimap { top: 10px; right: 12px; width: 92px; height: 92px; }
+body.touch-mode #alive-count { top: 10px; right: 112px; padding: 4px 9px; font-size: 11px; }
+body.touch-mode #network-quality {
+  top: 42px; right: 112px; min-width: 0; padding: 3px 7px 3px 17px; font-size: 9px;
+}
+body.touch-mode #network-quality::before { left: 7px; width: 6px; height: 6px; }
+body.touch-mode #killfeed { top: 110px; right: 12px; width: 200px; font-size: 11px; }
+body.touch-mode #onboarding-tip {
+  left: 50%; right: auto; top: 62px; width: min(300px, 55vw);
+  padding: 7px 34px 7px 11px; transform: translate(-50%, -10px);
+}
+body.touch-mode #onboarding-tip.visible { transform: translate(-50%, 0); }
+body.touch-mode #onboarding-step { font-size: 8px; }
+body.touch-mode #onboarding-title { font-size: 12px; margin-top: 2px; }
+body.touch-mode #onboarding-body { font-size: 10px; margin-top: 2px; }
+body.touch-mode #announce { font-size: 19px; }
 
 .touch-stick-base {
   position: absolute; left: 18vw; top: 72vh; width: 128px; height: 128px;
@@ -939,16 +974,25 @@ body.touch-mode #bottombar { bottom: 108px; width: 230px; }
 }
 
 .touch-btn {
-  position: absolute; display: flex; align-items: center; justify-content: center;
+  position: absolute; display: flex; flex-direction: column; gap: 1px;
+  align-items: center; justify-content: center;
   border-radius: 50%; background: rgba(12, 20, 28, 0.55);
   border: 1.5px solid rgba(255, 255, 255, 0.28); color: #e8eef4;
-  font-size: 22px; font-weight: 700; pointer-events: auto; touch-action: none;
+  font-weight: 700; pointer-events: auto; touch-action: none;
   width: 58px; height: 58px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+.touch-btn-icon { font-size: 19px; line-height: 1; }
+.touch-btn-caption {
+  font-size: 8px; font-weight: 650; letter-spacing: 0.4px;
+  text-transform: uppercase; color: rgba(232, 238, 244, 0.85);
 }
 .touch-btn.pressed, .touch-btn.on {
   background: rgba(255, 181, 69, 0.45); border-color: var(--accent);
 }
-#touch-fire { right: 30px; bottom: 110px; width: 86px; height: 86px; font-size: 30px; }
+#touch-fire { right: 30px; bottom: 110px; width: 86px; height: 86px; }
+#touch-fire .touch-btn-icon { font-size: 28px; }
+#touch-fire .touch-btn-caption { font-size: 9px; }
+#touch-pause .touch-btn-icon { font-size: 14px; }
 #touch-aim { right: 138px; bottom: 88px; }
 #touch-jump { right: 52px; bottom: 218px; }
 #touch-reload { right: 158px; bottom: 170px; }
