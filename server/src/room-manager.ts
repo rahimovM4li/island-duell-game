@@ -118,7 +118,7 @@ export class RoomManager {
     socket.emit(S2C.matchmakingState, { state: 'searching', message: 'Passende Insel wird gesucht …' });
 
     const resumedRoom = profile.resumeToken
-      ? this.roomForResumeToken(profile.resumeToken)
+      ? this.roomForResumeToken(profile.resumeToken, 'quick')
       : undefined;
     const room = resumedRoom
       ?? [...this.rooms.values()].find((candidate) =>
@@ -138,7 +138,7 @@ export class RoomManager {
     if (this.rejectDuplicateAssignment(socket)) return;
     socket.emit(S2C.matchmakingState, { state: 'searching', message: 'Training wird vorbereitet …' });
     const resumedRoom = profile.resumeToken
-      ? this.roomForResumeToken(profile.resumeToken)
+      ? this.roomForResumeToken(profile.resumeToken, 'training')
       : undefined;
     const room = resumedRoom ?? this.createRoom('training', false);
     if (!room.attachSocket(socket, profile)) return;
@@ -156,7 +156,7 @@ export class RoomManager {
     }
     if (this.rejectDuplicateAssignment(socket)) return;
     const resumedRoom = profile.resumeToken
-      ? this.roomForResumeToken(profile.resumeToken)
+      ? this.roomForResumeToken(profile.resumeToken, 'legacy')
       : undefined;
     const legacyRoom = [...this.rooms.values()].find((candidate) => candidate.kind === 'legacy');
     // The legacy host/ready path represents one explicit lobby. Public Quick
@@ -192,13 +192,16 @@ export class RoomManager {
     return true;
   }
 
-  private roomForResumeToken(token: string): GameRoom | undefined {
+  private roomForResumeToken(token: string, kind?: RoomKind): GameRoom | undefined {
     const roomId = this.tokenRooms.get(token);
     const room = roomId ? this.rooms.get(roomId) : undefined;
     if (!room || !room.hasResumeToken(token)) {
       this.tokenRooms.delete(token);
       return undefined;
     }
+    // a stale token from another mode must not hijack an explicit mode choice
+    // (e.g. a quick-match token redirecting a "Training" click into the old room)
+    if (kind && room.kind !== kind) return undefined;
     return room;
   }
 

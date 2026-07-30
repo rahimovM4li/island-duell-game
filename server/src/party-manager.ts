@@ -26,6 +26,9 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 6;
 const JOIN_ATTEMPTS_PER_WINDOW = 7;
 const JOIN_WINDOW_MS = 10_000;
+// how long a kicked member's resume token is remembered, so an offline-kicked
+// client cannot silently auto-rejoin once its connection comes back
+const KICKED_TOKEN_TTL_MS = 15 * 60_000;
 
 export interface PartyMatchMember {
   id: string;
@@ -78,6 +81,7 @@ export class PartyManager {
   private readonly tokenParties = new Map<string, string>();
   private readonly disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly joinRates = new Map<string, RateEntry>();
+  private readonly kickedTokens = new Map<string, { code: string; expiresAt: number }>();
   private readonly reconnectGraceMs: number;
 
   constructor(
@@ -164,6 +168,7 @@ export class PartyManager {
     this.parties.clear();
     this.tokenParties.clear();
     this.joinRates.clear();
+    this.kickedTokens.clear();
   }
 
   private createParty(socket: Socket, payload: unknown): void {
@@ -188,22 +193,28 @@ export class PartyManager {
   }
 
   private joinParty(socket: Socket, payload: unknown): void {
-    if (!this.consumeJoinAttempt(socket)) {
+    if (!isJoinPartyMsg(payload) || !this.validateProfile(socket, payload, 'join')) return;
+    const code = this.normalizeCode(payload.code);
+    const kicked = payload.resumeToken ? this.kickedTokens.get(payload.resumeToken) : undefined;
+    if (kicked && kicked.code === code && kicked.expiresAt > Date.now()) {
+      this.error(socket, 'join', 'Du wurdest vom Party-Host aus dieser Party entfernt.');
+      return;
+    }
+    if (this.rejectAssigned(socket, 'join', payload.resumeToken, code)) return;
+    const party = this.parties.get(code);
+    const resumed = party && payload.resumeToken
+      ? [...party.members.values()].find((entry) => entry.token === payload.resumeToken)
+      : undefined;
+    // resumes are not code guesses — charging them against the rate limit could
+    // lock a whole party out of a running match after a shared network blip
+    if (!resumed && !this.consumeJoinAttempt(socket)) {
       this.error(socket, 'join', 'Zu viele Code-Versuche. Bitte warte einen Moment.');
       return;
     }
-    if (!isJoinPartyMsg(payload) || !this.validateProfile(socket, payload, 'join')) return;
-    const code = this.normalizeCode(payload.code);
-    if (this.rejectAssigned(socket, 'join', payload.resumeToken, code)) return;
-    const party = this.parties.get(code);
     if (!party) {
       this.error(socket, 'join', 'Diese Party wurde nicht gefunden. Prüfe den Teamcode.');
       return;
     }
-
-    const resumed = payload.resumeToken
-      ? [...party.members.values()].find((entry) => entry.token === payload.resumeToken)
-      : undefined;
     if (resumed) {
       if (resumed.connected && resumed.socket.id !== socket.id) {
         this.error(socket, 'join', 'Diese Party-Sitzung ist bereits verbunden.');
@@ -290,6 +301,13 @@ export class PartyManager {
       return;
     }
 
+    // remember the token: a member kicked while disconnected never receives the
+    // kicked event and would otherwise silently auto-rejoin on reconnect
+    const now = Date.now();
+    for (const [token, entry] of this.kickedTokens) {
+      if (entry.expiresAt <= now) this.kickedTokens.delete(token);
+    }
+    this.kickedTokens.set(target.token, { code: party.code, expiresAt: now + KICKED_TOKEN_TTL_MS });
     target.socket.emit(S2C.kicked, {
       reason: 'Du wurdest vom Party-Host aus der Lobby entfernt.',
     });
@@ -542,14 +560,30 @@ export class PartyManager {
     const roomId = typeof socket.data.roomId === 'string' ? socket.data.roomId : undefined;
     const tokenParty = resumeToken ? this.tokenParties.get(resumeToken) : undefined;
     if (!partyCode && !roomId && (!tokenParty || tokenParty === requestedCode)) return false;
-    if (resumeToken && partyCode && this.tokenParties.get(resumeToken) === partyCode) return false;
+    // resuming into one's own party is fine — but only when the request actually
+    // targets that party; otherwise a member could join/create a second party and
+    // leave a permanently "connected" ghost in the first one
+    if (
+      resumeToken && partyCode && requestedCode === partyCode
+      && this.tokenParties.get(resumeToken) === partyCode
+    ) return false;
     this.error(socket, operation, 'Du gehörst bereits zu einer Party, Queue oder einem Match.');
     return true;
   }
 
   private consumeJoinAttempt(socket: Socket): boolean {
-    const key = socket.handshake.address || socket.id;
+    // behind a reverse proxy (Render) handshake.address is the proxy for every
+    // client — key on the forwarded client IP so the limit is not global
+    const forwarded = socket.handshake.headers['x-forwarded-for'];
+    const forwardedIp = (Array.isArray(forwarded) ? forwarded[0] : forwarded)
+      ?.split(',')[0]?.trim();
+    const key = forwardedIp || socket.handshake.address || socket.id;
     const now = Date.now();
+    if (this.joinRates.size > 512) {
+      for (const [entry, rate] of this.joinRates) {
+        if (rate.resetAt <= now) this.joinRates.delete(entry);
+      }
+    }
     const current = this.joinRates.get(key);
     if (!current || current.resetAt <= now) {
       this.joinRates.set(key, { attempts: 1, resetAt: now + JOIN_WINDOW_MS });

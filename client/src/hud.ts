@@ -40,6 +40,8 @@ export class Hud {
   private miniCtx = this.mini.getContext('2d')!;
   private islandImg: HTMLCanvasElement | null = null;
   private announceTimer: ReturnType<typeof setTimeout> | null = null;
+  private hitmarkerTimer: ReturnType<typeof setTimeout> | null = null;
+  private damageFlashTimer: ReturnType<typeof setTimeout> | null = null;
   private damageDirectionTimer: ReturnType<typeof setTimeout> | null = null;
   private eliminationTimer: ReturnType<typeof setTimeout> | null = null;
   private duelResultTimer: ReturnType<typeof setTimeout> | null = null;
@@ -176,7 +178,8 @@ export class Hud {
     el.textContent = '\u2715';
     el.dataset.label = feedback.label;
     el.style.opacity = '1';
-    setTimeout(() => { el.style.opacity = '0'; }, feedback.kind === 'body' ? 145 : 190);
+    if (this.hitmarkerTimer) clearTimeout(this.hitmarkerTimer);
+    this.hitmarkerTimer = setTimeout(() => { el.style.opacity = '0'; }, feedback.kind === 'body' ? 145 : 190);
   }
 
   armorImpact(): void {
@@ -216,7 +219,8 @@ export class Hud {
     const el = $('damage-flash');
     el.classList.toggle('headshot', headshot);
     el.style.opacity = `${Math.min(1, 0.38 + Math.max(0, amount) / 70)}`;
-    setTimeout(() => { el.style.opacity = '0'; }, headshot ? 180 : 120);
+    if (this.damageFlashTimer) clearTimeout(this.damageFlashTimer);
+    this.damageFlashTimer = setTimeout(() => { el.style.opacity = '0'; }, headshot ? 180 : 120);
   }
 
   /** A short, local confirmation pulse when the player successfully loots. */

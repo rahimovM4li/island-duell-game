@@ -123,6 +123,9 @@ export class GamePhysics {
   private sneakingPlayers = new Set<string>();
   private pronePlayers = new Set<string>();
   private walkSurfaces: WalkSurface[] = [];
+  // solid for raycasts (no shooting through decks/ramps), but excluded from
+  // character movement, which uses the walk-surface snapping below instead
+  private walkSurfaceHandles = new Set<number>();
 
   constructor(R: RapierModule, gen: WorldGen, grid?: Float32Array) {
     this.R = R;
@@ -158,6 +161,12 @@ export class GamePhysics {
           centerY: structure.y,
           yaw: structure.rotY, pitch: structure.rotX,
         });
+        const surfaceCol = this.world.createCollider(
+          R.ColliderDesc.cuboid(structure.w / 2, structure.h / 2, structure.d / 2)
+            .setTranslation(structure.x, structure.y, structure.z)
+            .setRotation(quatFromYawPitch(structure.rotY, structure.rotX)),
+        );
+        this.walkSurfaceHandles.add(surfaceCol.handle);
         continue;
       }
       this.world.createCollider(
@@ -177,6 +186,12 @@ export class GamePhysics {
             centerY: (s.yOffset ?? 0) + s.h / 2,
             yaw: s.rotY, pitch: s.rotX ?? 0,
           });
+          const surfaceCol = this.world.createCollider(
+            R.ColliderDesc.cuboid(s.w / 2, s.h / 2, s.d / 2)
+              .setTranslation(s.x, poiBaseY + (s.yOffset ?? 0) + s.h / 2, s.z)
+              .setRotation(quatFromYawPitch(s.rotY, s.rotX ?? 0)),
+          );
+          this.walkSurfaceHandles.add(surfaceCol.handle);
           continue;
         }
         this.world.createCollider(
@@ -196,6 +211,7 @@ export class GamePhysics {
   }
 
   addPlayer(id: string, feet: Vec3): void {
+    if (this.players.has(id)) { this.setPlayerPos(id, feet); return; }
     const desc = this.R.ColliderDesc.capsule(CAPSULE_HALF, PLAYER_RADIUS)
       .setTranslation(feet.x, feet.y + CAPSULE_CENTER_Y, feet.z);
     const col = this.world.createCollider(desc);
@@ -267,7 +283,8 @@ export class GamePhysics {
     if (!col) throw new Error(`no collider for ${id}`);
     this.controller.computeColliderMovement(
       col, disp, undefined, undefined,
-      (other) => !this.handleToPlayer.has(other.handle),
+      (other) => !this.handleToPlayer.has(other.handle)
+        && !this.walkSurfaceHandles.has(other.handle),
     );
     const mv = this.controller.computedMovement();
     const cur = col.translation();
@@ -284,8 +301,13 @@ export class GamePhysics {
       if (Math.abs(localX) > surface.w / 2 || Math.abs(localZ) > halfProjectedLength) continue;
       const floorY = surface.baseY + surface.centerY
         + surface.h / (2 * cp) - Math.tan(surface.pitch) * localZ;
-      const currentFeetY = cur.y - center;
-      if (Math.abs(currentFeetY - floorY) > 1.15) continue;
+      const preFeetY = cur.y - center;
+      const postFeetY = ny - center;
+      // snap only when actually crossing/resting on the surface from above:
+      // - still clearly airborne above it (jump ascent/descent) → free flight
+      // - coming from more than a step-height below it → never yank up through decks
+      if (postFeetY > floorY + 0.05) continue;
+      if (preFeetY < floorY - 0.6) continue;
       ny = floorY + center;
       onWalkSurface = true;
       break;

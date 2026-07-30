@@ -120,7 +120,16 @@ export function loadProfile(
     if (!raw) return freshProfile();
     const parsed = JSON.parse(raw) as PlayerProfile;
     if (parsed?.version !== 1 || !parsed.career || !Array.isArray(parsed.history)) return freshProfile();
-    return { ...freshProfile(), ...parsed, career: { ...freshProfile().career, ...parsed.career } };
+    // corrupted/hand-edited storage must not leak non-numeric fields into the UI
+    const history = parsed.history.filter((entry): entry is MatchHistoryEntry =>
+      !!entry
+      && typeof entry.date === 'string'
+      && [entry.placement, entry.points, entry.kills, entry.damageDealt, entry.players]
+        .every((field) => typeof field === 'number' && Number.isFinite(field)));
+    return {
+      ...freshProfile(), ...parsed, history,
+      career: { ...freshProfile().career, ...parsed.career },
+    };
   } catch {
     return freshProfile();
   }
@@ -141,7 +150,9 @@ export function renameStoredProfile(
   toName: string,
   storage: StorageBackend = safeStorage,
 ): void {
-  if (!fromName || fromName.toLocaleLowerCase() === toName.toLocaleLowerCase()) return;
+  // compare storage keys (trimmed) — comparing raw names lets " Max" → "Max"
+  // load source and target from the SAME key, double the stats and then delete it
+  if (!fromName.trim() || keyFor(fromName) === keyFor(toName)) return;
   const source = loadProfile(fromName, storage);
   const target = loadProfile(toName, storage);
   const sourceHasData = source.career.matches > 0 || source.history.length > 0;

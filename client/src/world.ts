@@ -823,10 +823,25 @@ export class World {
     }
     this.scene.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
-      if (mesh.isMesh) mesh.castShadow = quality === 'high';
+      if (!mesh.isMesh) return;
+      // remember the authored intent — forcing castShadow on for everything
+      // turned transparent zone walls, water and grass into shadow casters
+      if (mesh.userData.baseCastShadow === undefined) mesh.userData.baseCastShadow = mesh.castShadow;
+      mesh.castShadow = quality === 'high' && mesh.userData.baseCastShadow === true;
     });
     this.torchLights.forEach((light, index) => {
       light.visible = quality !== 'low' || index % 2 === 0;
+    });
+  }
+
+  /** three.js keeps compiled materials on the old shadow state when
+   *  renderer.shadowMap.enabled is toggled at runtime — force a recompile. */
+  refreshShadowMaterials(): void {
+    this.scene.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) if (material) material.needsUpdate = true;
     });
   }
 

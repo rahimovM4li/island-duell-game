@@ -192,7 +192,9 @@ describe('persistent code parties', () => {
     expect(replacement.party?.code).toBe(code);
     expect(replacement.party?.hostId).toBe(migratedHost);
 
-    joinParty(overflow, 'GUESS2');
+    // resumes and legit joins no longer consume the guess budget, so it takes a
+    // burst of actual code guesses to trip the limiter
+    for (let i = 0; i < 8; i += 1) joinParty(overflow, `GUESS${i}`);
     await until(
       () => overflow.partyErrors.some((error) => /zu viele code-versuche/i.test(error.reason)),
       'join guessing rate limited',

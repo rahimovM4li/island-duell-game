@@ -285,6 +285,7 @@ function finishVictoryCinematic(): void {
 function startVictoryCinematic(m: RoundEndMsg): void {
   const winner = m.placements.find((entry) => entry.place === 1) ?? m.placements[0];
   if (!winner || !entities) {
+    document.exitPointerLock?.();
     hud.showRoundEnd(m.round, m.placements, m.totals, m.nextRoundIn, myId,
       m.matchOver === false && m.round >= 3, m.stats);
     return;
@@ -513,17 +514,29 @@ const diagnostics = {
 const settingsDialog = $('settings-dialog') as HTMLDialogElement;
 const range = (id: string) => $(id) as HTMLInputElement;
 
+let appliedGraphics: PlayerSettings['graphics'] | null = null;
+let appliedGraphicsWorld: World | null = null;
+
 function applyRuntimeSettings(): void {
   input.setSettings(settings);
   sfx.setVolumes(settings.masterVolume, settings.effectsVolume, settings.footstepsVolume);
+  if (!settings.cameraShake) { damageKick = 0; fireFovKick = 0; }
+  // the graphics path below traverses the whole scene and resets render
+  // targets — volume/sensitivity slider ticks must not re-run it
+  if (appliedGraphics === settings.graphics && appliedGraphicsWorld === world) return;
+  appliedGraphics = settings.graphics;
+  appliedGraphicsWorld = world;
   const ratioCap = settings.graphics === 'low' ? 1 : settings.graphics === 'medium' ? 1.5 : 2;
   adaptiveResolution.reset();
   renderScale = 1;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, ratioCap) * renderScale);
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = settings.graphics !== 'low';
+  const shadowsEnabled = settings.graphics !== 'low';
+  if (renderer.shadowMap.enabled !== shadowsEnabled) {
+    renderer.shadowMap.enabled = shadowsEnabled;
+    world?.refreshShadowMaterials();
+  }
   world?.setGraphicsQuality(settings.graphics);
-  if (!settings.cameraShake) { damageKick = 0; fireFovKick = 0; }
 }
 
 function populateSettings(): void {
@@ -573,12 +586,22 @@ $('reset-settings-btn').addEventListener('click', () => {
   populateSettings();
   commitSettings();
 });
+// at most one armed key capture: clicking several bind buttons must not stack
+// listeners, and closing the dialog must not leave one swallowing gameplay keys
+let activeBindCapture: ((event: KeyboardEvent) => void) | null = null;
+function cancelBindCapture(): void {
+  if (activeBindCapture) window.removeEventListener('keydown', activeBindCapture, true);
+  activeBindCapture = null;
+}
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-bind]')) {
   button.addEventListener('click', () => {
+    cancelBindCapture();
+    populateSettings();
     const action = button.dataset.bind as BindAction;
     button.textContent = 'Taste drücken …';
     button.classList.add('listening');
     const capture = (event: KeyboardEvent) => {
+      cancelBindCapture();
       event.preventDefault(); event.stopPropagation();
       if (event.code === 'Escape') { populateSettings(); return; }
       const previous = settings.keybinds[action];
@@ -588,10 +611,12 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-bind]')
       settings.keybinds[action] = event.code;
       saveSettings(settings); applyRuntimeSettings(); populateSettings();
     };
+    activeBindCapture = capture;
     window.addEventListener('keydown', capture, { capture: true, once: true });
   });
 }
 settingsDialog.addEventListener('close', () => {
+  cancelBindCapture();
   if (inMatch && roundRunning && networkConnected) input.requestLock();
 });
 applyRuntimeSettings();
@@ -606,6 +631,27 @@ let lobbyMode: LobbyMode = 'quick';
 let matchmakingBusy = false;
 let currentLobbyState: LobbyStateMsg | null = null;
 let coldStartTimer: ReturnType<typeof setTimeout> | null = null;
+function clearColdStartTimer(): void {
+  if (coldStartTimer) clearTimeout(coldStartTimer);
+  coldStartTimer = null;
+}
+
+// one tracked auto-hide timer for transient "network ok" toasts — a stale timer
+// must never wipe a newer persistent banner (e.g. an active reconnect notice)
+let networkToastTimer: ReturnType<typeof setTimeout> | null = null;
+function flashNetworkStatus(message: string, holdMs: number): void {
+  if (networkToastTimer) clearTimeout(networkToastTimer);
+  hud.setNetworkStatus(message, false);
+  networkToastTimer = setTimeout(() => {
+    networkToastTimer = null;
+    hud.setNetworkStatus(null);
+  }, holdMs);
+}
+function holdNetworkStatus(message: string | null): void {
+  if (networkToastTimer) clearTimeout(networkToastTimer);
+  networkToastTimer = null;
+  hud.setNetworkStatus(message);
+}
 nameInput.value = lobbyProfile.name;
 $('lobby-player-name').textContent = lobbyProfile.name;
 
@@ -878,6 +924,9 @@ function ensureRapier(): Promise<RapierModule> {
       await module.init();
       rapier = module;
       return module;
+    }).catch((error: unknown) => {
+      rapierPromise = null; // transient load failure — allow the next click to retry
+      throw error;
     });
   }
   return rapierPromise;
@@ -1000,11 +1049,15 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
       } else {
         rememberedPartyCode = '';
         safeStorage.removeItem('islandPartyCode');
-        safeStorage.removeItem('islandResumeToken');
-        resumeToken = '';
-        myId = '';
-        isHost = false;
-        if (!inMatch) showScreen('menu-screen');
+        // mid-match a party disband must not sever the running session:
+        // clearing myId would break reconciliation and duplicate the local rig
+        if (!inMatch) {
+          safeStorage.removeItem('islandResumeToken');
+          resumeToken = '';
+          myId = '';
+          isHost = false;
+          showScreen('menu-screen');
+        }
       }
       renderLobbyControls();
     },
@@ -1025,6 +1078,7 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
       if (!inMatch) setMenuStatus(state.message);
     },
     onJoinError: (msg) => {
+      clearColdStartTimer();
       setMenuStatus(msg, true);
       $('lobby-error').textContent = msg;
       setJoinBusy(false);
@@ -1060,15 +1114,11 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
         safeStorage.setItem('islandPartyCode', session.partyCode);
       }
       forceAuthority = session.resumed;
-      if (session.resumed) {
-        hud.setNetworkStatus('Verbindung wiederhergestellt', false);
-        setTimeout(() => hud.setNetworkStatus(null), 1800);
-      }
+      if (session.resumed) flashNetworkStatus('Verbindung wiederhergestellt', 1800);
     },
     onConnectionState: (state, detail) => {
       if (state === 'connected') {
-        if (coldStartTimer) clearTimeout(coldStartTimer);
-        coldStartTimer = null;
+        clearColdStartTimer();
         networkConnected = true;
         const transportId = nextNet.socket.id ?? '';
         if (transportId && transportId !== joinedTransportId) {
@@ -1078,7 +1128,7 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
       } else if (state === 'disconnected') {
         networkConnected = false;
         document.exitPointerLock?.();
-        hud.setNetworkStatus(inMatch
+        holdNetworkStatus(inMatch
           ? 'Verbindung unterbrochen — Wiederverbindung läuft …'
           : 'Serververbindung getrennt — neuer Versuch läuft …');
       } else {
@@ -1088,19 +1138,17 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
             ? 'Server wird gestartet … Wir verbinden dich automatisch.'
             : 'Verbindung dauert länger als erwartet. Neuer Versuch läuft automatisch.',
         );
-        hud.setNetworkStatus('Verbindung unterbrochen — neuer Versuch läuft …');
+        holdNetworkStatus('Verbindung unterbrochen — neuer Versuch läuft …');
         if (detail && !warming) console.warn('Multiplayer connection:', detail);
       }
     },
     onConnectionNotice: (notice) => {
       if (notice.type === 'lost' && notice.playerId !== myId) {
-        hud.setNetworkStatus('Ein Spieler hat die Verbindung verloren — Reconnect-Fenster aktiv');
+        holdNetworkStatus('Ein Spieler hat die Verbindung verloren — Reconnect-Fenster aktiv');
       } else if (notice.type === 'reconnected' && notice.playerId !== myId) {
-        hud.setNetworkStatus('Spieler wieder verbunden', false);
-        setTimeout(() => hud.setNetworkStatus(null), 1800);
+        flashNetworkStatus('Spieler wieder verbunden', 1800);
       } else if (notice.type === 'hostChanged') {
-        hud.setNetworkStatus(notice.playerId === myId ? 'Du bist jetzt Host' : 'Host wurde automatisch übertragen', false);
-        setTimeout(() => hud.setNetworkStatus(null), 2400);
+        flashNetworkStatus(notice.playerId === myId ? 'Du bist jetzt Host' : 'Host wurde automatisch übertragen', 2400);
       }
     },
   });
@@ -1212,7 +1260,8 @@ async function leaveToMenu(message: string, notifyServer: boolean, targetNet: Ne
   hud.hide();
   hud.setScoped(false);
   hud.setScopeZoom(null);
-  hud.setNetworkStatus(null);
+  holdNetworkStatus(null);
+  clearColdStartTimer();
   showScreen('menu-screen');
   setMenuStatus(message);
   setJoinBusy(false);
@@ -1916,27 +1965,31 @@ function frame(): void {
         ...stance,
         aim: aiming,
         jump: input.pointerLocked && input.jumpHeld,
-        fire: input.fire,
-        interact: input.interact,
+        fire: input.pointerLocked && input.fire,
+        interact: input.pointerLocked && input.interact,
         shotAgeMs: input.fire || input.firePressed
           ? recommendedShotRewindMs(interpolationDelayMs, net.rttMs)
           : undefined,
       };
       // Preserve a complete press/release that happened between two 30-Hz
       // samples (important for quick clicks and cooked-grenade release).
-      if (input.firePressed && input.fireReleased && !input.fire) {
+      if (input.pointerLocked && input.firePressed && input.fireReleased && !input.fire) {
         net.sendInput({ ...inp, fire: true });
         inp.seq = ++seq;
       }
-      if (input.slotPressed) {
-        // pressing 3 while the throwable is already up cycles frag → smoke → flash (§F2)
-        if (input.slotPressed === 3 && lastInv?.active === 3) inp.throwCycle = true;
-        else inp.slot = input.slotPressed;
-      }
-      if (input.reloadPressed) inp.reload = true;
-      if (input.dropPressed) {
-        inp.drop = true;
-        dropRequestsSent += 1;
+      // action keys while unlocked belong to menus/dialogs, not the match —
+      // e.g. typing with the pause hint open must not switch weapons or heal
+      if (input.pointerLocked) {
+        if (input.slotPressed) {
+          // pressing 3 while the throwable is already up cycles frag → smoke → flash (§F2)
+          if (input.slotPressed === 3 && lastInv?.active === 3) inp.throwCycle = true;
+          else inp.slot = input.slotPressed;
+        }
+        if (input.reloadPressed) inp.reload = true;
+        if (input.dropPressed) {
+          inp.drop = true;
+          dropRequestsSent += 1;
+        }
       }
       previousMovePos.set(move.pos.x, move.pos.y, move.pos.z);
       stepMovement(phys, myId, move, inp, myWeapon);
@@ -1945,8 +1998,8 @@ function frame(): void {
       phys.step(inputStep);
       updateLocalFootsteps(inputStep);
 
-      if (input.craftPressed) net.craft(input.craftPressed);
-      if (input.bandagePressed) { net.useBandage(); bandageStart = now; }
+      if (input.pointerLocked && input.craftPressed) net.craft(input.craftPressed);
+      if (input.pointerLocked && input.bandagePressed) { net.useBandage(); bandageStart = now; }
       input.clearEdges();
     }
     maxPredictionStepsPerFrame = Math.max(maxPredictionStepsPerFrame, predictionStepsThisFrame);

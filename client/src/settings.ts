@@ -52,11 +52,22 @@ export function loadSettings(
       cameraShake: typeof value.cameraShake === 'boolean' ? value.cameraShake : true,
       graphics: value.graphics === 'low' || value.graphics === 'medium' || value.graphics === 'high'
         ? value.graphics : 'high',
-      keybinds: { ...DEFAULT_KEYBINDS, ...(value.keybinds ?? {}) },
+      keybinds: sanitizeKeybinds(value.keybinds),
     };
   } catch {
     return structuredClone(DEFAULT_SETTINGS);
   }
+}
+
+/** Accept only known actions with plausible string codes from stored data. */
+function sanitizeKeybinds(stored: unknown): Record<BindAction, string> {
+  const keybinds = { ...DEFAULT_KEYBINDS };
+  if (!stored || typeof stored !== 'object') return keybinds;
+  for (const action of Object.keys(DEFAULT_KEYBINDS) as BindAction[]) {
+    const bind = (stored as Record<string, unknown>)[action];
+    if (typeof bind === 'string' && bind.length > 0 && bind.length <= 32) keybinds[action] = bind;
+  }
+  return keybinds;
 }
 
 export function saveSettings(

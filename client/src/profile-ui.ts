@@ -72,8 +72,28 @@ export function renderProfile(name: string): void {
     const row = document.createElement('tr');
     const date = new Date(entry.date);
     const dateText = `${date.getDate().toString().padStart(2, '0')}.${(date.getMonth() + 1).toString().padStart(2, '0')}. ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-    row.innerHTML = `<td></td><td>${entry.placement}. / ${entry.players}</td><td>${entry.kills}</td><td>${entry.damageDealt}</td><td>${entry.points}</td><td>${entry.practice ? '<span class="practice-badge">Übung</span>' : ''}</td>`;
-    (row.children[0] as HTMLElement).textContent = dateText;
+    // build cells via textContent — history comes from localStorage and must
+    // never be interpolated into markup
+    const cell = (text: string) => {
+      const td = document.createElement('td');
+      td.textContent = text;
+      return td;
+    };
+    const practiceCell = document.createElement('td');
+    if (entry.practice) {
+      const badge = document.createElement('span');
+      badge.className = 'practice-badge';
+      badge.textContent = 'Übung';
+      practiceCell.appendChild(badge);
+    }
+    row.append(
+      cell(dateText),
+      cell(`${entry.placement}. / ${entry.players}`),
+      cell(String(entry.kills)),
+      cell(String(entry.damageDealt)),
+      cell(String(entry.points)),
+      practiceCell,
+    );
     body.appendChild(row);
   }
 }

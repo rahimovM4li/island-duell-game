@@ -3,7 +3,7 @@
 import type { Server, Socket } from 'socket.io';
 import { randomBytes } from 'node:crypto';
 import {
-  AMMO_CAP, AMMO_PICKUP, BANDAGE_DURATION, BANDAGE_HEAL,
+  AMMO_CAP, AMMO_PICKUP, ARMOR_PER_PLATE, BANDAGE_DURATION, BANDAGE_HEAL,
   BANDAGE_USE_TIME, BOT_DIFFICULTIES, BOT_NAMES, BotDifficulty, CARE_PACKAGE_AT,
   FLASH_FUSE, FLASH_MAX_BLIND, FLASH_RADIUS,
   GRENADE_FUSE, GRENADE_RADIUS,
@@ -328,7 +328,8 @@ export class GameRoom {
       const player = this.players.get(resumed.id);
       if (player) {
         player.connected = true;
-        player.inputBuffer.queue = [];
+        // a reloaded page restarts its seq counter at 0 — keep the buffer in sync
+        player.inputBuffer = { queue: [], lastAcceptedSeq: 0 };
         player.lastInput = neutralServerInput(player.lastSeq, player.yaw, player.pitch);
         player.lastInputAt = Date.now();
       }
@@ -413,7 +414,8 @@ export class GameRoom {
     const player = this.players.get(existing.id);
     if (player) {
       player.connected = true;
-      player.inputBuffer.queue = [];
+      // a reloaded page restarts its seq counter at 0 — keep the buffer in sync
+      player.inputBuffer = { queue: [], lastAcceptedSeq: 0 };
       player.lastInput = neutralServerInput(player.lastSeq, player.yaw, player.pitch);
       player.lastInputAt = Date.now();
     }
@@ -494,13 +496,15 @@ export class GameRoom {
     });
 
     socket.on(C2S.startMatch, (msg: unknown) => {
-      if (socket.data.playerId !== this.hostId || this.inMatch) return;
+      // autoStart rooms (public matchmaking) have no visible host — the first
+      // joiner must not be able to pre-empt the countdown or override the mode
+      if (this.autoStart || socket.data.playerId !== this.hostId || this.inMatch) return;
       if (!this.canStart() || !isStartMatchMsg(msg)) return;
       this.startMatch(msg.mode);
     });
 
     socket.on(C2S.startPractice, (msg: unknown) => {
-      if (socket.data.playerId !== this.hostId || this.inMatch) return;
+      if (this.autoStart || socket.data.playerId !== this.hostId || this.inMatch) return;
       if (!isStartPracticeMsg(msg)) return;
       this.startPractice(msg.bots, msg.difficulty, msg.mode);
     });
@@ -539,7 +543,7 @@ export class GameRoom {
 
     socket.on(C2S.kickPlayer, (msg: unknown) => {
       const requester = this.connFor(socket);
-      if (!requester || requester.id !== this.hostId || this.inMatch || !isKickMsg(msg)) return;
+      if (this.autoStart || !requester || requester.id !== this.hostId || this.inMatch || !isKickMsg(msg)) return;
       if (msg.playerId === requester.id) return;
       const target = this.conns.get(msg.playerId);
       if (!target) return;
@@ -767,9 +771,26 @@ export class GameRoom {
     if (practice) this.allowSoloHumanWithBots = true;
     this.matchMode = mode;
     this.matchPartyCodes = this.partyCodes();
-    this.seed = randomBytes(4).readUInt32LE(0); // rematch => fresh, OS-backed seed
     this.n = participants.length;
-    this.gen = generateWorld(this.seed, this.n);
+    // generateWorld throws on the rare seed whose rejection sampling finds no
+    // free placement — reroll instead of letting a timer/microtask caller crash
+    // the whole process (beginMatch runs from setTimeout/queueMicrotask too)
+    let gen: ReturnType<typeof generateWorld> | null = null;
+    for (let attempt = 0; attempt < 16 && !gen; attempt++) {
+      this.seed = randomBytes(4).readUInt32LE(0); // rematch => fresh, OS-backed seed
+      try {
+        gen = generateWorld(this.seed, this.n);
+      } catch (error) {
+        console.warn(`Weltgenerierung mit Seed ${this.seed} fehlgeschlagen, neuer Versuch:`, error);
+      }
+    }
+    if (!gen) {
+      this.inMatch = false;
+      this.roomEmit(S2C.joinError, { reason: 'Die Insel konnte nicht generiert werden. Bitte starte erneut.' });
+      this.broadcastLobby();
+      return;
+    }
+    this.gen = gen;
     const grid = buildHeightGrid(this.gen.params);
     this.phys = new GamePhysics(this.R, this.gen, grid);
     this.round = 0;
@@ -874,7 +895,9 @@ export class GameRoom {
       p.move = freshMoveState({ x: sp.x, y, z: sp.z });
       p.aiming = false;
       p.inv = this.freshInventory();
-      p.inputBuffer = { queue: [], lastAcceptedSeq: p.lastSeq };
+      // seq restarts at 0 for fresh bot memories and reloaded clients — carrying
+      // the previous round's counter over would silently reject all their inputs
+      p.inputBuffer = { queue: [], lastAcceptedSeq: 0 };
       p.lastInput = neutralServerInput(p.lastSeq, p.yaw, p.pitch);
       p.lastInputAt = Date.now();
       p.prevFire = false;
@@ -888,6 +911,8 @@ export class GameRoom {
       p.blindUntil = 0;
       p.blindIntensity = 0;
       p.poseHistory = [];
+      if (p.alive) this.phys.addPlayer(id, p.move.pos); // restore colliders removed on death
+      else this.phys.removePlayer(id); // disconnected players start the round dead
       this.phys.setPlayerStance(id, false, false, p.move.pos);
       this.phys.setPlayerPos(id, p.move.pos);
       appendHistoricalPose(p.poseHistory, this.historicalPose(p), 0);
@@ -1535,13 +1560,19 @@ export class GameRoom {
     }
     target.stats.damageTaken += applied;
     events.push({ type: 'damage', target: target.id, attacker: attacker?.id ?? null, amount: applied, hp: target.hp, weapon, headshot });
-    if (target.hp <= 0) this.kill(target, attacker, cause, weapon);
+    if (target.hp <= 0) this.kill(target, attacker, cause, weapon, events);
   }
 
-  private kill(target: MatchPlayer, attacker: MatchPlayer | null, cause: 'weapon' | 'zone' | 'grenade', weapon?: WeaponType): void {
+  private kill(
+    target: MatchPlayer, attacker: MatchPlayer | null, cause: 'weapon' | 'zone' | 'grenade',
+    weapon?: WeaponType, events?: GameEvent[],
+  ): void {
     if (!target.alive) return;
     target.alive = false;
     target.deathTick = this.tickCounter;
+    // corpses must not keep a collider — it would eat bullets, block melee/bot
+    // LOS and bounce grenades for the rest of the round (re-added on respawn)
+    this.phys.removePlayer(target.id);
     if (attacker && attacker.id !== target.id) { attacker.kills += 1; attacker.stats.kills += 1; }
     // dying with a pulled pin drops the live frag at the feet (§F3)
     if (target.cookingSince !== null) {
@@ -1564,7 +1595,10 @@ export class GameRoom {
       },
       { type: 'kill', killer: attacker?.id ?? null, victim: target.id, weapon: cause === 'zone' ? 'zone' : (weapon ?? 'fists') },
     ];
-    this.roomEmit(S2C.event, ev);
+    // stay inside the tick batch when one exists — emitting immediately would
+    // deliver death/kill BEFORE the damage/shot events that caused them
+    if (events) events.push(...ev);
+    else this.roomEmit(S2C.event, ev);
   }
 
   /** Group deaths for shared placement / double-KO rule (§6.4). */
@@ -1609,7 +1643,7 @@ export class GameRoom {
         if (p.hp <= 0) {
           const lastAttacker = p.lastDamagedBy && this.t - p.lastDamagedBy.at < 12
             ? this.players.get(p.lastDamagedBy.id) ?? null : null;
-          this.kill(p, lastAttacker, 'zone');
+          this.kill(p, lastAttacker, 'zone', undefined, events);
         }
       }
     }
@@ -1650,9 +1684,20 @@ export class GameRoom {
       if (p.craftRecipe && this.t >= p.craftDoneAt) {
         const r = p.craftRecipe;
         p.craftRecipe = null;
+        let ok = true;
         if (r === 'bandage') p.inv.bandages = Math.min(MAX_BANDAGES, p.inv.bandages + 1);
-        if (r === 'plate') this.grantPlate(p.inv);
-        events.push({ type: 'craft', by: p.id, recipe: r, ok: true });
+        if (r === 'plate') ok = this.grantPlate(p.inv);
+        if (!ok) {
+          // shield filled up during the craft (e.g. plate pickups) — refund the
+          // materials instead of reporting a success that granted nothing
+          const need = RECIPES[r].input;
+          p.inv.mats.wood += need.wood ?? 0;
+          p.inv.mats.stone += need.stone ?? 0;
+          p.inv.mats.fiber += need.fiber ?? 0;
+        }
+        events.push(ok
+          ? { type: 'craft', by: p.id, recipe: r, ok: true }
+          : { type: 'craft', by: p.id, recipe: r, ok: false, reason: 'Maximal 2 Panzerplatten' });
         this.pushInventory(p);
       }
     }
@@ -1764,6 +1809,14 @@ export class GameRoom {
     for (const pk of this.pickups.values()) {
       if (pk.item === 'crate' || pk.item === 'care') continue;
       if (!(pk.item in WEAPONS) || WEAPONS[pk.item as WeaponType].kind === 'throwable') continue;
+      // honour the same drop/owner locks and vertical reach as the walkover
+      // path — the swap must not snipe weapons mid-drop or through floors
+      const lock = this.pickupLocks.get(pk.id);
+      if (lock) {
+        if (this.tickCounter < lock.pickupReadyTick) continue;
+        if (p.id === lock.ownerId && this.tickCounter < lock.ownerReadyTick) continue;
+      }
+      if (Math.abs(p.move.pos.y - pk.y) > 3) continue;
       const d = dist2d(p.move.pos.x, p.move.pos.z, pk.x, pk.z);
       if (d < bestD) { bestD = d; best = pk; }
     }
@@ -1924,7 +1977,10 @@ export class GameRoom {
     for (let i = 0; i < p.inv.throwables.smoke; i++) drop('smokeGrenade');
     for (let i = 0; i < p.inv.throwables.flash; i++) drop('flashGrenade');
     for (let i = 0; i < p.inv.bandages; i++) drop('bandageItem');
-    for (let i = 0; i < p.inv.plates; i++) drop('plateItem');
+    // drop only fully intact plates (each grants ARMOR_PER_PLATE again) —
+    // rounding chipped plates up would create shield out of thin air
+    const intactPlates = Math.floor(Math.max(0, p.inv.shield) / ARMOR_PER_PLATE);
+    for (let i = 0; i < intactPlates; i++) drop('plateItem');
     if (p.inv.helmet) drop('helmetItem');
     if (p.inv.ammo.pistol > 0) drop('pistolAmmo', { amount: p.inv.ammo.pistol });
     if (p.inv.ammo.rifle > 0) drop('rifleAmmo', { amount: p.inv.ammo.rifle });
@@ -2048,8 +2104,7 @@ export class GameRoom {
         diff,
       };
       const decision = computeBotInput(mem, ctx);
-      enqueueServerInput(p.inputBuffer, decision.input);
-      p.lastInputAt = Date.now();
+      if (enqueueServerInput(p.inputBuffer, decision.input)) p.lastInputAt = Date.now();
       // consumables use a direct server call — the one allowed bot shortcut,
       // since there is no socket round-trip to route it through
       if (decision.wantHeal) this.tryBandage(id);
