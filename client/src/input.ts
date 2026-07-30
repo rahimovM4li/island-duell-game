@@ -125,12 +125,31 @@ export class InputState {
   }
 
   requestLock(): void {
+    void this.requestImmersiveLock();
+  }
+
+  private async requestImmersiveLock(): Promise<void> {
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      }
+    } catch {
+      // Fullscreen may be denied outside a direct user gesture.
+    }
+
     const keyboard = keyboardLockController();
-    if (keyboard) void keyboard.lock(['KeyW']).catch(() => { /* preventDefault remains the fallback */ });
+    if (keyboard) {
+      try {
+        await keyboard.lock(['KeyW']);
+      } catch {
+        // preventDefault remains the fallback when Keyboard Lock is unavailable.
+      }
+    }
+
     try {
       const pending = this.canvas.requestPointerLock?.();
       if (pending && typeof (pending as Promise<void>).catch === 'function') {
-        void (pending as Promise<void>).catch(() => keyboard?.unlock());
+        await (pending as Promise<void>);
       }
     } catch {
       keyboard?.unlock();

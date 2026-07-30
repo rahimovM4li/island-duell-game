@@ -5,10 +5,17 @@ test('player can enter training from the new 3D lobby and render the match', asy
   const assetResponses = new Map<string, number>();
   const assetWarnings: string[] = [];
   await page.addInitScript(() => {
+    const calls: string[] = [];
+    (window as Window & { __IMMERSIVE_LOCK_CALLS__?: string[] }).__IMMERSIVE_LOCK_CALLS__ = calls;
+    Object.defineProperty(Element.prototype, 'requestFullscreen', {
+      configurable: true,
+      value: async () => { calls.push('fullscreen'); },
+    });
     Object.defineProperty(navigator, 'keyboard', {
       configurable: true,
       value: {
         lock: async (keyCodes: string[] = []) => {
+          calls.push('keyboard');
           (window as Window & { __KEYBOARD_LOCK_CODES__?: string[] }).__KEYBOARD_LOCK_CODES__ = keyCodes;
         },
         unlock: () => {},
@@ -98,6 +105,13 @@ test('player can enter training from the new 3D lobby and render the match', asy
   await expect.poll(async () => page.evaluate(() => (
     (window as Window & { __KEYBOARD_LOCK_CODES__?: string[] }).__KEYBOARD_LOCK_CODES__ ?? []
   ))).toContain('KeyW');
+  await expect.poll(async () => page.evaluate(() => {
+    const calls = (window as Window & {
+      __IMMERSIVE_LOCK_CALLS__?: string[];
+    }).__IMMERSIVE_LOCK_CALLS__ ?? [];
+    const keyboardIndex = calls.indexOf('keyboard');
+    return keyboardIndex > 0 && calls.slice(0, keyboardIndex).includes('fullscreen');
+  })).toBe(true);
 
   await page.keyboard.down('Tab');
   await expect(page.locator('#round-roster')).toHaveClass(/visible/);
