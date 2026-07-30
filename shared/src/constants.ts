@@ -180,6 +180,9 @@ export const MELEE_CONE_COS = 0.5; // ~60° half-angle cone for melee hits
 export const LOUD_PING_SECONDS = 2; // §6.2 minimap ping duration
 export const PICKUP_RADIUS = 1.4; // walk-over pickup distance
 export const INTERACT_RANGE = 2.8; // resource / swap interact distance
+export const WEAPON_DROP_DISTANCE = 2;
+export const WEAPON_DROP_ANIMATION_SECS = 0.42;
+export const WEAPON_DROP_OWNER_LOCK_SECS = 0.9;
 export const INTERACT_HOLD_SECS = 1.5; // §4.2
 export const RESPAWN_INVULN_SECS = 0; // no respawn during a round (spectate)
 

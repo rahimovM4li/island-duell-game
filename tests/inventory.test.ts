@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { equipWeapon, weaponSlotState, type WeaponInventory } from '../server/src/inventory';
+import {
+  equipWeapon, takeSelectedWeapon, weaponSlotState, type ActiveWeaponInventory,
+  type WeaponInventory,
+} from '../server/src/inventory';
 
 function emptyInventory(): WeaponInventory {
   return {
@@ -36,5 +39,35 @@ describe('stateful weapon pickups', () => {
     const rifleAmmo = inv.ammo.rifle;
     expect(equipWeapon(inv, 'rifle')).toBe(false);
     expect(inv.ammo.rifle).toBe(rifleAmmo);
+  });
+});
+
+describe('dropping the selected weapon', () => {
+  const activeInventory = (): ActiveWeaponInventory => ({
+    primary: { type: 'rifle', mag: 7 },
+    secondary: { type: 'machete', mag: 0 },
+    active: 1,
+    ammo: { pistol: 0, rifle: 20, shell: 0, sniper: 0 },
+  });
+
+  it('removes exactly the selected weapon, preserves its magazine and selects the other slot', () => {
+    const inv = activeInventory();
+    expect(takeSelectedWeapon(inv)).toEqual({ type: 'rifle', mag: 7 });
+    expect(inv.primary).toBeNull();
+    expect(inv.secondary).toEqual({ type: 'machete', mag: 0 });
+    expect(inv.active).toBe(2);
+    expect(inv.ammo.rifle).toBe(20);
+  });
+
+  it('does nothing for the throwable slot or an empty selected slot', () => {
+    const throwable = activeInventory();
+    throwable.active = 3;
+    expect(takeSelectedWeapon(throwable)).toBeNull();
+    expect(throwable.primary).not.toBeNull();
+
+    const empty = activeInventory();
+    empty.primary = null;
+    expect(takeSelectedWeapon(empty)).toBeNull();
+    expect(empty.active).toBe(1);
   });
 });

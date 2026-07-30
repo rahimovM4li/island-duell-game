@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import {
   BANDAGE_USE_TIME, GRENADE_FUSE, INTERACT_HOLD_SECS, INTERP_DELAY_MS, MATCH_MODE_PACE,
   PLAYER_EYE_HEIGHT, PLAYER_PRONE_EYE_HEIGHT, PLAYER_SNEAK_EYE_HEIGHT, RECONCILE_SNAP_DIST,
-  SCOPE_BREATH_MAX, SCOPE_BREATH_REGEN, SERVER_TICK_HZ, THROW_WEAPON, WEAPONS,
+  SCOPE_BREATH_MAX, SCOPE_BREATH_REGEN, SERVER_TICK_HZ, WEAPONS,
   type BotDifficulty, type MatchMode, type WeaponType,
 } from '@shared/constants';
 import { sampleHeight } from '@shared/terrain';
@@ -33,6 +33,7 @@ import { AdaptiveResolution } from './performance';
 import { gameAssets } from './game-assets';
 import { adjustSniperScopeFov, DEFAULT_SNIPER_SCOPE_FOV } from './sniper';
 import { nextWeaponSlot } from './weapon-navigation';
+import { shouldAnimateWeaponSwitch, viewWeaponForInventory } from './weapon-switch';
 import { classifyHitFeedback } from './combat-feedback';
 import {
   footstepCue, footstepIntensity, footstepSurfaceAt, type FootstepStance,
@@ -151,6 +152,7 @@ let networkConnected = false;
 let forceAuthority = false;
 let crosshairBloom = 0;
 let shotPattern = 0;
+let dropRequestsSent = 0;
 let localBushId: number | null = null;
 let localBushDistance = 0;
 let joinedTransportId = '';
@@ -302,6 +304,7 @@ function startVictoryCinematic(m: RoundEndMsg): void {
     winnerYaw, colorIndex.get(winner.id) ?? 0, winnerWeapon, reduceMotion,
   );
   entities.setViewVisible(false);
+  entities.setSpectatorLabels(false);
   $('hud').classList.add('victory-cinematic');
   hud.hideScoreboard();
   hud.hideDeathRecap();
@@ -468,6 +471,7 @@ const diagnostics = {
     input: {
       moveX: input.moveX, moveZ: input.moveZ, fire: input.fire, aim: input.aim,
       sprint: input.sprint, sneak: input.sneak, interact: input.interact,
+      dropRequestsSent,
     },
     renderer: {
       calls: renderer.info.render.calls,
@@ -488,6 +492,7 @@ const diagnostics = {
     entities: entities ? {
       ...entities.stats(),
       viewmodel: entities.viewmodelStats(),
+      spectatorLabels: entities.spectatorLabelStats(),
     } : null,
     environment: world?.stats() ?? null,
     physics: phys?.stats() ?? null,
@@ -517,7 +522,6 @@ function applyRuntimeSettings(): void {
   renderer.shadowMap.enabled = settings.graphics !== 'low';
   world?.setGraphicsQuality(settings.graphics);
   if (!settings.cameraShake) { damageKick = 0; fireFovKick = 0; }
-  $('controls-hint').textContent = `${keyLabel(settings.keybinds.forward)}/${keyLabel(settings.keybinds.left)}/${keyLabel(settings.keybinds.back)}/${keyLabel(settings.keybinds.right)} Bewegen · ${keyLabel(settings.keybinds.sneak)} Schleichen/Sniper hinlegen · ${keyLabel(settings.keybinds.sprint)} Sprint/Atem · RMB Zielen · Mausrad Waffen/Scope-Zoom · ${keyLabel(settings.keybinds.reload)} Nachladen · ${keyLabel(settings.keybinds.interact)} Sammeln · ${keyLabel(settings.keybinds.heal)} Heilen`;
 }
 
 function populateSettings(): void {
@@ -1310,14 +1314,14 @@ function onMatchStart(m: MatchStartMsg): void {
   world.setGraphicsQuality(settings.graphics);
   world.setColliderDebugVisible(showDebug);
   world.scene.add(camera);
-  entities = new Entities(world.scene, camera, m.seed);
+  entities = new Entities(world.scene, camera, m.seed, reduceMotion);
   entities.setViewSkin(colorIndex.get(myId) ?? skinIndex(lobbyProfile.skin));
   phys = new GamePhysics(rapier, gen);
   phys.addPlayer(myId, { x: 0, y: 20, z: 0 });
   hud.initIsland(gen.params, gen.spawns, gen.pois);
 
   for (const p of m.players) {
-    if (p.id !== myId) entities.ensurePlayer(p.id, colorIndex.get(p.id) ?? 0);
+    if (p.id !== myId) entities.ensurePlayer(p.id, colorIndex.get(p.id) ?? 0, p.name);
   }
 
   showScreen(null);
@@ -1331,6 +1335,7 @@ function onRoundStart(m: RoundStartMsg): void {
   cancelVictoryCinematic();
   lastElimination = null;
   hud.hideScoreboard();
+  hud.setRoundRoster([], myId, false);
   hud.show();
   roundRunning = true;
   alive = true;
@@ -1390,6 +1395,7 @@ function onRoundStart(m: RoundStartMsg): void {
   for (const p of m.pickups) entities.addPickup(p);
   entities.resetPlayerAnimations();
   entities.setViewWeapon('fists');
+  entities.setSpectatorLabels(false);
   entities.setAiming(false);
   entities.setReloading(false);
   entities.setViewVisible(true);
@@ -1418,9 +1424,10 @@ function onSnapshot(m: SnapshotMsg): void {
 
   for (const p of m.players) {
     if (p.id === myId) { reconcile(p); continue; }
+    names.set(p.id, p.name);
     if (!remoteBufs.has(p.id)) {
       remoteBufs.set(p.id, []);
-      entities?.ensurePlayer(p.id, colorIndex.get(p.id) ?? 0);
+      entities?.ensurePlayer(p.id, colorIndex.get(p.id) ?? 0, p.name);
     }
     const buf = remoteBufs.get(p.id)!;
     buf.push({
@@ -1527,6 +1534,7 @@ function reconcile(self: SnapPlayer): void {
 
 function enterSpectator(): void {
   entities?.setViewVisible(false);
+  entities?.setSpectatorLabels(true);
   specPos.set(renderMovePos.x, Math.max(2, renderMovePos.y + 4), renderMovePos.z);
   spectateYaw = input.yaw;
   hud.setSpectating(true);
@@ -1681,7 +1689,12 @@ function onEvent(e: GameEvent): void {
       hud.killfeed(text, e.killer === myId || e.victim === myId);
       break;
     }
-    case 'pickupSpawn': entities?.addPickup(e.pickup); break;
+    case 'pickupSpawn':
+      entities?.addPickup(e.pickup);
+      if (e.pickup.droppedBy === myId && e.pickup.item in WEAPONS) {
+        hud.equipmentNotice(`${weaponName(e.pickup.item as WeaponType)} abgelegt`);
+      }
+      break;
     case 'pickupRemove':
       entities?.removePickup(e.id, true);
       if (e.by === myId) {
@@ -1702,10 +1715,11 @@ function onEvent(e: GameEvent): void {
       break;
     case 'inventory':
       {
+        const animateSwitch = shouldAnimateWeaponSwitch(lastInv, e.inv);
         lastInv = e.inv;
-        const viewWeapon = updateViewmodel(e.inv.active, e.inv);
+        const viewWeapon = updateViewmodel(e.inv, animateSwitch);
         if (e.inv.reloading && !wasReloading) sfx.play('reload');
-        const reloadDuration = viewWeapon === 'none' ? 1 : WEAPONS[viewWeapon].reloadTime ?? 1;
+        const reloadDuration = WEAPONS[viewWeapon].reloadTime ?? 1;
         entities?.setReloading(e.inv.reloading, reloadDuration);
       }
       wasReloading = e.inv.reloading;
@@ -1749,20 +1763,11 @@ function onEvent(e: GameEvent): void {
 }
 
 function updateViewmodel(
-  active: 1 | 2 | 3,
-  inv: {
-    primary: { type: WeaponType } | null;
-    secondary: { type: WeaponType } | null;
-    activeThrow: InventoryState['activeThrow'];
-  },
-): WeaponType | 'none' {
-  let w: WeaponType | 'none' = 'fists';
-  if (active === 3) w = THROW_WEAPON[inv.activeThrow];
-  else {
-    const slot = active === 1 ? inv.primary : inv.secondary;
-    w = slot ? slot.type : 'fists';
-  }
-  entities?.setViewWeapon(w);
+  inv: InventoryState,
+  animateSwitch: boolean,
+): WeaponType {
+  const w = viewWeaponForInventory(inv);
+  entities?.setViewWeapon(w, animateSwitch);
   return w;
 }
 
@@ -1915,6 +1920,10 @@ function frame(): void {
         else inp.slot = input.slotPressed;
       }
       if (input.reloadPressed) inp.reload = true;
+      if (input.dropPressed) {
+        inp.drop = true;
+        dropRequestsSent += 1;
+      }
       previousMovePos.set(move.pos.x, move.pos.y, move.pos.z);
       stepMovement(phys, myId, move, inp, myWeapon);
       pending.push(inp);
@@ -2058,6 +2067,21 @@ function frame(): void {
     hud.setFlashWhiteout(flashVisual.opacity);
     if (flashVisual.opacity <= 0.005) flashVisual = null;
   }
+  const roundRosterVisible = inMatch
+    && roundRunning
+    && input.pointerLocked
+    && input.roundRosterHeld
+    && !victoryCinematic;
+  hud.setRoundRoster(
+    lastSnap?.players.map((player) => ({
+      id: player.id,
+      name: player.name,
+      alive: player.alive,
+      kills: player.kills,
+    })) ?? [],
+    myId,
+    roundRosterVisible,
+  );
   if (lastSnap) {
     world.update(t * matchPace, lastSnap.zone.radius, lastSnap.zone.targetRadius, lastSnap.timeOfDay);
     entities.syncSmokes(lastSnap.smokes, t);

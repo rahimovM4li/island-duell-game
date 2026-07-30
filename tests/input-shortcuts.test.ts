@@ -6,11 +6,15 @@ describe('browser shortcut suppression while playing', () => {
   it('blocks Edge Ctrl+D because both keys are active gameplay controls', () => {
     expect(shouldBlockGameplayKey('ControlLeft', true, DEFAULT_SETTINGS)).toBe(true);
     expect(shouldBlockGameplayKey('KeyD', true, DEFAULT_SETTINGS)).toBe(true);
+    expect(shouldBlockGameplayKey('Tab', true, DEFAULT_SETTINGS)).toBe(true);
+    expect(shouldBlockGameplayKey('KeyQ', true, DEFAULT_SETTINGS)).toBe(true);
   });
 
   it('does not take browser shortcuts while pointer lock is released', () => {
     expect(shouldBlockGameplayKey('ControlLeft', false, DEFAULT_SETTINGS)).toBe(false);
     expect(shouldBlockGameplayKey('KeyD', false, DEFAULT_SETTINGS)).toBe(false);
+    expect(shouldBlockGameplayKey('Tab', false, DEFAULT_SETTINGS)).toBe(false);
+    expect(shouldBlockGameplayKey('KeyQ', false, DEFAULT_SETTINGS)).toBe(false);
     expect(shouldBlockGameplayKey('KeyL', false, DEFAULT_SETTINGS)).toBe(false);
   });
 

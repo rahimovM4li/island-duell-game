@@ -12,6 +12,8 @@ import {
   type LocomotionState,
 } from './character-animation';
 import { gameAssets, isSharedAssetResource } from './game-assets';
+import { droppedPickupPose } from './pickup-drop-animation';
+import { shouldShowSpectatorLabel } from './spectator-labels';
 
 const PLAYER_COLORS = PLAYER_SKINS.map((skin) => skin.color);
 const HIT_FLASH_BODY = new THREE.Color(0xffffff);
@@ -20,6 +22,8 @@ const FLASH_FACE_WHITE = new THREE.Color(0xffffff);
 
 interface PlayerRig {
   group: THREE.Group;
+  nameLabel: THREE.Sprite;
+  playerName: string;
   body: THREE.Mesh;
   head: THREE.Mesh;
   helmet: THREE.Object3D;
@@ -440,6 +444,44 @@ function pickupLabel(p: PickupInfo): THREE.Sprite {
   return sprite;
 }
 
+function spectatorNameLabel(playerName: string): THREE.Sprite {
+  let map: THREE.CanvasTexture | undefined;
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 128;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = 'rgba(5, 13, 18, 0.9)';
+    context.beginPath();
+    context.roundRect(8, 12, 496, 104, 24);
+    context.fill();
+    context.strokeStyle = 'rgba(255, 191, 80, 0.9)';
+    context.lineWidth = 5;
+    context.stroke();
+    context.fillStyle = '#f3f7f8';
+    context.font = '700 46px system-ui, sans-serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(playerName, 256, 65, 450);
+    map = new THREE.CanvasTexture(canvas);
+    map.colorSpace = THREE.SRGBColorSpace;
+  }
+  const materialOptions: THREE.SpriteMaterialParameters = {
+    color: map ? 0xffffff : 0xffbf50,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    sizeAttenuation: false,
+  };
+  if (map) materialOptions.map = map;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial(materialOptions));
+  sprite.scale.set(0.18, 0.045, 1);
+  sprite.renderOrder = 60;
+  sprite.visible = false;
+  sprite.userData.playerName = playerName;
+  return sprite;
+}
+
 function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Group {
   const g = new THREE.Group();
   if (weapon !== 'fists' && weapon !== 'none') g.add(weaponModel(weapon));
@@ -542,21 +584,33 @@ export class Entities {
   private aimBlend = 0;
   private reloadT = -1;
   private reloadDuration = 1;
+  private weaponSwitchT = -1;
+  private weaponSwitchCount = 0;
+  private lastWeaponSwitchSameWeapon = false;
+  private spectatorLabelsVisible = false;
   private victoryPlayerId: string | null = null;
   private victoryProxyId: string | null = null;
   private victoryLights: THREE.PointLight[] = [];
   private victoryBurstPlayed = false;
 
-  constructor(private scene: THREE.Scene, private camera: THREE.Camera, seed = 1) {
+  constructor(
+    private scene: THREE.Scene,
+    private camera: THREE.Camera,
+    seed = 1,
+    private reducedMotion = false,
+  ) {
     this.rng = mulberry32(deriveSeed(seed, 'client-entity-fx'));
     camera.add(this.viewRoot);
     this.viewRoot.position.set(0.38, -0.38, -0.72);
   }
 
   // ---------- remote players ----------
-  ensurePlayer(id: string, colorIndex: number): void {
+  ensurePlayer(id: string, colorIndex: number, playerName = ''): void {
     if (this.players.has(id)) return;
     const color = PLAYER_COLORS[colorIndex % PLAYER_COLORS.length];
+    const nameLabel = spectatorNameLabel(playerName);
+    nameLabel.name = `spectator_name_${id}`;
+    this.scene.add(nameLabel);
     const compact = gameAssets.cloneCharacter(color);
     if (compact) {
       // Compose world yaw before the local prone pitch. XYZ leaves a prone
@@ -567,6 +621,8 @@ export class Entities {
       this.scene.add(compact.group);
       this.players.set(id, {
         group: compact.group,
+        nameLabel,
+        playerName,
         body: compact.body,
         head: compact.head,
         helmet: compact.helmet,
@@ -669,7 +725,7 @@ export class Entities {
     group.add(body, head, helmet, weapon, ...extras);
     this.scene.add(group);
     this.players.set(id, {
-      group, body, head, helmet, weapon, currentWeapon: null,
+      group, nameLabel, playerName, body, head, helmet, weapon, currentWeapon: null,
       armLeft: leftArm, armRight: rightArm, legLeft: leftLeg, legRight: rightLeg,
       armLeftBase: leftArm.rotation.clone(), armRightBase: rightArm.rotation.clone(),
       legLeftBase: leftLeg.rotation.clone(), legRightBase: rightLeg.rotation.clone(),
@@ -818,6 +874,7 @@ export class Entities {
   private beginDeath(rig: PlayerRig): void {
     if (rig.deathT >= 0) return;
     rig.alive = false;
+    rig.nameLabel.visible = false;
     rig.deathT = 0;
     rig.deathSide = Math.sin(rig.group.position.x * 1.73 + rig.group.position.z * 2.11) >= 0 ? 1 : -1;
     rig.group.visible = true;
@@ -852,6 +909,12 @@ export class Entities {
     rig.alive = effectiveAlive;
     rig.group.visible = effectiveAlive || (rig.deathT >= 0 && rig.deathT < DEATH_ANIMATION_DURATION);
     rig.group.position.set(x, y, z);
+    rig.nameLabel.position.set(x, y + (prone ? 1.0 : 2.35), z);
+    rig.nameLabel.visible = shouldShowSpectatorLabel(
+      this.spectatorLabelsVisible,
+      effectiveAlive,
+      rig.playerName,
+    );
     rig.baseY = y;
     rig.group.rotation.y = yaw;
     rig.speed = Math.max(0, motion.speed ?? rig.speed);
@@ -878,8 +941,17 @@ export class Entities {
     const rig = this.players.get(id);
     if (rig) {
       this.scene.remove(rig.group);
+      this.scene.remove(rig.nameLabel);
       disposeObject(rig.group);
+      disposeObject(rig.nameLabel);
       this.players.delete(id);
+    }
+  }
+
+  setSpectatorLabels(visible: boolean): void {
+    this.spectatorLabelsVisible = visible;
+    for (const rig of this.players.values()) {
+      rig.nameLabel.visible = shouldShowSpectatorLabel(visible, rig.alive, rig.playerName);
     }
   }
 
@@ -1050,6 +1122,15 @@ export class Entities {
     holder.userData.baseY = holder.position.y;
     holder.userData.spin = p.item !== 'crate' && p.item !== 'care';
     holder.userData.phase = (p.x * 0.17 + p.z * 0.11) % (Math.PI * 2);
+    if (p.dropOrigin && !isContainer) {
+      const end = { x: holder.position.x, y: holder.position.y, z: holder.position.z };
+      holder.position.set(p.dropOrigin.x, p.dropOrigin.y, p.dropOrigin.z);
+      holder.userData.dropMotion = {
+        elapsed: 0,
+        start: { ...p.dropOrigin },
+        end,
+      };
+    }
     if (p.item === 'care') {
       // vertical light beam so the drop is visible across the island (§7)
       const beam = new THREE.Mesh(
@@ -1255,8 +1336,13 @@ export class Entities {
   meleeSwing(): void { this.swingT = 0; }
 
   // ---------- viewmodel ----------
-  setViewWeapon(weapon: WeaponType | 'none'): void {
-    if (weapon === this.viewWeaponType) return;
+  setViewWeapon(weapon: WeaponType | 'none', animateSwitch = false): void {
+    const previousWeapon = this.viewWeaponType;
+    const sameWeapon = weapon === previousWeapon;
+    if (sameWeapon) {
+      if (animateSwitch) this.startWeaponSwitch(true);
+      return;
+    }
     if (this.viewWeapon) {
       this.viewRoot.remove(this.viewWeapon);
       disposeObject(this.viewWeapon);
@@ -1265,6 +1351,13 @@ export class Entities {
     this.viewWeaponType = weapon;
     this.reloadT = -1;
     this.viewRoot.add(this.viewWeapon);
+    if (animateSwitch && previousWeapon !== null) this.startWeaponSwitch(false);
+  }
+
+  private startWeaponSwitch(sameWeapon: boolean): void {
+    this.weaponSwitchT = 0;
+    this.weaponSwitchCount += 1;
+    this.lastWeaponSwitchSameWeapon = sameWeapon;
   }
 
   setViewSkin(colorIndex: number): void {
@@ -1294,6 +1387,33 @@ export class Entities {
     const cameraPos = new THREE.Vector3();
     this.camera.getWorldPosition(cameraPos);
     for (const [, m] of this.pickups) {
+      const dropMotion = m.userData.dropMotion as {
+        elapsed: number;
+        start: { x: number; y: number; z: number };
+        end: { x: number; y: number; z: number };
+      } | undefined;
+      if (dropMotion) {
+        dropMotion.elapsed += dt;
+        const pose = droppedPickupPose(
+          dropMotion.start,
+          dropMotion.end,
+          dropMotion.elapsed,
+          this.reducedMotion,
+        );
+        m.position.set(pose.position.x, pose.position.y, pose.position.z);
+        m.rotation.x = pose.rotation;
+        m.rotation.y += dt * (this.reducedMotion ? 2 : 7);
+        m.rotation.z = pose.rotation * 0.28;
+        const label = m.children.find((child) => child.userData.pickupLabel) as THREE.Sprite | undefined;
+        if (label) label.visible = false;
+        if (pose.done) {
+          m.position.set(dropMotion.end.x, dropMotion.end.y, dropMotion.end.z);
+          m.rotation.x = 0;
+          m.rotation.z = 0;
+          delete m.userData.dropMotion;
+        }
+        continue;
+      }
       if (m.userData.spin) {
         m.rotation.y += dt * 1.6;
         m.position.y = m.userData.baseY + Math.sin(time * 2 + m.userData.phase) * 0.1;
@@ -1447,6 +1567,9 @@ export class Entities {
       const kick = Math.sin(this.kickT * Math.PI) * 0.06;
       let reloadDrop = 0;
       let reloadRoll = 0;
+      let switchDrop = 0;
+      let switchRoll = 0;
+      let switchSide = 0;
       if (this.reloadT >= 0) {
         this.reloadT += dt;
         const progress = Math.min(1, this.reloadT / this.reloadDuration);
@@ -1454,12 +1577,21 @@ export class Entities {
         reloadRoll = Math.sin(progress * Math.PI * 2) * 0.18 - reloadDrop * 0.55;
         if (progress >= 1) this.reloadT = -1;
       }
+      if (this.weaponSwitchT >= 0) {
+        this.weaponSwitchT += dt;
+        const progress = Math.min(1, this.weaponSwitchT / 0.3);
+        const envelope = Math.sin(progress * Math.PI);
+        switchDrop = envelope * (this.reducedMotion ? 0.075 : 0.22);
+        switchRoll = envelope * (this.reducedMotion ? 0.06 : 0.28);
+        switchSide = envelope * (this.reducedMotion ? 0.02 : 0.075);
+        if (progress >= 1) this.weaponSwitchT = -1;
+      }
       this.viewWeapon.rotation.x = (baseRotation?.x ?? 0) - swing * 0.9 + reloadDrop * 0.35;
       this.viewWeapon.rotation.y = baseRotation?.y ?? -0.08;
-      this.viewWeapon.rotation.z = (baseRotation?.z ?? 0) + reloadRoll;
-      this.viewWeapon.position.x = reloadDrop * 0.08;
-      this.viewWeapon.position.z = swing * -0.25 + kick + reloadDrop * 0.04;
-      this.viewWeapon.position.y = Math.sin(time * 1.7) * 0.008 - reloadDrop * 0.16;
+      this.viewWeapon.rotation.z = (baseRotation?.z ?? 0) + reloadRoll + switchRoll;
+      this.viewWeapon.position.x = reloadDrop * 0.08 + switchSide;
+      this.viewWeapon.position.z = swing * -0.25 + kick + reloadDrop * 0.04 + switchDrop * 0.2;
+      this.viewWeapon.position.y = Math.sin(time * 1.7) * 0.008 - reloadDrop * 0.16 - switchDrop;
     }
     for (let i = this.fx.length - 1; i >= 0; i--) {
       const f = this.fx[i];
@@ -1490,6 +1622,9 @@ export class Entities {
   viewmodelStats(): {
     weapon: WeaponType | 'none' | null;
     visible: boolean;
+    switchCount: number;
+    lastSwitchSameWeapon: boolean;
+    switching: boolean;
     hands: Array<{
       ndcMin: { x: number; y: number; z: number };
       ndcMax: { x: number; y: number; z: number };
@@ -1523,7 +1658,22 @@ export class Entities {
     return {
       weapon: this.viewWeaponType,
       visible: this.viewRoot.visible,
+      switchCount: this.weaponSwitchCount,
+      lastSwitchSameWeapon: this.lastWeaponSwitchSameWeapon,
+      switching: this.weaponSwitchT >= 0,
       hands,
+    };
+  }
+
+  spectatorLabelStats(): { enabled: boolean; total: number; visible: number } {
+    let visible = 0;
+    for (const rig of this.players.values()) {
+      if (rig.nameLabel.visible) visible += 1;
+    }
+    return {
+      enabled: this.spectatorLabelsVisible,
+      total: this.players.size,
+      visible,
     };
   }
 

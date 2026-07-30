@@ -712,6 +712,62 @@ button.skin-swatch {
 
 #minimap { border: 0; border-radius: var(--radius); outline: 2px solid rgba(232, 242, 246, 0.32); outline-offset: -2px; }
 #spectate-label { color: var(--ink); background: var(--surface); border-radius: 8px; }
+#round-roster {
+  position: absolute;
+  left: 50%;
+  top: 132px;
+  z-index: 24;
+  width: min(360px, calc(100vw - 32px));
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(7, 17, 22, .95);
+  box-shadow: inset 0 0 0 1px var(--line), 0 14px 38px rgba(0, 0, 0, .38);
+  opacity: 0;
+  transform: translate(-50%, -8px) scale(.98);
+  transition: opacity 100ms ease-out, transform 100ms ease-out;
+}
+#round-roster.visible { opacity: 1; transform: translate(-50%, 0) scale(1); }
+#round-roster header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 3px 10px;
+}
+#round-roster header strong { color: var(--ink); font-size: 14px; }
+#round-roster header span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+#round-roster-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+#round-roster-list li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 35px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: #101e25;
+}
+#round-roster-list li.me { box-shadow: inset 3px 0 0 var(--accent); }
+#round-roster-list .roster-dot { color: var(--ok); font-size: 10px; text-align: center; }
+#round-roster-list .roster-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#round-roster-list .roster-name small { margin-left: 5px; color: var(--accent); font-size: 9px; }
+#round-roster-list .roster-status { color: #9fcdb8; font-size: 10px; font-weight: 700; }
+#round-roster-list li[data-status='dead'] { background: #1c171b; opacity: .76; }
+#round-roster-list li[data-status='dead'] .roster-dot,
+#round-roster-list li[data-status='dead'] .roster-status { color: #ff8a8e; }
+#round-roster-list li[data-status='dead'] .roster-name { color: #b5b0b3; text-decoration: line-through; }
 #death-recap {
   position: absolute; left: 50%; top: 132px; transform: translateX(-50%);
   display: none; min-width: 310px; padding: 11px 14px; background: var(--surface);
@@ -724,20 +780,6 @@ button.skin-swatch {
   box-shadow: 0 5px 18px rgba(0,0,0,.38); transition: transform 180ms ease-out;
 }
 #network-banner.visible { transform: translateX(-50%) translateY(0); }
-#controls-hint {
-  position: absolute;
-  left: 50%;
-  bottom: 17px;
-  transform: translateX(-50%);
-  padding: 7px 11px;
-  background: rgba(5, 12, 16, 0.72);
-  border-radius: 8px;
-  color: #d0dde2;
-  font-size: 11px;
-  white-space: nowrap;
-}
-#controls-hint kbd { margin-left: 7px; background: transparent; color: var(--accent); font: inherit; font-weight: 750; }
-
 #onboarding-tip {
   position: absolute;
   left: 18px;
@@ -799,9 +841,9 @@ table.scores tr.me td { color: var(--accent); font-weight: 700; }
   #alive-count { right: 160px; }
   #network-quality { right: 160px; }
   #debug { top: 116px; }
-  #controls-hint { display: none; }
   .slot { width: 92px; }
   #bottombar { width: 280px; }
+  #round-roster { top: 100px; }
   .setting-row { grid-template-columns: 1fr; gap: 5px; }
   .keybind-grid { grid-template-columns: 1fr 100px; }
 }

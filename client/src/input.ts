@@ -16,7 +16,9 @@ export function shouldBlockGameplayKey(
   if (!pointerLocked) return false;
   return Object.values(settings.keybinds).includes(code)
     || /^Digit[1-6]$/.test(code)
-    || code === 'F3';
+    || code === 'F3'
+    || code === 'Tab'
+    || code === 'KeyQ';
 }
 
 export class InputState {
@@ -32,6 +34,7 @@ export class InputState {
   // per-frame edge events
   slotPressed: 1 | 2 | 3 | null = null;
   reloadPressed = false;
+  dropPressed = false;
   jumpPressed = false;
   craftPressed: Recipe | null = null;
   bandagePressed = false;
@@ -49,6 +52,7 @@ export class InputState {
       else if (k === 'Digit2') this.slotPressed = 2;
       else if (k === 'Digit3') this.slotPressed = 3;
       else if (k === this.settings.keybinds.reload) this.reloadPressed = true;
+      else if (k === 'KeyQ' && this.pointerLocked) this.dropPressed = true;
       else if (k === this.settings.keybinds.jump) { this.jumpPressed = true; e.preventDefault(); }
       else if (k === 'Digit4') this.craftPressed = 'bandage';
       else if (k === 'Digit5') this.craftPressed = 'plate';
@@ -58,6 +62,7 @@ export class InputState {
     document.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => {
       this.keys.clear(); this.fireHeld = false; this.aimHeld = false;
+      this.dropPressed = false;
     });
 
     document.addEventListener('mousedown', (e) => {
@@ -96,6 +101,7 @@ export class InputState {
         this.fireHeld = false;
         this.aimHeld = false;
         this.wheelDelta = 0;
+        this.dropPressed = false;
       }
     });
   }
@@ -137,11 +143,13 @@ export class InputState {
   get fire(): boolean { return this.fireHeld && this.pointerLocked; }
   get aim(): boolean { return this.aimHeld && this.pointerLocked; }
   get interact(): boolean { return this.keys.has(this.settings.keybinds.interact); }
+  get roundRosterHeld(): boolean { return this.keys.has('Tab'); }
 
   /** Reset one-frame edge flags; call at the end of each frame. */
   clearEdges(): void {
     this.slotPressed = null;
     this.reloadPressed = false;
+    this.dropPressed = false;
     this.jumpPressed = false;
     this.craftPressed = null;
     this.bandagePressed = false;

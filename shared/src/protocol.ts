@@ -5,7 +5,7 @@ import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
 import type { PlayerSkinId } from './multiplayer';
 
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 17;
 
 // ---------- lobby ----------
 export interface PlayerProfileMsg {
@@ -151,6 +151,8 @@ export interface InputMsg {
   shotAgeMs?: number;
   slot?: 1 | 2 | 3;      // weapon slot switch (3 = throwable)
   reload?: boolean;
+  /** One-shot request to place the selected slot-1/2 weapon into the world. */
+  drop?: boolean;
   /** Pressing the throwable key while slot 3 is active cycles frag → smoke → flash. */
   throwCycle?: boolean;
 }
@@ -158,6 +160,8 @@ export interface InputMsg {
 // ---------- snapshot (host → clients, 20 Hz full state §8) ----------
 export interface SnapPlayer {
   id: string;
+  /** Stable display name for spectator labels and the in-round roster. */
+  name: string;
   x: number; y: number; z: number;
   yaw: number; pitch: number;
   hp: number;
@@ -228,6 +232,10 @@ export interface PickupInfo {
   amount?: number;
   /** Present only for dropped weapons; preserves the remaining magazine. */
   weaponMag?: number;
+  /** Optional world-space origin for the short throw-to-ground animation. */
+  dropOrigin?: { x: number; y: number; z: number };
+  /** Player who intentionally dropped this weapon; used for local feedback. */
+  droppedBy?: string;
 }
 export interface WeaponSlotState { type: WeaponType; mag: number }
 export interface InventoryState {
@@ -371,6 +379,7 @@ export function isInputMsg(m: unknown): m is InputMsg {
     && (x.shotAgeMs === undefined || (isNum(x.shotAgeMs) && x.shotAgeMs >= 0 && x.shotAgeMs <= 500))
     && (x.slot === undefined || x.slot === 1 || x.slot === 2 || x.slot === 3)
     && (x.reload === undefined || isBool(x.reload))
+    && (x.drop === undefined || isBool(x.drop))
     && (x.throwCycle === undefined || isBool(x.throwCycle));
 }
 

@@ -17,6 +17,7 @@ import {
   RECIPES, Recipe, RESOURCE_NODE_CHARGES, RESOURCE_YIELD, ROUNDS_PER_MATCH,
   MAX_SUDDEN_DEATH_ROUNDS, ROUND_END_SCOREBOARD_SECS, SERVER_TICK_HZ,
   SNAPSHOT_HZ, THROW_ORDER, THROW_WEAPON, ThrowKind, WEAPONS, WeaponType, AmmoType,
+  WEAPON_DROP_ANIMATION_SECS, WEAPON_DROP_DISTANCE, WEAPON_DROP_OWNER_LOCK_SECS,
 } from '@shared/constants';
 import { GamePhysics, RapierModule, Vec3 } from '@shared/physics';
 import { freshMoveState, MoveState, stanceForWeapon, stepMovement } from '@shared/movement';
@@ -40,7 +41,9 @@ import { deriveSeed, mulberry32, pick, Rng } from '@shared/rng';
 import {
   BotCtx, BotEnemy, BotMemory, computeBotInput, freshBotMemory,
 } from './bot';
-import { equipWeapon, grantStarterAmmo, weaponSlotState } from './inventory';
+import {
+  equipWeapon, grantStarterAmmo, takeSelectedWeapon, weaponSlotState,
+} from './inventory';
 import {
   enqueueServerInput, inputForServerTick, neutralServerInput, sanitizeServerInput, ServerInputBuffer,
 } from './input';
@@ -157,6 +160,10 @@ interface AddPickupOptions {
   amount?: number;
   fixedId?: string;
   weaponMag?: number;
+  dropOrigin?: { x: number; y: number; z: number };
+  droppedBy?: string;
+  pickupReadyTick?: number;
+  ownerReadyTick?: number;
 }
 
 export interface GameRoomOptions {
@@ -214,6 +221,11 @@ export class GameRoom {
   private tickCounter = 0;
 
   private pickups = new Map<string, PickupInfo>();
+  private pickupLocks = new Map<string, {
+    ownerId: string;
+    pickupReadyTick: number;
+    ownerReadyTick: number;
+  }>();
   private pickupSeq = 0;
   private nodeCharges = new Map<number, number>();
   private projectiles = new Map<number, Projectile>();
@@ -834,6 +846,7 @@ export class GameRoom {
     this.projectiles.clear();
     this.pings.clear();
     this.pickups.clear();
+    this.pickupLocks.clear();
     this.smokes.clear();
     this.zoneTierAnnounced = 0;
     this.currentSuddenDeath = suddenDeath;
@@ -984,6 +997,7 @@ export class GameRoom {
 
     let interactState = p.prevInteract;
     let interactEdge = false;
+    let droppedWeaponThisTick = false;
     for (const action of tickInput.actions) {
       p.yaw = action.yaw;
       p.pitch = action.pitch;
@@ -1003,6 +1017,11 @@ export class GameRoom {
       if (action.throwCycle && p.inv.active === 3 && p.cookingSince === null) {
         this.cycleThrow(p);
       }
+      if (action.drop) {
+        droppedWeaponThisTick = this.dropSelectedWeapon(p) || droppedWeaponThisTick;
+        p.prevFire = action.fire;
+        continue;
+      }
       if (action.reload) this.tryReload(p);
       if (p.inv.active === 3) this.handleThrowable(p, action);
       else if (action.fire) this.tryFire(p, events, action.shotAgeMs);
@@ -1015,8 +1034,10 @@ export class GameRoom {
     p.pitch = inp.pitch;
     p.aiming = inp.aim;
     if (p.reloadUntil > 0 && inp.sprint && p.move.sprinting) this.cancelReload(p);
-    if (p.inv.active === 3) this.handleThrowable(p, inp);
-    else if (inp.fire) this.tryFire(p, events, inp.shotAgeMs);
+    if (!droppedWeaponThisTick) {
+      if (p.inv.active === 3) this.handleThrowable(p, inp);
+      else if (inp.fire) this.tryFire(p, events, inp.shotAgeMs);
+    }
     p.prevFire = inp.fire;
 
     const interactInput = interactEdge && !inp.interact ? { ...inp, interact: true } : inp;
@@ -1184,6 +1205,41 @@ export class GameRoom {
       sneaking: p.move.sneaking,
       prone: p.move.prone,
     };
+  }
+
+  private dropSelectedWeapon(p: MatchPlayer): boolean {
+    const dropped = takeSelectedWeapon(p.inv);
+    if (!dropped) return false;
+    this.cancelReload(p, false);
+
+    const direction = { x: -Math.sin(p.yaw), y: 0, z: -Math.cos(p.yaw) };
+    const dropOrigin = {
+      x: p.move.pos.x,
+      y: p.move.pos.y + (p.move.prone ? 0.55 : p.move.sneaking ? 0.9 : 1.12),
+      z: p.move.pos.z,
+    };
+    const maxDistance = WEAPON_DROP_DISTANCE;
+    const obstacle = this.phys.raycast(
+      dropOrigin,
+      direction,
+      maxDistance,
+      [...this.players.keys()],
+    );
+    const distance = obstacle
+      ? Math.max(0.18, Math.min(maxDistance, obstacle.dist - 0.3))
+      : maxDistance;
+    const x = p.move.pos.x + direction.x * distance;
+    const z = p.move.pos.z + direction.z * distance;
+
+    this.addPickup(dropped.type, x, z, {
+      weaponMag: dropped.mag,
+      dropOrigin,
+      droppedBy: p.id,
+      pickupReadyTick: this.tickCounter + Math.ceil(SERVER_TICK_HZ * WEAPON_DROP_ANIMATION_SECS),
+      ownerReadyTick: this.tickCounter + Math.ceil(SERVER_TICK_HZ * WEAPON_DROP_OWNER_LOCK_SECS),
+    });
+    this.pushInventory(p);
+    return true;
   }
 
   private recordPlayerHistory(): void {
@@ -1730,6 +1786,16 @@ export class GameRoom {
     for (const p of this.players.values()) {
       if (!p.alive) continue;
       for (const pk of [...this.pickups.values()]) {
+        const lock = this.pickupLocks.get(pk.id);
+        if (lock) {
+          if (this.tickCounter < lock.pickupReadyTick) continue;
+          if (p.id === lock.ownerId && this.tickCounter < lock.ownerReadyTick) continue;
+          if (this.tickCounter >= lock.ownerReadyTick) {
+            this.pickupLocks.delete(pk.id);
+            delete pk.dropOrigin;
+            delete pk.droppedBy;
+          }
+        }
         const d = dist2d(p.move.pos.x, p.move.pos.z, pk.x, pk.z);
         if (d > PICKUP_RADIUS) continue;
         if (Math.abs(p.move.pos.y - pk.y) > 3) continue;
@@ -1873,14 +1939,24 @@ export class GameRoom {
       id, item, x, z, y: sampleHeight(this.gen.params, x, z),
       amount: options.amount,
       weaponMag: options.weaponMag,
+      dropOrigin: options.dropOrigin,
+      droppedBy: options.droppedBy,
     };
     this.pickups.set(id, info);
+    if (options.droppedBy && options.pickupReadyTick !== undefined && options.ownerReadyTick !== undefined) {
+      this.pickupLocks.set(id, {
+        ownerId: options.droppedBy,
+        pickupReadyTick: options.pickupReadyTick,
+        ownerReadyTick: options.ownerReadyTick,
+      });
+    }
     if (this.roundActive) this.roomEmit(S2C.event, [{ type: 'pickupSpawn', pickup: info } satisfies GameEvent]);
   }
 
   private removePickup(id: string, by: string | null, events: GameEvent[]): void {
     const pickup = this.pickups.get(id);
     if (!pickup || !this.pickups.delete(id)) return;
+    this.pickupLocks.delete(id);
     if (by) {
       const player = this.players.get(by);
       if (player) player.stats.pickups += 1;
@@ -2070,6 +2146,7 @@ export class GameRoom {
     const zone = zoneAt(this.t, this.n, pace);
     const players: SnapPlayer[] = [...this.players.values()].map((p) => ({
       id: p.id,
+      name: p.name,
       x: round3(p.move.pos.x), y: round3(p.move.pos.y), z: round3(p.move.pos.z),
       yaw: round3(p.yaw), pitch: round3(p.pitch),
       hp: Math.round(p.hp), alive: p.alive,
@@ -2251,6 +2328,7 @@ export class GameRoom {
     this.matchRoster = [];
     this.matchPartyCodes = [];
     this.pickups.clear();
+    this.pickupLocks.clear();
     this.projectiles.clear();
     this.smokes.clear();
     for (const timer of this.disconnectTimers.values()) clearTimeout(timer);

@@ -28,6 +28,13 @@ const THROW_LABELS = { frag: 'Granate', smoke: 'Rauch', flash: 'Blend' } as cons
 const THROW_GLYPHS = { frag: '●', smoke: '◌', flash: '✳' } as const;
 export const weaponName = (w: WeaponType): string => WEAPON_NAMES[w];
 
+export interface RoundRosterEntry {
+  id: string;
+  name: string;
+  alive: boolean;
+  kills: number;
+}
+
 export class Hud {
   private mini = $('minimap') as unknown as HTMLCanvasElement;
   private miniCtx = this.mini.getContext('2d')!;
@@ -40,9 +47,13 @@ export class Hud {
   private spawns: SpawnPoi[] = [];
   private pois: LandmarkPoi[] = [];
   private reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  private roundRosterSignature = '';
 
   show(): void { $('hud').classList.add('active'); }
-  hide(): void { $('hud').classList.remove('active'); }
+  hide(): void {
+    $('hud').classList.remove('active');
+    this.setRoundRoster([], '', false);
+  }
 
   setTimer(t: number, phase: string): void {
     const m = Math.floor(t / 60), s = Math.floor(t % 60);
@@ -104,6 +115,7 @@ export class Hud {
       { el: $('slot2'), w: inv.secondary },
     ];
     for (const { el, w } of slots) {
+      el.title = w ? `${WEAPON_NAMES[w.type]} · Q zum Ablegen` : 'Freier Waffenplatz';
       el.querySelector('.slot-icon')!.textContent = w ? WEAPON_GLYPHS[w.type] : '—';
       el.querySelector('.wname')!.textContent = w ? WEAPON_NAMES[w.type] : 'Leer';
       const def = w ? WEAPONS[w.type] : null;
@@ -295,6 +307,53 @@ export class Hud {
     const label = $('spectate-label');
     label.style.display = v ? 'block' : 'none';
     if (v) label.textContent = 'Freecam \u00b7 WASD fliegen \u00b7 Leertaste hoch \u00b7 Strg runter \u00b7 Shift schneller';
+  }
+
+  setRoundRoster(entries: RoundRosterEntry[], myId: string, visible: boolean): void {
+    const panel = $('round-roster');
+    panel.classList.toggle('visible', visible);
+    panel.setAttribute('aria-hidden', String(!visible));
+    if (!visible) return;
+
+    const ordered = [...entries].sort((a, b) => {
+      if (a.id === myId) return -1;
+      if (b.id === myId) return 1;
+      return a.name.localeCompare(b.name, 'de');
+    });
+    const signature = ordered
+      .map((entry) => `${entry.id}:${entry.name}:${entry.alive ? 1 : 0}:${entry.kills}`)
+      .join('|');
+    if (signature === this.roundRosterSignature) return;
+    this.roundRosterSignature = signature;
+
+    const list = $('round-roster-list');
+    list.replaceChildren();
+    for (const entry of ordered) {
+      const row = document.createElement('li');
+      row.dataset.status = entry.alive ? 'alive' : 'dead';
+      row.classList.toggle('me', entry.id === myId);
+
+      const dot = document.createElement('span');
+      dot.className = 'roster-dot';
+      dot.textContent = entry.alive ? '●' : '☠';
+
+      const name = document.createElement('span');
+      name.className = 'roster-name';
+      name.textContent = entry.name;
+      if (entry.id === myId) {
+        const self = document.createElement('small');
+        self.textContent = 'DU';
+        name.appendChild(self);
+      }
+
+      const status = document.createElement('span');
+      status.className = 'roster-status';
+      status.textContent = entry.alive
+        ? `${entry.kills} ${entry.kills === 1 ? 'Kill' : 'Kills'}`
+        : 'Eliminiert';
+      row.append(dot, name, status);
+      list.appendChild(row);
+    }
   }
 
   showElimination(victim: string, detail: string): void {

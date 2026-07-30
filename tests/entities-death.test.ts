@@ -3,6 +3,22 @@ import * as THREE from 'three';
 import { Entities } from '../client/src/entities';
 
 describe('remote elimination presentation', () => {
+  it('shows remote names only while spectating and hides them for eliminated players', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    const entities = new Entities(scene, camera, 2);
+    entities.ensurePlayer('rival', 0, 'Rival');
+    entities.updatePlayer('rival', 1, 0, 2, 0, 0, true, 'rifle', false, false, false);
+
+    expect(entities.spectatorLabelStats()).toEqual({ enabled: false, total: 1, visible: 0 });
+    entities.setSpectatorLabels(true);
+    expect(entities.spectatorLabelStats()).toEqual({ enabled: true, total: 1, visible: 1 });
+
+    entities.updatePlayer('rival', 1, 0, 2, 0, 0, false, 'rifle', false, false, false);
+    expect(entities.spectatorLabelStats()).toEqual({ enabled: true, total: 1, visible: 0 });
+    entities.dispose();
+  });
+
   it('poses a scoped sniper flat on the stomach with centered rifle and supported arms', () => {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera();

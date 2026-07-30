@@ -90,6 +90,7 @@ export function inputForServerTick(
       // Edge-triggered actions are replayed from `actions`, never held here.
       slot: undefined,
       reload: undefined,
+      drop: undefined,
       throwCycle: undefined,
     },
   };

@@ -54,6 +54,8 @@ test('player can enter training from the new 3D lobby and render the match', asy
             viewmodel: {
               weapon: string | null;
               visible: boolean;
+              switchCount: number;
+              lastSwitchSameWeapon: boolean;
               hands: Array<{
                 ndcMin: { x: number; y: number; z: number };
                 ndcMax: { x: number; y: number; z: number };
@@ -82,6 +84,68 @@ test('player can enter training from the new 3D lobby and render the match', asy
       __ISLAND_DUELL_DIAGNOSTICS__?: { snapshot(): { state: { pointerLocked: boolean } } };
     }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().state.pointerLocked ?? false
   ))).toBe(true);
+
+  await page.keyboard.down('Tab');
+  await expect(page.locator('#round-roster')).toHaveClass(/visible/);
+  await expect(page.locator('#round-roster-list li')).toHaveCount(2);
+  await expect(page.locator('#round-roster-list')).toContainText(/IslandPlayer\d{3}/);
+  await expect(page.locator('#round-roster-list')).not.toContainText('Unbekannt');
+  await expect(page.locator('#round-roster-list li[data-status="alive"]')).toHaveCount(2);
+  await page.keyboard.up('Tab');
+  await expect(page.locator('#round-roster')).not.toHaveClass(/visible/);
+
+  const dropRequestsBefore = await page.evaluate(() => (
+    (window as Window & {
+      __ISLAND_DUELL_DIAGNOSTICS__?: {
+        snapshot(): { input: { dropRequestsSent: number } };
+      };
+    }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().input.dropRequestsSent ?? 0
+  ));
+  await page.keyboard.down('q');
+  await expect.poll(async () => page.evaluate(() => (
+    (window as Window & {
+      __ISLAND_DUELL_DIAGNOSTICS__?: {
+        snapshot(): { input: { dropRequestsSent: number } };
+      };
+    }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().input.dropRequestsSent ?? 0
+  ))).toBe(dropRequestsBefore + 1);
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => (
+    (window as Window & {
+      __ISLAND_DUELL_DIAGNOSTICS__?: {
+        snapshot(): { input: { dropRequestsSent: number } };
+      };
+    }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().input.dropRequestsSent ?? 0
+  ))).toBe(dropRequestsBefore + 1);
+  await page.keyboard.up('q');
+
+  const switchCountBefore = await page.evaluate(() => (
+    (window as Window & {
+      __ISLAND_DUELL_DIAGNOSTICS__?: {
+        snapshot(): { entities: { viewmodel: { switchCount: number } } | null };
+      };
+    }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().entities?.viewmodel.switchCount ?? 0
+  ));
+  await page.keyboard.press('Digit2');
+  await expect.poll(async () => page.evaluate(() => (
+    (window as Window & {
+      __ISLAND_DUELL_DIAGNOSTICS__?: {
+        snapshot(): {
+          entities: {
+            viewmodel: {
+              weapon: string | null;
+              switchCount: number;
+              lastSwitchSameWeapon: boolean;
+            };
+          } | null;
+        };
+      };
+    }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().entities?.viewmodel
+  ))).toMatchObject({
+    weapon: 'fists',
+    switchCount: switchCountBefore + 1,
+    lastSwitchSameWeapon: true,
+  });
 
   const wheelHandledByGame = await page.evaluate(() => {
     const event = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true });

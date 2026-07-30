@@ -28,14 +28,16 @@ describe('authoritative server input', () => {
 
   it('keeps the latest held intent but retains short action pulses', () => {
     const packets = [
-      input(10, { fire: true, reload: true }),
+      input(10, { fire: true, reload: true, drop: true }),
       input(11, { fire: false }),
     ];
     const tick = inputForServerTick(neutralServerInput(9), packets, 100, 100);
     expect(tick.movement.seq).toBe(11);
     expect(tick.movement.fire).toBe(false);
     expect(tick.movement.reload).toBeUndefined();
+    expect(tick.movement.drop).toBeUndefined();
     expect(tick.actions[0].reload).toBe(true);
+    expect(tick.actions[0].drop).toBe(true);
     expect(tick.actions.map((packet) => packet.fire)).toEqual([true, false]);
   });
 
