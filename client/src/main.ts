@@ -57,6 +57,7 @@ import {
 import { loadLobbyProfile, saveLobbyProfile, type LobbyProfile } from './lobby-profile';
 import { LobbyScene } from './lobby-scene';
 import { currentMultiplayerUrl } from './multiplayer-url';
+import { safeStorage } from './safe-storage';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -148,6 +149,7 @@ let fpsAcc = 0, fpsFrames = 0, fpsShown = 0, bwShown = 0;
 let visualElapsed = 0;
 let matchSeed: number | null = null;
 let resumeToken = '';
+let rememberedPartyCode = '';
 let networkConnected = false;
 let forceAuthority = false;
 let crosshairBloom = 0;
@@ -918,9 +920,10 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
     return;
   }
   myName = lobbyProfile.name;
-  resumeToken = localStorage.getItem('islandResumeToken')
-    ?? localStorage.getItem(`islandResumeToken:${myName.toLocaleLowerCase()}`)
+  resumeToken ||= safeStorage.getItem('islandResumeToken')
+    ?? safeStorage.getItem(`islandResumeToken:${myName.toLocaleLowerCase()}`)
     ?? '';
+  rememberedPartyCode ||= safeStorage.getItem('islandPartyCode') ?? '';
   sfx.unlock();
   setMenuStatus('Spiel wird vorbereitet …');
   setJoinBusy(true);
@@ -952,7 +955,11 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
   let nextNet!: Net;
   let assignmentCount = 0;
   const sendAssignment = () => {
-    const rememberedCode = currentPartyState?.code ?? localStorage.getItem('islandPartyCode') ?? '';
+    const rememberedCode = currentPartyState?.code
+      ?? rememberedPartyCode
+      ?? safeStorage.getItem('islandPartyCode')
+      ?? '';
+    if (rememberedCode) rememberedPartyCode = rememberedCode;
     const reconnectingParty = assignmentCount > 0 && rememberedCode && resumeToken;
     assignmentCount += 1;
     if (reconnectingParty || intent === 'resumeParty') {
@@ -984,14 +991,16 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
       $('party-error').textContent = '';
       setJoinBusy(false);
       if (party) {
-        localStorage.setItem('islandPartyCode', party.code);
+        rememberedPartyCode = party.code;
+        safeStorage.setItem('islandPartyCode', party.code);
         lobbyMode = party.selection;
         if (!inMatch && party.queueStatus === 'idle' && $('scoreboard-screen').classList.contains('hidden')) {
           showScreen('menu-screen');
         }
       } else {
-        localStorage.removeItem('islandPartyCode');
-        localStorage.removeItem('islandResumeToken');
+        rememberedPartyCode = '';
+        safeStorage.removeItem('islandPartyCode');
+        safeStorage.removeItem('islandResumeToken');
         resumeToken = '';
         myId = '';
         isHost = false;
@@ -1004,7 +1013,8 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
       setMenuStatus(error.reason, true);
       setJoinBusy(false);
       if (error.operation === 'join' && !currentPartyState) {
-        localStorage.removeItem('islandPartyCode');
+        rememberedPartyCode = '';
+        safeStorage.removeItem('islandPartyCode');
       }
     },
     onRoomAssigned: () => {
@@ -1044,8 +1054,11 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
     onSession: (session: SessionMsg) => {
       myId = session.playerId;
       resumeToken = session.resumeToken;
-      localStorage.setItem('islandResumeToken', resumeToken);
-      if (session.partyCode) localStorage.setItem('islandPartyCode', session.partyCode);
+      safeStorage.setItem('islandResumeToken', resumeToken);
+      if (session.partyCode) {
+        rememberedPartyCode = session.partyCode;
+        safeStorage.setItem('islandPartyCode', session.partyCode);
+      }
       forceAuthority = session.resumed;
       if (session.resumed) {
         hud.setNetworkStatus('Verbindung wiederhergestellt', false);
@@ -1177,10 +1190,11 @@ async function leaveToMenu(message: string, notifyServer: boolean, targetNet: Ne
   targetNet?.dispose();
   if (net === targetNet) net = null;
 
-  localStorage.removeItem('islandResumeToken');
-  localStorage.removeItem('islandPartyCode');
-  localStorage.removeItem(`islandResumeToken:${myName.toLocaleLowerCase()}`);
+  safeStorage.removeItem('islandResumeToken');
+  safeStorage.removeItem('islandPartyCode');
+  safeStorage.removeItem(`islandResumeToken:${myName.toLocaleLowerCase()}`);
   resumeToken = '';
+  rememberedPartyCode = '';
   joinedTransportId = '';
   networkConnected = false;
   inMatch = false;

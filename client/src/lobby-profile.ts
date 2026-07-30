@@ -4,6 +4,7 @@ import {
   normalizePlayerName,
   type PlayerSkinId,
 } from '@shared/multiplayer';
+import { safeStorage, type StorageBackend } from './safe-storage';
 
 export interface LobbyProfile {
   name: string;
@@ -17,7 +18,9 @@ export function createGuestName(random = Math.random): string {
   return `IslandPlayer${Math.floor(random() * 900 + 100)}`;
 }
 
-export function loadLobbyProfile(storage: Pick<Storage, 'getItem' | 'setItem'> = localStorage): LobbyProfile {
+export function loadLobbyProfile(
+  storage: Pick<StorageBackend, 'getItem' | 'setItem'> = safeStorage,
+): LobbyProfile {
   const storedName = storage.getItem(NAME_KEY);
   const name = normalizePlayerName(storedName) ?? createGuestName();
   const storedSkin = storage.getItem(SKIN_KEY);
@@ -29,7 +32,7 @@ export function loadLobbyProfile(storage: Pick<Storage, 'getItem' | 'setItem'> =
 
 export function saveLobbyProfile(
   profile: LobbyProfile,
-  storage: Pick<Storage, 'setItem'> = localStorage,
+  storage: Pick<StorageBackend, 'setItem'> = safeStorage,
 ): LobbyProfile | null {
   const name = normalizePlayerName(profile.name);
   if (!name || !isPlayerSkinId(profile.skin)) return null;

@@ -1,3 +1,5 @@
+import { safeStorage, type StorageBackend } from './safe-storage';
+
 export type OnboardingEvent = 'move' | 'loot' | 'aim' | 'cover';
 
 export interface OnboardingStage {
@@ -30,7 +32,7 @@ export class OnboardingGuide {
     private readonly eyebrow: HTMLElement,
     private readonly title: HTMLElement,
     private readonly body: HTMLElement,
-    private readonly storage: Storage = localStorage,
+    private readonly storage: Pick<StorageBackend, 'getItem' | 'setItem'> = safeStorage,
   ) {}
 
   start(practice: boolean): void {

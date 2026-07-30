@@ -1,6 +1,7 @@
 // Local player profile + match history (§F5). Pure aggregation logic is kept
-// framework-free so it unit-tests without a DOM; localStorage I/O lives at the edge.
+// framework-free so it unit-tests without a DOM; browser persistence lives at the edge.
 import type { CombatStats } from '@shared/protocol';
+import { safeStorage, type StorageBackend } from './safe-storage';
 
 export interface CareerStats {
   matches: number;
@@ -110,9 +111,12 @@ export function kdRatio(career: CareerStats): string {
 // ---------- storage edge ----------
 const keyFor = (name: string): string => `islandProfile:${name.trim().toLocaleLowerCase()}`;
 
-export function loadProfile(name: string): PlayerProfile {
+export function loadProfile(
+  name: string,
+  storage: Pick<StorageBackend, 'getItem'> = safeStorage,
+): PlayerProfile {
   try {
-    const raw = localStorage.getItem(keyFor(name));
+    const raw = storage.getItem(keyFor(name));
     if (!raw) return freshProfile();
     const parsed = JSON.parse(raw) as PlayerProfile;
     if (parsed?.version !== 1 || !parsed.career || !Array.isArray(parsed.history)) return freshProfile();
@@ -122,16 +126,24 @@ export function loadProfile(name: string): PlayerProfile {
   }
 }
 
-export function saveProfile(name: string, profile: PlayerProfile): void {
+export function saveProfile(
+  name: string,
+  profile: PlayerProfile,
+  storage: Pick<StorageBackend, 'setItem'> = safeStorage,
+): void {
   try {
-    localStorage.setItem(keyFor(name), JSON.stringify(profile));
+    storage.setItem(keyFor(name), JSON.stringify(profile));
   } catch { /* storage full/blocked: profile is a nice-to-have */ }
 }
 
-export function renameStoredProfile(fromName: string, toName: string): void {
+export function renameStoredProfile(
+  fromName: string,
+  toName: string,
+  storage: StorageBackend = safeStorage,
+): void {
   if (!fromName || fromName.toLocaleLowerCase() === toName.toLocaleLowerCase()) return;
-  const source = loadProfile(fromName);
-  const target = loadProfile(toName);
+  const source = loadProfile(fromName, storage);
+  const target = loadProfile(toName, storage);
   const sourceHasData = source.career.matches > 0 || source.history.length > 0;
   if (!sourceHasData) return;
   const bestPlacements = [source.career.bestPlacement, target.career.bestPlacement].filter((value) => value > 0);
@@ -154,8 +166,6 @@ export function renameStoredProfile(fromName: string, toName: string): void {
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, HISTORY_LIMIT),
   };
-  saveProfile(toName, merged);
-  try {
-    localStorage.removeItem(keyFor(fromName));
-  } catch { /* storage cleanup is best effort */ }
+  saveProfile(toName, merged, storage);
+  storage.removeItem(keyFor(fromName));
 }

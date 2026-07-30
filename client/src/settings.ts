@@ -1,3 +1,5 @@
+import { safeStorage, type StorageBackend } from './safe-storage';
+
 export type GraphicsQuality = 'low' | 'medium' | 'high';
 export type BindAction = 'forward' | 'back' | 'left' | 'right' | 'sprint' | 'sneak'
   | 'jump' | 'reload' | 'interact' | 'heal';
@@ -35,9 +37,11 @@ const STORAGE_KEY = 'islandDuellSettingsV1';
 const clamp = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(2, value)) : fallback;
 
-export function loadSettings(): PlayerSettings {
+export function loadSettings(
+  storage: Pick<StorageBackend, 'getItem'> = safeStorage,
+): PlayerSettings {
   try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<PlayerSettings>;
+    const value = JSON.parse(storage.getItem(STORAGE_KEY) ?? '{}') as Partial<PlayerSettings>;
     return {
       mouseSensitivity: Math.max(0.25, clamp(value.mouseSensitivity, 1)),
       sniperAimSensitivity: Math.max(0.1, Math.min(1.5,
@@ -55,8 +59,11 @@ export function loadSettings(): PlayerSettings {
   }
 }
 
-export function saveSettings(settings: PlayerSettings): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+export function saveSettings(
+  settings: PlayerSettings,
+  storage: Pick<StorageBackend, 'setItem'> = safeStorage,
+): void {
+  storage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
 export function keyLabel(code: string): string {
