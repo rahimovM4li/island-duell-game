@@ -11,8 +11,13 @@ const PITCH_LIMIT = Math.PI / 2 - 0.02;
  * is active, keys mapped to gameplay must win over the browser shortcut.
  */
 export function shouldBlockGameplayKey(
-  code: string, pointerLocked: boolean, settings: PlayerSettings,
+  code: string,
+  pointerLocked: boolean,
+  settings: PlayerSettings,
+  ctrlKey = false,
+  metaKey = false,
 ): boolean {
+  if (code === 'KeyW' && (ctrlKey || metaKey)) return true;
   if (!pointerLocked) return false;
   return Object.values(settings.keybinds).includes(code)
     || /^Digit[1-6]$/.test(code)
@@ -44,7 +49,9 @@ export class InputState {
 
   constructor(private canvas: HTMLElement, private settings: PlayerSettings) {
     document.addEventListener('keydown', (e) => {
-      if (shouldBlockGameplayKey(e.code, this.pointerLocked, this.settings)) e.preventDefault();
+      if (shouldBlockGameplayKey(e.code, this.pointerLocked, this.settings, e.ctrlKey, e.metaKey)) {
+        e.preventDefault();
+      }
       if (e.repeat) return;
       const k = e.code;
       this.keys.add(k);

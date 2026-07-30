@@ -1,5 +1,15 @@
 import { expect, test } from '@playwright/test';
 
+test('Ctrl+W does not close the game tab', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#menu-screen')).toBeVisible();
+
+  await page.keyboard.press('Control+W');
+
+  expect(page.isClosed()).toBe(false);
+  await expect(page.locator('#menu-screen')).toBeVisible();
+});
+
 test('player can enter training from the new 3D lobby and render the match', async ({ page }) => {
   const pageErrors: string[] = [];
   const assetResponses = new Map<string, number>();

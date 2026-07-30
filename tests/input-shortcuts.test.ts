@@ -3,6 +3,11 @@ import { shouldBlockGameplayKey } from '../client/src/input';
 import { DEFAULT_SETTINGS } from '../client/src/settings';
 
 describe('browser shortcut suppression while playing', () => {
+  it('blocks the browser close shortcut even when pointer lock is released', () => {
+    expect(shouldBlockGameplayKey('KeyW', false, DEFAULT_SETTINGS, true)).toBe(true);
+    expect(shouldBlockGameplayKey('KeyW', false, DEFAULT_SETTINGS, false, true)).toBe(true);
+  });
+
   it('blocks Edge Ctrl+D because both keys are active gameplay controls', () => {
     expect(shouldBlockGameplayKey('ControlLeft', true, DEFAULT_SETTINGS)).toBe(true);
     expect(shouldBlockGameplayKey('KeyD', true, DEFAULT_SETTINGS)).toBe(true);
