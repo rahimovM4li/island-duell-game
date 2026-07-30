@@ -23,6 +23,7 @@ import { recordProfileMatch, renderProfile } from './profile-ui';
 import { renameStoredProfile } from './profile';
 import { Net } from './net';
 import { InputState } from './input';
+import { detectTouchDevice, TouchControls } from './touch-controls';
 import { World } from './world';
 import { Entities } from './entities';
 import { Hud, weaponName } from './hud';
@@ -86,6 +87,42 @@ void gameAssets.preload(renderer).then(() => lobbyScene.loadCharacter());
 
 let settings: PlayerSettings = loadSettings();
 const input = new InputState(renderer.domElement, settings);
+
+// ---------- touch controls (phones/tablets) ----------
+const touchControls = detectTouchDevice()
+  ? new TouchControls(input, {
+    onPause: () => {
+      touchControls?.setPaused(true);
+      $('pause-hint').style.display = 'block';
+    },
+  })
+  : null;
+if (touchControls) {
+  input.attachTouchSource(touchControls);
+  document.body.classList.add('touch-mode');
+  const [pauseTitle, pauseSub] = $('pause-hint').querySelectorAll('div');
+  if (pauseTitle) pauseTitle.textContent = 'Pause';
+  if (pauseSub) pauseSub.textContent = 'Tippen, um weiterzuspielen';
+}
+
+/** Hide the pause overlay and hand input focus back to gameplay (both control schemes). */
+function resumeGameplayInput(): void {
+  if (touchControls) {
+    touchControls.setPaused(false);
+    $('pause-hint').style.display = 'none';
+  }
+  input.requestLock();
+}
+
+const portraitQuery = window.matchMedia('(orientation: portrait)');
+let rotateHintShown = false;
+function updateRotateHint(): void {
+  const show = touchControls !== null && inMatch && portraitQuery.matches;
+  if (show === rotateHintShown) return;
+  rotateHintShown = show;
+  $('rotate-hint').style.display = show ? 'flex' : 'none';
+}
+
 const hud = new Hud();
 const sfx = new Sfx();
 const onboarding = new OnboardingGuide(
@@ -617,7 +654,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-bind]')
 }
 settingsDialog.addEventListener('close', () => {
   cancelBindCapture();
-  if (inMatch && roundRunning && networkConnected) input.requestLock();
+  if (inMatch && roundRunning && networkConnected) resumeGameplayInput();
 });
 applyRuntimeSettings();
 
@@ -1232,6 +1269,7 @@ async function leaveToMenu(message: string, notifyServer: boolean, targetNet: Ne
   if (leavingGame) return;
   leavingGame = true;
   document.exitPointerLock?.();
+  touchControls?.setPaused(false);
   $('pause-hint').style.display = 'none';
 
   if (notifyServer) await targetNet?.leaveGame();
@@ -1854,7 +1892,7 @@ function updateInteractHint(dt: number): void {
     } else {
       interactStart = null;
       const label = best.kind === 'tree' ? '🪵 Holz' : best.kind === 'rock' ? '🪨 Stein' : '🌿 Fasern';
-      hud.setInteract(`[E halten] ${label} sammeln`, 0);
+      hud.setInteract(`${touchControls ? '[✋ halten]' : '[E halten]'} ${label} sammeln`, 0);
     }
   } else {
     interactStart = null;
@@ -1874,6 +1912,9 @@ function frame(): void {
   dt = Math.min(dt, 0.1);
   visualElapsed += dt;
   let finishVictoryAfterRender = false;
+
+  touchControls?.setActive(inMatch && roundRunning && networkConnected && world !== null);
+  updateRotateHint();
 
   if (input.debugToggled) {
     showDebug = !showDebug;
@@ -1952,34 +1993,34 @@ function frame(): void {
     while (inputAccumulator >= inputStep) {
       inputAccumulator -= inputStep;
       predictionStepsThisFrame += 1;
-      const stance = stanceForWeapon(myWeapon, input.pointerLocked && input.sneak);
+      const stance = stanceForWeapon(myWeapon, input.gameplayActive && input.sneak);
       const inp: InputMsg = {
         seq: ++seq,
         dt: inputStep,
-        mx: input.pointerLocked ? input.moveX : 0,
-        mz: input.pointerLocked ? input.moveZ : 0,
+        mx: input.gameplayActive ? input.moveX : 0,
+        mz: input.gameplayActive ? input.moveZ : 0,
         // scope sway is baked into the transmitted view so the host raycast sees it (§F1)
         yaw: input.yaw + swayYaw,
         pitch: input.pitch + swayPitch,
         sprint: input.sprint && !aiming,
         ...stance,
         aim: aiming,
-        jump: input.pointerLocked && input.jumpHeld,
-        fire: input.pointerLocked && input.fire,
-        interact: input.pointerLocked && input.interact,
+        jump: input.gameplayActive && input.jumpHeld,
+        fire: input.gameplayActive && input.fire,
+        interact: input.gameplayActive && input.interact,
         shotAgeMs: input.fire || input.firePressed
           ? recommendedShotRewindMs(interpolationDelayMs, net.rttMs)
           : undefined,
       };
       // Preserve a complete press/release that happened between two 30-Hz
       // samples (important for quick clicks and cooked-grenade release).
-      if (input.pointerLocked && input.firePressed && input.fireReleased && !input.fire) {
+      if (input.gameplayActive && input.firePressed && input.fireReleased && !input.fire) {
         net.sendInput({ ...inp, fire: true });
         inp.seq = ++seq;
       }
       // action keys while unlocked belong to menus/dialogs, not the match —
       // e.g. typing with the pause hint open must not switch weapons or heal
-      if (input.pointerLocked) {
+      if (input.gameplayActive) {
         if (input.slotPressed) {
           // pressing 3 while the throwable is already up cycles frag → smoke → flash (§F2)
           if (input.slotPressed === 3 && lastInv?.active === 3) inp.throwCycle = true;
@@ -1998,8 +2039,8 @@ function frame(): void {
       phys.step(inputStep);
       updateLocalFootsteps(inputStep);
 
-      if (input.pointerLocked && input.craftPressed) net.craft(input.craftPressed);
-      if (input.pointerLocked && input.bandagePressed) { net.useBandage(); bandageStart = now; }
+      if (input.gameplayActive && input.craftPressed) net.craft(input.craftPressed);
+      if (input.gameplayActive && input.bandagePressed) { net.useBandage(); bandageStart = now; }
       input.clearEdges();
     }
     maxPredictionStepsPerFrame = Math.max(maxPredictionStepsPerFrame, predictionStepsThisFrame);
@@ -2240,10 +2281,10 @@ document.addEventListener('pointerlockchange', () => {
 });
 $('pause-hint').addEventListener('click', (event) => {
   if ((event.target as HTMLElement).closest('button')) return;
-  if (inMatch && roundRunning && !settingsDialog.open) input.requestLock();
+  if (inMatch && roundRunning && !settingsDialog.open) resumeGameplayInput();
 });
 renderer.domElement.addEventListener('click', () => {
-  if (inMatch && !input.pointerLocked) input.requestLock();
+  if (inMatch && !input.gameplayActive) resumeGameplayInput();
 });
 
 // ---------- boot ----------

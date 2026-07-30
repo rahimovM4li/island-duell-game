@@ -4,7 +4,25 @@ import type { Recipe } from '@shared/constants';
 import type { PlayerSettings } from './settings';
 
 const MOUSE_SENS = 0.0023;
+const TOUCH_LOOK_SENS = 0.0042;
 const PITCH_LIMIT = Math.PI / 2 - 0.02;
+
+/** Live state of the on-screen touch controls (see touch-controls.ts). */
+export interface TouchInputSource {
+  /** True while the overlay is shown and not paused — gates gameplay input. */
+  readonly active: boolean;
+  readonly moveX: number;
+  readonly moveZ: number;
+  readonly sprint: boolean;
+  readonly fireHeld: boolean;
+  readonly aimHeld: boolean;
+  readonly jumpHeld: boolean;
+  readonly interactHeld: boolean;
+}
+
+interface OrientationLockController {
+  lock?(orientation: string): Promise<void>;
+}
 
 interface KeyboardLockController {
   lock(keyCodes?: string[]): Promise<void>;
@@ -43,6 +61,7 @@ export class InputState {
   private aimHeld = false;
   private sniperScoped = false;
   private wheelDelta = 0;
+  private touch: TouchInputSource | null = null;
   pointerLocked = false;
 
   // per-frame edge events
@@ -124,6 +143,26 @@ export class InputState {
     });
   }
 
+  /** Touch devices replace pointer lock with the on-screen overlay. */
+  attachTouchSource(source: TouchInputSource): void {
+    this.touch = source;
+  }
+
+  get touchMode(): boolean { return this.touch !== null; }
+
+  /** True while gameplay owns the input: pointer lock or an active touch overlay. */
+  get gameplayActive(): boolean {
+    return this.pointerLocked || (this.touch?.active ?? false);
+  }
+
+  /** Apply a touch-look drag in CSS pixels with the same sensitivity chain as the mouse. */
+  applyLookDelta(dxPixels: number, dyPixels: number): void {
+    const scopeMultiplier = this.sniperScoped ? this.settings.sniperAimSensitivity : 1;
+    this.yaw -= dxPixels * TOUCH_LOOK_SENS * this.settings.mouseSensitivity * scopeMultiplier;
+    this.pitch -= dyPixels * TOUCH_LOOK_SENS * this.settings.mouseSensitivity * scopeMultiplier;
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch));
+  }
+
   requestLock(): void {
     void this.requestImmersiveLock();
   }
@@ -135,6 +174,17 @@ export class InputState {
       }
     } catch {
       // Fullscreen may be denied outside a direct user gesture.
+    }
+
+    if (this.touch) {
+      // no pointer/keyboard lock on touch devices — just try to pin landscape
+      try {
+        await (screen.orientation as unknown as OrientationLockController).lock?.('landscape');
+      } catch {
+        // Orientation lock needs fullscreen and is unsupported on iOS — the
+        // rotate hint covers the portrait case instead.
+      }
+      return;
     }
 
     const keyboard = keyboardLockController();
@@ -171,20 +221,36 @@ export class InputState {
     this.yaw += yawKick;
   }
 
+  private get touchActive(): boolean { return this.touch?.active ?? false; }
+
   get moveX(): number {
-    return (this.keys.has(this.settings.keybinds.right) ? 1 : 0)
+    const keyboard = (this.keys.has(this.settings.keybinds.right) ? 1 : 0)
       - (this.keys.has(this.settings.keybinds.left) ? 1 : 0);
+    const touch = this.touchActive ? this.touch!.moveX : 0;
+    return Math.max(-1, Math.min(1, keyboard + touch));
   }
   get moveZ(): number {
-    return (this.keys.has(this.settings.keybinds.forward) ? 1 : 0)
+    const keyboard = (this.keys.has(this.settings.keybinds.forward) ? 1 : 0)
       - (this.keys.has(this.settings.keybinds.back) ? 1 : 0);
+    const touch = this.touchActive ? this.touch!.moveZ : 0;
+    return Math.max(-1, Math.min(1, keyboard + touch));
   }
-  get sprint(): boolean { return this.keys.has(this.settings.keybinds.sprint); }
+  get sprint(): boolean {
+    return this.keys.has(this.settings.keybinds.sprint) || (this.touchActive && this.touch!.sprint);
+  }
   get sneak(): boolean { return this.keys.has(this.settings.keybinds.sneak); }
-  get jumpHeld(): boolean { return this.keys.has(this.settings.keybinds.jump); }
-  get fire(): boolean { return this.fireHeld && this.pointerLocked; }
-  get aim(): boolean { return this.aimHeld && this.pointerLocked; }
-  get interact(): boolean { return this.keys.has(this.settings.keybinds.interact); }
+  get jumpHeld(): boolean {
+    return this.keys.has(this.settings.keybinds.jump) || (this.touchActive && this.touch!.jumpHeld);
+  }
+  get fire(): boolean {
+    return (this.fireHeld && this.pointerLocked) || (this.touchActive && this.touch!.fireHeld);
+  }
+  get aim(): boolean {
+    return (this.aimHeld && this.pointerLocked) || (this.touchActive && this.touch!.aimHeld);
+  }
+  get interact(): boolean {
+    return this.keys.has(this.settings.keybinds.interact) || (this.touchActive && this.touch!.interactHeld);
+  }
   get roundRosterHeld(): boolean { return this.keys.has('Tab'); }
 
   /** Reset one-frame edge flags; call at the end of each frame. */

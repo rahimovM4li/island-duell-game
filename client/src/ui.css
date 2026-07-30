@@ -905,3 +905,73 @@ table.scores tr.me td { color: var(--accent); font-weight: 700; }
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
   .play-button[aria-busy='true'] b { animation: none; border-color: #211706; }
 }
+
+/* ---------- touch gameplay controls (phones/tablets) ---------- */
+#touch-controls {
+  position: fixed; inset: 0; z-index: 11; display: none;
+  touch-action: none; -webkit-user-select: none; user-select: none;
+}
+#touch-controls.active { display: block; }
+/* HUD sits above the look surface; only slots/craft re-enable pointer events */
+body.touch-mode #hud { z-index: 12; }
+body.touch-mode #slots .slot,
+body.touch-mode #craft-recipes span { pointer-events: auto; }
+body.touch-mode #slots {
+  left: 50%; right: auto; bottom: 8px; transform: translateX(-50%);
+}
+body.touch-mode #slots .slot { width: 78px; padding: 6px 6px 5px; }
+body.touch-mode #consumables {
+  right: 50%; bottom: 96px; transform: translateX(50%); text-align: center;
+}
+body.touch-mode #bottombar { bottom: 108px; width: 230px; }
+
+.touch-stick-base {
+  position: absolute; left: 18vw; top: 72vh; width: 128px; height: 128px;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.22); background: rgba(12, 20, 28, 0.35);
+  opacity: 0.55; pointer-events: none;
+}
+.touch-stick-base.engaged { opacity: 0.9; }
+.touch-stick-knob {
+  position: absolute; left: 50%; top: 50%; width: 56px; height: 56px;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  background: rgba(232, 238, 244, 0.55); border: 1.5px solid rgba(255, 255, 255, 0.5);
+}
+
+.touch-btn {
+  position: absolute; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: rgba(12, 20, 28, 0.55);
+  border: 1.5px solid rgba(255, 255, 255, 0.28); color: #e8eef4;
+  font-size: 22px; font-weight: 700; pointer-events: auto; touch-action: none;
+  width: 58px; height: 58px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+.touch-btn.pressed, .touch-btn.on {
+  background: rgba(255, 181, 69, 0.45); border-color: var(--accent);
+}
+#touch-fire { right: 30px; bottom: 110px; width: 86px; height: 86px; font-size: 30px; }
+#touch-aim { right: 138px; bottom: 88px; }
+#touch-jump { right: 52px; bottom: 218px; }
+#touch-reload { right: 158px; bottom: 170px; }
+#touch-interact { right: 244px; bottom: 110px; }
+#touch-heal { left: 30px; bottom: 232px; }
+#touch-pause {
+  top: 12px; left: 12px; width: 44px; height: 44px;
+  border-radius: 10px; font-size: 14px;
+}
+
+/* ---------- portrait rotate hint ---------- */
+#rotate-hint {
+  position: fixed; inset: 0; z-index: 60; display: none;
+  flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: #0a141c; color: #e8eef4; text-align: center; padding: 24px;
+}
+#rotate-hint .rotate-icon { font-size: 54px; animation: rotate-nudge 2.4s ease-in-out infinite; }
+#rotate-hint strong { font-size: 22px; color: var(--accent); }
+#rotate-hint span { font-size: 14px; color: #9fb3c4; }
+@keyframes rotate-nudge {
+  0%, 55%, 100% { transform: rotate(0deg); }
+  25%, 35% { transform: rotate(90deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #rotate-hint .rotate-icon { animation: none; }
+}
