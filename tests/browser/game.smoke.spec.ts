@@ -1,19 +1,20 @@
 import { expect, test } from '@playwright/test';
 
-test('Ctrl+W does not close the game tab', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.locator('#menu-screen')).toBeVisible();
-
-  await page.keyboard.press('Control+W');
-
-  expect(page.isClosed()).toBe(false);
-  await expect(page.locator('#menu-screen')).toBeVisible();
-});
-
 test('player can enter training from the new 3D lobby and render the match', async ({ page }) => {
   const pageErrors: string[] = [];
   const assetResponses = new Map<string, number>();
   const assetWarnings: string[] = [];
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'keyboard', {
+      configurable: true,
+      value: {
+        lock: async (keyCodes: string[] = []) => {
+          (window as Window & { __KEYBOARD_LOCK_CODES__?: string[] }).__KEYBOARD_LOCK_CODES__ = keyCodes;
+        },
+        unlock: () => {},
+      },
+    });
+  });
   page.on('pageerror', (error) => pageErrors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'warning' && message.text().includes('Compact game assets unavailable')) {
@@ -94,6 +95,9 @@ test('player can enter training from the new 3D lobby and render the match', asy
       __ISLAND_DUELL_DIAGNOSTICS__?: { snapshot(): { state: { pointerLocked: boolean } } };
     }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().state.pointerLocked ?? false
   ))).toBe(true);
+  await expect.poll(async () => page.evaluate(() => (
+    (window as Window & { __KEYBOARD_LOCK_CODES__?: string[] }).__KEYBOARD_LOCK_CODES__ ?? []
+  ))).toContain('KeyW');
 
   await page.keyboard.down('Tab');
   await expect(page.locator('#round-roster')).toHaveClass(/visible/);

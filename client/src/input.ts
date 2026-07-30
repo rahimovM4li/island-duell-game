@@ -6,6 +6,15 @@ import type { PlayerSettings } from './settings';
 const MOUSE_SENS = 0.0023;
 const PITCH_LIMIT = Math.PI / 2 - 0.02;
 
+interface KeyboardLockController {
+  lock(keyCodes?: string[]): Promise<void>;
+  unlock(): void;
+}
+
+function keyboardLockController(): KeyboardLockController | undefined {
+  return (navigator as Navigator & { keyboard?: KeyboardLockController }).keyboard;
+}
+
 /**
  * Browsers such as Edge reserve combinations like Ctrl+D. While pointer lock
  * is active, keys mapped to gameplay must win over the browser shortcut.
@@ -70,6 +79,7 @@ export class InputState {
     window.addEventListener('blur', () => {
       this.keys.clear(); this.fireHeld = false; this.aimHeld = false;
       this.dropPressed = false;
+      keyboardLockController()?.unlock();
     });
 
     document.addEventListener('mousedown', (e) => {
@@ -104,6 +114,7 @@ export class InputState {
     document.addEventListener('pointerlockchange', () => {
       this.pointerLocked = document.pointerLockElement === this.canvas;
       if (!this.pointerLocked) {
+        keyboardLockController()?.unlock();
         this.keys.clear();
         this.fireHeld = false;
         this.aimHeld = false;
@@ -114,12 +125,17 @@ export class InputState {
   }
 
   requestLock(): void {
+    const keyboard = keyboardLockController();
+    if (keyboard) void keyboard.lock(['KeyW']).catch(() => { /* preventDefault remains the fallback */ });
     try {
       const pending = this.canvas.requestPointerLock?.();
       if (pending && typeof (pending as Promise<void>).catch === 'function') {
-        void (pending as Promise<void>).catch(() => { /* user can retry via the pause hint */ });
+        void (pending as Promise<void>).catch(() => keyboard?.unlock());
       }
-    } catch { /* unsupported or denied; the pause hint remains available */ }
+    } catch {
+      keyboard?.unlock();
+      // Unsupported or denied; the pause hint remains available.
+    }
   }
 
   setSettings(settings: PlayerSettings): void { this.settings = settings; }
