@@ -24,7 +24,7 @@ import { freshMoveState, MoveState, stanceForWeapon, stepMovement } from '@share
 import {
   C2S, CombatStats, GameEvent, InputMsg, InventoryState, isCraftMsg, isInputMsg, isJoinMsg, isKickMsg,
   isReadyMsg, isStartMatchMsg, isStartPracticeMsg, JoinMsg, LobbyStateMsg, PickupInfo, PlacementEntry,
-  PlayerInfo, RoomKind, S2C,
+  PlayerInfo, RoomKind, RoundEndMsg, S2C,
   SmokeSnap, SnapPlayer, SnapProjectile, SnapshotMsg, WeaponSlotState,
 } from '@shared/protocol';
 import {
@@ -122,6 +122,7 @@ interface MatchPlayer {
   inv: Inventory;
   cooldownUntil: number;
   reloadUntil: number;   // 0 = not reloading
+  reloadWeapon: WeaponSlotState | null;
   bandageBusyUntil: number;
   healRemaining: number;
   craftDoneAt: number;
@@ -133,6 +134,7 @@ interface MatchPlayer {
   } | null;
   lastDamageDealtAt: number;
   kills: number;
+  deaths: number;
   zoneDamageAcc: number;
   deathTick: number; // for double-KO grouping
   stats: CombatStats;
@@ -216,6 +218,9 @@ export class GameRoom {
   private t = 0; // round clock, s (scaled)
   private tickHandle: ReturnType<typeof setInterval> | null = null;
   private roundTransitionHandle: ReturnType<typeof setTimeout> | null = null;
+  private roundTransitionEndsAt = 0;
+  private lastRoundResult: RoundEndMsg | null = null;
+  private roundStatsCommitted = false;
   private lastTickAt = 0;
   private snapshotAcc = 0;
   private tickCounter = 0;
@@ -237,6 +242,7 @@ export class GameRoom {
   private allowSoloHumanWithBots = false;
   private matchMode: MatchMode = 'classic';
   private botDifficulty: BotDifficulty = 'normal';
+  private practiceBotCount = 1;
   private botMems = new Map<string, BotMemory>();
   private matchRoster: PlayerInfo[] = [];
   private matchPartyCodes: string[] = [];
@@ -532,7 +538,13 @@ export class GameRoom {
 
     socket.on(C2S.rematch, () => {
       const c = this.connFor(socket);
-      if (c && !this.inMatch) { c.ready = true; this.broadcastLobby(); }
+      if (!c || this.inMatch) return;
+      if (this.kind === 'training' && c.id === this.hostId) {
+        this.startPractice(this.practiceBotCount, this.botDifficulty, this.matchMode);
+      } else {
+        c.ready = true;
+        this.broadcastLobby();
+      }
     });
 
     socket.on(C2S.leaveGame, (ack: unknown) => {
@@ -722,6 +734,7 @@ export class GameRoom {
     if (humans.length < 1) return;
     const bots = Math.min(botCount, MAX_PRACTICE_BOTS, MAX_PLAYERS - humans.length);
     if (bots < 1) return;
+    this.practiceBotCount = bots;
     this.botDifficulty = difficulty;
     const participants = [
       ...humans.map((c) => ({ id: c.id, name: c.name, skin: c.skin, bot: false })),
@@ -832,9 +845,9 @@ export class GameRoom {
       lastInput: neutralServerInput(), lastInputAt: Date.now(),
       prevInteract: false, prevFire: false,
       inv: this.freshInventory(),
-      cooldownUntil: 0, reloadUntil: 0, bandageBusyUntil: 0, healRemaining: 0,
+      cooldownUntil: 0, reloadUntil: 0, reloadWeapon: null, bandageBusyUntil: 0, healRemaining: 0,
       craftDoneAt: 0, craftRecipe: null, harvestNodeId: -1, harvestProgress: 0,
-      lastDamagedBy: null, lastDamageDealtAt: -1, kills: 0, zoneDamageAcc: 0, deathTick: -1,
+      lastDamagedBy: null, lastDamageDealtAt: -1, kills: 0, deaths: 0, zoneDamageAcc: 0, deathTick: -1,
       stats: this.freshStats(),
       cookingSince: null, blindUntil: 0, blindIntensity: 0, poseHistory: [],
     };
@@ -855,6 +868,9 @@ export class GameRoom {
   }
 
   private startRound(suddenDeath: boolean): void {
+    this.lastRoundResult = null;
+    this.roundTransitionEndsAt = 0;
+    this.roundStatsCommitted = false;
     this.round += 1;
     this.currentLighting = lightingPresetForRound(this.seed, this.round);
     if (suddenDeath) this.suddenDeathRounds += 1;
@@ -878,6 +894,7 @@ export class GameRoom {
     this.helmetDroppedThisRound = false;
 
     // reset resource nodes
+    this.phys.resetResourceNodes();
     this.nodeCharges.clear();
     for (const v of this.gen.vegetation) this.nodeCharges.set(v.id, RESOURCE_NODE_CHARGES);
 
@@ -903,6 +920,7 @@ export class GameRoom {
       p.prevFire = false;
       p.prevInteract = false;
       p.cooldownUntil = 0; p.reloadUntil = 0; p.bandageBusyUntil = 0; p.healRemaining = 0;
+      p.reloadWeapon = null;
       p.craftDoneAt = 0; p.craftRecipe = null;
       p.harvestNodeId = -1; p.harvestProgress = 0;
       p.lastDamagedBy = null; p.lastDamageDealtAt = -1; p.zoneDamageAcc = 0; p.deathTick = -1;
@@ -954,6 +972,9 @@ export class GameRoom {
     const totals: Record<string, number> = {};
     for (const [id, value] of this.totals) totals[id] = value;
     conn.socket.emit(S2C.roundStart, {
+      active: this.roundActive,
+      depletedNodeIds: [...this.nodeCharges].filter(([, charges]) => charges <= 0).map(([id]) => id),
+      deaths: this.players.get(conn.id)?.deaths ?? 0,
       round: this.round, suddenDeath: this.currentSuddenDeath,
       lightingPreset: this.currentLighting,
       spawns: this.currentSpawns, totals, pickups: [...this.pickups.values()],
@@ -961,6 +982,14 @@ export class GameRoom {
     const player = this.players.get(conn.id);
     if (player) this.pushInventory(player);
     conn.socket.emit(S2C.snapshot, this.buildSnapshot());
+    if (!this.roundActive && this.lastRoundResult) {
+      conn.socket.emit(S2C.roundEnd, {
+        ...this.lastRoundResult,
+        resumed: true,
+        nextRoundIn: this.lastRoundResult.matchOver ? 0
+          : Math.max(0, (this.roundTransitionEndsAt - Date.now()) / 1000),
+      });
+    }
   }
 
   // =============================== tick ===============================
@@ -995,7 +1024,8 @@ export class GameRoom {
 
     this.snapshotAcc += rawDt;
     if (this.snapshotAcc >= 1 / SNAPSHOT_HZ) {
-      this.snapshotAcc = 0;
+      // Retain fractional time; discard missed intervals after a long stall.
+      this.snapshotAcc %= 1 / SNAPSHOT_HZ;
       this.roomEmit(S2C.snapshot, this.buildSnapshot());
     }
 
@@ -1168,8 +1198,12 @@ export class GameRoom {
 
   private tryFire(p: MatchPlayer, events: GameEvent[], shotAgeMs?: number): void {
     if (this.t < p.cooldownUntil || this.t < p.bandageBusyUntil) return;
-    if (p.reloadUntil > 0) this.cancelReload(p); // firing intentionally interrupts reload
     const { type, slotState } = this.activeWeapon(p);
+    // Holding fire on an empty magazine must let its automatic reload finish.
+    if (p.reloadUntil > 0) {
+      if (slotState && slotState.mag <= 0) return;
+      this.cancelReload(p);
+    }
     const def = WEAPONS[type];
 
     if (def.kind === 'melee') {
@@ -1569,6 +1603,7 @@ export class GameRoom {
   ): void {
     if (!target.alive) return;
     target.alive = false;
+    target.deaths += 1;
     target.deathTick = this.tickCounter;
     // corpses must not keep a collider — it would eat bullets, block melee/bot
     // LOS and bounce grenades for the rest of the round (re-added on respawn)
@@ -1668,8 +1703,8 @@ export class GameRoom {
       // reload completion
       if (p.reloadUntil > 0 && this.t >= p.reloadUntil) {
         p.reloadUntil = 0;
-        const s = p.inv.active === 1 ? p.inv.primary : p.inv.secondary;
-        if (s) {
+        const s = this.activeWeapon(p).slotState;
+        if (s && s === p.reloadWeapon) {
           const def = WEAPONS[s.type];
           if (def.magSize && def.ammo) {
             const want = def.magSize - s.mag;
@@ -1678,6 +1713,7 @@ export class GameRoom {
             p.inv.ammo[def.ammo] -= take;
           }
         }
+        p.reloadWeapon = null;
         this.pushInventory(p);
       }
       // crafting completion
@@ -1685,11 +1721,13 @@ export class GameRoom {
         const r = p.craftRecipe;
         p.craftRecipe = null;
         let ok = true;
-        if (r === 'bandage') p.inv.bandages = Math.min(MAX_BANDAGES, p.inv.bandages + 1);
+        if (r === 'bandage') {
+          ok = p.inv.bandages < MAX_BANDAGES;
+          if (ok) p.inv.bandages += 1;
+        }
         if (r === 'plate') ok = this.grantPlate(p.inv);
         if (!ok) {
-          // shield filled up during the craft (e.g. plate pickups) — refund the
-          // materials instead of reporting a success that granted nothing
+          // A pickup may fill capacity during crafting. Refund the materials.
           const need = RECIPES[r].input;
           p.inv.mats.wood += need.wood ?? 0;
           p.inv.mats.stone += need.stone ?? 0;
@@ -1697,24 +1735,27 @@ export class GameRoom {
         }
         events.push(ok
           ? { type: 'craft', by: p.id, recipe: r, ok: true }
-          : { type: 'craft', by: p.id, recipe: r, ok: false, reason: 'Maximal 2 Panzerplatten' });
+          : { type: 'craft', by: p.id, recipe: r, ok: false,
+            reason: r === 'bandage' ? `Maximal ${MAX_BANDAGES} Verbände` : 'Maximal 2 Panzerplatten' });
         this.pushInventory(p);
       }
     }
   }
 
   private tryReload(p: MatchPlayer): void {
-    if (p.reloadUntil > 0) return;
+    if (p.reloadUntil > 0 || p.inv.active === 3) return;
     const s = p.inv.active === 1 ? p.inv.primary : p.inv.secondary;
     if (!s) return;
     const def = WEAPONS[s.type];
     if (!def.magSize || !def.ammo || !def.reloadTime) return;
     if (s.mag >= def.magSize || p.inv.ammo[def.ammo] <= 0) return;
     p.reloadUntil = this.t + def.reloadTime;
+    p.reloadWeapon = s;
     this.pushInventory(p);
   }
 
   private cancelReload(p: MatchPlayer, push = true): void {
+    p.reloadWeapon = null;
     if (p.reloadUntil <= 0) return;
     p.reloadUntil = 0;
     if (push) this.pushInventory(p);
@@ -1741,6 +1782,9 @@ export class GameRoom {
     const p = this.players.get(id);
     if (!p || !p.alive) return;
     if (p.craftRecipe) return this.sendTo(id, [{ type: 'craft', by: id, recipe, ok: false, reason: 'busy' }]);
+    if (recipe === 'bandage' && p.inv.bandages >= MAX_BANDAGES) {
+      return this.sendTo(id, [{ type: 'craft', by: id, recipe, ok: false, reason: `Maximal ${MAX_BANDAGES} Verbände` }]);
+    }
     if (recipe === 'plate' && !canGrantArmorPlate(p.inv.shield)) {
       return this.sendTo(id, [{
         type: 'craft', by: id, recipe, ok: false, reason: 'Maximal 2 Panzerplatten',
@@ -1774,6 +1818,7 @@ export class GameRoom {
       if (item && p.inv.primary && p.inv.secondary && p.inv.active !== 3) {
         const slot = p.inv.active === 1 ? 'primary' : 'secondary';
         const old = p.inv[slot]!;
+        this.cancelReload(p, false);
         // drop old weapon where the new one was
         this.addPickup(old.type, item.x, item.z, { weaponMag: old.mag });
         const nextType = item.item as WeaponType;
@@ -1796,6 +1841,7 @@ export class GameRoom {
       p.harvestProgress = 0;
       const charges = (this.nodeCharges.get(node.id) ?? 0) - 1;
       this.nodeCharges.set(node.id, charges);
+      if (charges <= 0) this.phys.setResourceDepleted(node.id);
       const mat = node.kind === 'tree' ? 'wood' : node.kind === 'rock' ? 'stone' : 'fiber';
       p.inv.mats[mat] += RESOURCE_YIELD;
       events.push({ type: 'resource', by: p.id, kind: node.kind, nodeId: node.id, depleted: charges <= 0 });
@@ -1871,6 +1917,7 @@ export class GameRoom {
           // A care package must never disappear just because both slots are full:
           // replace the selected weapon and leave it at the package position.
           const slot = inv.active === 2 ? 'secondary' : 'primary';
+          this.cancelReload(p, false);
           const old = inv[slot];
           if (old) this.addPickup(old.type, pk.x + 0.9, pk.z, { weaponMag: old.mag });
           inv[slot] = { type: 'rifle', mag: WEAPONS.rifle.magSize ?? 0 };
@@ -2297,11 +2344,7 @@ export class GameRoom {
       .sort((a, b) => a.place - b.place);
     const totals: Record<string, number> = {};
     for (const [id, v] of this.totals) totals[id] = v;
-    for (const [id, player] of this.players) {
-      const total = this.matchStats.get(id) ?? this.freshStats();
-      for (const key of Object.keys(total) as (keyof CombatStats)[]) total[key] += player.stats[key];
-      this.matchStats.set(id, total);
-    }
+    this.commitRoundStats();
     const stats = this.statsRecord(false);
 
     const scheduledDone = this.round >= ROUNDS_PER_MATCH;
@@ -2316,7 +2359,7 @@ export class GameRoom {
       }
     }
 
-    this.roomEmit(S2C.roundEnd, {
+    this.lastRoundResult = {
       round: this.round,
       placements: placementEntries,
       totals,
@@ -2324,9 +2367,11 @@ export class GameRoom {
       matchOver,
       stats,
       ...(this.practice ? { practice: true } : {}),
-    });
+    };
+    this.roomEmit(S2C.roundEnd, this.lastRoundResult);
 
     const delay = (ROUND_END_SCOREBOARD_SECS * 1000) / this.timeScale;
+    this.roundTransitionEndsAt = Date.now() + Math.max(500, delay);
     this.roundTransitionHandle = setTimeout(() => {
       this.roundTransitionHandle = null;
       if (!this.inMatch) return;
@@ -2335,10 +2380,21 @@ export class GameRoom {
     }, Math.max(500, delay));
   }
 
-  private endMatch(): void {
+  private commitRoundStats(): void {
+    if (this.roundStatsCommitted) return;
+    for (const [id, player] of this.players) {
+      const total = this.matchStats.get(id) ?? this.freshStats();
+      for (const key of Object.keys(total) as (keyof CombatStats)[]) total[key] += player.stats[key];
+      this.matchStats.set(id, total);
+    }
+    this.roundStatsCommitted = true;
+  }
+
+  private endMatch(forfeitWinnerId?: string): void {
+    this.commitRoundStats();
     const decision = decideMatch(this.totals);
-    let winnerId = decision.winners[0];
-    if (decision.winners.length > 1) {
+    let winnerId = forfeitWinnerId ?? decision.winners[0];
+    if (!forfeitWinnerId && decision.winners.length > 1) {
       // still tied after max sudden-death rounds → seeded random tiebreak
       const rng = mulberry32(this.seed ^ 0xdead);
       winnerId = decision.winners[Math.floor(rng() * decision.winners.length)];
@@ -2346,11 +2402,16 @@ export class GameRoom {
     const totals: Record<string, number> = {};
     for (const [id, v] of this.totals) totals[id] = v;
     const standings: PlacementEntry[] = [...this.totals.entries()]
-      .sort((a, b) => b[1] - a[1])
+      // The adjudicated winner must also receive first place in career stats.
+      .sort((a, b) => Number(b[0] === winnerId) - Number(a[0] === winnerId)
+        || b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([id, pts], i) => ({
         id, name: this.players.get(id)?.name ?? '?', place: i + 1, points: pts,
       }));
     this.roomEmit(S2C.matchEnd, {
+      reason: forfeitWinnerId ? 'forfeit' : 'completed',
+      rounds: this.round,
+      deaths: Object.fromEntries([...this.players].map(([id, player]) => [id, player.deaths])),
       totals, winnerId,
       winnerName: this.players.get(winnerId)?.name ?? '?',
       standings,
@@ -2363,8 +2424,15 @@ export class GameRoom {
 
   private endMatchEarly(): void {
     if (!this.inMatch) return;
+    // Disconnecting during the final celebration cannot undo an earned result.
+    if (this.lastRoundResult?.matchOver) {
+      this.endMatch();
+      return;
+    }
     this.roundActive = false;
-    this.endMatch();
+    const remainingHuman = [...this.players.values()].find(player => player.connected && !player.isBot);
+    if (remainingHuman) this.endMatch(remainingHuman.id);
+    else this.cleanupMatch(true);
   }
 
   private cleanupMatch(notifyFinished = false): void {
@@ -2373,6 +2441,8 @@ export class GameRoom {
     if (this.roundTransitionHandle) clearTimeout(this.roundTransitionHandle);
     this.tickHandle = null;
     this.roundTransitionHandle = null;
+    this.roundTransitionEndsAt = 0;
+    this.lastRoundResult = null;
     this.phys?.dispose();
     this.inMatch = false;
     this.roundActive = false;

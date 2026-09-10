@@ -5,7 +5,7 @@ import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
 import type { PlayerSkinId } from './multiplayer';
 
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
 
 // ---------- lobby ----------
 export interface PlayerProfileMsg {
@@ -98,6 +98,10 @@ export interface MatchStartMsg {
   mode: MatchMode;
 }
 export interface RoundStartMsg {
+  /** Resume payloads restore the current phase rather than starting a new round. */
+  active?: boolean;
+  depletedNodeIds?: number[];
+  deaths?: number;
   round: number;         // 1-based; > ROUNDS_PER_MATCH ⇒ sudden death
   suddenDeath: boolean;
   lightingPreset: LightingPreset;
@@ -116,6 +120,8 @@ export interface CombatStats {
   pickups: number;
 }
 export interface RoundEndMsg {
+  /** Replayed result after reconnect: show the scoreboard without replaying the cinematic. */
+  resumed?: boolean;
   round: number;
   placements: PlacementEntry[];
   totals: Record<string, number>;
@@ -125,6 +131,9 @@ export interface RoundEndMsg {
   practice?: boolean;
 }
 export interface MatchEndMsg {
+  reason?: 'completed' | 'forfeit';
+  rounds?: number;
+  deaths?: Record<string, number>;
   totals: Record<string, number>;
   winnerId: string;
   winnerName: string;

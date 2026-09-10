@@ -97,7 +97,9 @@ wichtigsten Tasten dauerhaft konfigurieren.
   weiterhin die volle Deckung. Bewegung im Busch erzeugt ortbares Rascheln.
 - **Kampflesbarkeit:** hostautoritatives Bewegungs-/Hipfire-Streumodell,
   kontrollierbarer Kamera-Recoil, dynamisches Fadenkreuz und getrennte
-  Kopf-/Körperregionen. Sprinten, Schießen oder Waffenwechsel bricht Nachladen ab.
+  Kopf-/Körperregionen. Sprinten, Schießen mit Restmunition oder Waffenwechsel
+  bricht Nachladen ab. Bei leerem Magazin läuft das automatische Nachladen auch
+  bei gedrückter Feuertaste zu Ende.
 - **Care-Package** bei 5:00 in der Inselmitte (voll geladenes Gewehr).
 - **Double-KO** durch die Zone: wer zuletzt Schaden ausgeteilt hat, gewinnt die
   Runde; sonst geteilte (bessere) Platzierung.
@@ -108,7 +110,14 @@ wichtigsten Tasten dauerhaft konfigurieren.
   Präzision und Loot.
 - **Verbindungsausfälle:** Spieleridentitäten bleiben bei kurzen Aussetzern 12 Sekunden
   reserviert. Reconnect/Reload desselben Browser-Tabs nimmt die laufende Runde
-  wieder auf; Hostwechsel und Verbindungsstatus werden verständlich angezeigt.
+  oder die Rundenpause samt Ergebnis und abgebauten Ressourcen wieder auf;
+  Hostwechsel und Verbindungsstatus werden verständlich angezeigt.
+- **Aufgabe:** Endet ein Match wegen zu weniger verbleibender Menschen, gewinnt
+  der letzte verbundene Spieler. Ohne verbleibende Menschen wird es ohne Sieger
+  aufgeräumt. Ein bereits feststehendes Endergebnis bleibt erhalten; die Statistik
+  der laufenden Runde geht bei einer Aufgabe nicht verloren.
+- **Training-Rematch:** startet eine neue Insel mit derselben Botanzahl,
+  Schwierigkeit und demselben Spieltempo.
 
 ## Entwicklung
 

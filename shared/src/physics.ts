@@ -119,6 +119,7 @@ export class GamePhysics {
   private controller: RAPIER.KinematicCharacterController;
   private players = new Map<string, RAPIER.Collider>();
   private handleToPlayer = new Map<number, string>();
+  private resourceColliders = new Map<number, RAPIER.Collider>();
   private playerPoses = new Map<string, PlayerPose>();
   private sneakingPlayers = new Set<string>();
   private pronePlayers = new Set<string>();
@@ -142,9 +143,10 @@ export class GamePhysics {
     for (const v of gen.vegetation) {
       if (v.colliderRadius <= 0) continue;
       const h = v.kind === 'tree' ? 5 * v.scale : 1.6 * v.scale;
-      this.world.createCollider(
+      const collider = this.world.createCollider(
         R.ColliderDesc.cylinder(h / 2, v.colliderRadius).setTranslation(v.x, v.y + h / 2, v.z),
       );
+      this.resourceColliders.set(v.id, collider);
     }
     for (const structure of gen.centralStructures) {
       if (structure.shape === 'cylinder') {
@@ -208,6 +210,14 @@ export class GamePhysics {
     this.controller.setMaxSlopeClimbAngle((60 * Math.PI) / 180);
     this.controller.setMinSlopeSlideAngle((75 * Math.PI) / 180);
     this.world.step(); // build query structures
+  }
+
+  setResourceDepleted(nodeId: number, depleted = true): void {
+    this.resourceColliders.get(nodeId)?.setEnabled(!depleted);
+  }
+
+  resetResourceNodes(): void {
+    for (const collider of this.resourceColliders.values()) collider.setEnabled(true);
   }
 
   addPlayer(id: string, feet: Vec3): void {
@@ -390,6 +400,7 @@ export class GamePhysics {
 
   /** Release the WASM allocation when leaving or restarting a match. */
   dispose(): void {
+    this.resourceColliders.clear();
     this.players.clear();
     this.handleToPlayer.clear();
     this.playerPoses.clear();

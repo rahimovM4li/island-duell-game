@@ -283,12 +283,12 @@ function cancelVictoryCinematic(): void {
 function finishMatchEnd(m: MatchEndMsg): void {
   roundRunning = false;
   inMatch = false;
-  hud.showMatchEnd(m.standings, m.totals, m.winnerName, myId, m.winnerId === myId, m.stats);
+  hud.showMatchEnd(m.standings, m.totals, m.winnerName, myId, m.winnerId === myId, m.stats, m.reason, m.rounds);
   if (currentPartyState) $('rematch-btn').textContent = 'Zurück zur Party';
   document.exitPointerLock?.();
   recordProfileMatch({
     name: myName, playerId: myId, seed: matchSeed ?? 0,
-    rounds: roundsThisMatch, deaths: myDeathsThisMatch,
+    rounds: m.rounds ?? roundsThisMatch, deaths: m.deaths?.[myId] ?? myDeathsThisMatch,
     practice: practiceMatch || !!m.practice, standings: m.standings, stats: m.stats,
   });
   disposeMatchScene();
@@ -1134,6 +1134,12 @@ async function joinServer(intent: ConnectionIntent = 'play', requestedPartyCode 
     onRoundEnd: (m) => {
       roundRunning = false;
       roundsThisMatch = m.round;
+      if (m.resumed) {
+        document.exitPointerLock?.();
+        hud.showRoundEnd(m.round, m.placements, m.totals, m.nextRoundIn, myId,
+          !m.matchOver && m.round >= 3, m.stats);
+        return;
+      }
       const myPlacement = m.placements.find((entry) => entry.id === myId);
       sfx.play(myPlacement?.place === 1 ? 'roundWin' : 'roundLose');
       if (myPlacement?.place === 1) rumble(180, 0.35, 0.55);
@@ -1430,7 +1436,6 @@ function onMatchStart(m: MatchStartMsg): void {
 
   showScreen(null);
   hud.show();
-  input.requestLock();
 }
 
 function onRoundStart(m: RoundStartMsg): void {
@@ -1441,7 +1446,9 @@ function onRoundStart(m: RoundStartMsg): void {
   hud.hideScoreboard();
   hud.setRoundRoster([], myId, false);
   hud.show();
-  roundRunning = true;
+  roundRunning = m.active ?? true;
+  if (m.deaths !== undefined) myDeathsThisMatch = m.deaths;
+  roundsThisMatch = roundRunning ? m.round - 1 : m.round;
   alive = true;
   myWeapon = 'fists';
   pending = [];
@@ -1452,6 +1459,12 @@ function onRoundStart(m: RoundStartMsg): void {
   localBushDistance = 0;
   depletedNodes.clear();
   world.resetResourceNodes();
+  phys.resetResourceNodes();
+  for (const nodeId of m.depletedNodeIds ?? []) {
+    depletedNodes.add(nodeId);
+    world.depleteResourceNode(nodeId);
+    phys.setResourceDepleted(nodeId);
+  }
   bandageStart = null;
   interactStart = null;
   wasReloading = false;
@@ -1517,7 +1530,7 @@ function onRoundStart(m: RoundStartMsg): void {
   } else {
     hud.announce(`Runde ${Math.min(m.round, 3)}${m.suddenDeath ? ' (Sudden Death)' : ''} · ${lightingLabel}`, 2600);
   }
-  input.requestLock();
+  if (roundRunning) input.requestLock();
 }
 
 // ---------- snapshots ----------
@@ -1606,9 +1619,12 @@ function reconcile(self: SnapPlayer): void {
   phys.setPlayerStance(myId, move.sneaking, move.prone, move.pos, self.yaw);
   phys.setPlayerPos(myId, move.pos);
 
-  let replayPreviousX = move.pos.x;
-  let replayPreviousY = move.pos.y;
-  let replayPreviousZ = move.pos.z;
+  // With every input acknowledged, retain a render segment for the last
+  // server tick. Equal endpoints would freeze the camera on each snapshot.
+  const inputStep = 1 / SERVER_TICK_HZ;
+  let replayPreviousX = move.pos.x - self.vx * inputStep;
+  let replayPreviousY = self.grounded ? move.pos.y : move.pos.y - self.vy * inputStep;
+  let replayPreviousZ = move.pos.z - self.vz * inputStep;
   for (const inp of pending) {
     replayPreviousX = move.pos.x;
     replayPreviousY = move.pos.y;
@@ -1624,7 +1640,6 @@ function reconcile(self: SnapPlayer): void {
   }
 
   previousMovePos.set(replayPreviousX, replayPreviousY, replayPreviousZ);
-  const inputStep = 1 / SERVER_TICK_HZ;
   const alpha = Math.min(1, inputAccumulator / inputStep);
   const correctedRenderX = THREE.MathUtils.lerp(previousMovePos.x, move.pos.x, alpha);
   const correctedRenderY = THREE.MathUtils.lerp(previousMovePos.y, move.pos.y, alpha);
@@ -1814,6 +1829,7 @@ function onEvent(e: GameEvent): void {
       if (e.depleted) {
         depletedNodes.add(e.nodeId);
         world?.depleteResourceNode(e.nodeId);
+        phys?.setResourceDepleted(e.nodeId);
       }
       if (e.by === myId) { sfx.play('craft'); interactStart = null; }
       break;

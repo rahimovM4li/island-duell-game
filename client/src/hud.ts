@@ -546,9 +546,12 @@ export class Hud {
   showMatchEnd(
     standings: PlacementEntry[], totals: Record<string, number>, winnerName: string,
     myId: string, iWon: boolean, stats: Record<string, CombatStats>,
+    reason: 'completed' | 'forfeit' = 'completed', rounds = 3,
   ): void {
     $('scoreboard-title').textContent = iWon ? '🏆 SIEG!' : `Match vorbei — ${winnerName} gewinnt`;
-    $('scoreboard-sub').textContent = 'Endstand nach 3 Runden';
+    $('scoreboard-sub').textContent = reason === 'forfeit'
+      ? 'Match durch Aufgabe entschieden'
+      : `Endstand nach ${rounds} Runden`;
     this.fillScores(standings, totals, myId, false, stats);
     $('next-round-in').textContent = '';
     $('rematch-btn').style.display = 'block';
