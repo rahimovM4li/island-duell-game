@@ -83,7 +83,7 @@ export interface PreparedRoomMember {
 interface Inventory {
   primary: WeaponSlotState | null;
   secondary: WeaponSlotState | null;
-  active: 1 | 2 | 3;
+  active: 1 | 2 | 3 | 4;
   throwables: Record<ThrowKind, number>;
   activeThrow: ThrowKind;
   bandages: number;
@@ -1065,11 +1065,11 @@ export class GameRoom {
         // switching away from a cooking frag commits the throw (pin is pulled)
         if (p.cookingSince !== null) this.releaseCookedFrag(p);
         p.inv.active = action.slot;
-        if (action.slot === 3) this.ensureOwnedThrow(p);
+        if (action.slot === 4) this.ensureOwnedThrow(p);
         this.cancelReload(p, false);
         this.pushInventory(p);
       }
-      if (action.throwCycle && p.inv.active === 3 && p.cookingSince === null) {
+      if (action.throwCycle && p.inv.active === 4 && p.cookingSince === null) {
         this.cycleThrow(p);
       }
       if (action.drop) {
@@ -1078,7 +1078,7 @@ export class GameRoom {
         continue;
       }
       if (action.reload) this.tryReload(p);
-      if (p.inv.active === 3) this.handleThrowable(p, action);
+      if (p.inv.active === 4) this.handleThrowable(p, action);
       else if (action.fire) this.tryFire(p, events, action.shotAgeMs);
       p.prevFire = action.fire;
     }
@@ -1090,7 +1090,7 @@ export class GameRoom {
     p.aiming = inp.aim;
     if (p.reloadUntil > 0 && inp.sprint && p.move.sprinting) this.cancelReload(p);
     if (!droppedWeaponThisTick) {
-      if (p.inv.active === 3) this.handleThrowable(p, inp);
+      if (p.inv.active === 4) this.handleThrowable(p, inp);
       else if (inp.fire) this.tryFire(p, events, inp.shotAgeMs);
     }
     p.prevFire = inp.fire;
@@ -1102,7 +1102,7 @@ export class GameRoom {
 
   // =============================== throwables (§F2/F3) ===============================
 
-  /** Slot 3 selects the first owned throwable so the HUD never shows an empty hand. */
+  /** Slot 4 selects the first owned throwable so the HUD never shows an empty hand. */
   private ensureOwnedThrow(p: MatchPlayer): void {
     if (p.inv.throwables[p.inv.activeThrow] > 0) return;
     const owned = THROW_ORDER.find((kind) => p.inv.throwables[kind] > 0);
@@ -1118,7 +1118,7 @@ export class GameRoom {
   }
 
   /**
-   * Fire edges on slot 3. Frag: press pulls the pin (cooking starts, §F3),
+   * Fire edges on slot 4. Frag: press pulls the pin (cooking starts, §F3),
    * release throws with the remaining fuse. Smoke/flash: press throws directly.
    */
   private handleThrowable(p: MatchPlayer, inp: InputMsg): void {
@@ -1179,9 +1179,10 @@ export class GameRoom {
   // =============================== combat ===============================
 
   private activeWeapon(p: MatchPlayer): { type: WeaponType; slotState: WeaponSlotState | null } {
-    if (p.inv.active === 3) return { type: THROW_WEAPON[p.inv.activeThrow], slotState: null };
-    const s = p.inv.active === 1 ? p.inv.primary : p.inv.secondary;
-    return s ? { type: s.type, slotState: s } : { type: 'fists', slotState: null };
+    if (p.inv.active === 1) return { type: 'knife', slotState: null };
+    if (p.inv.active === 4) return { type: THROW_WEAPON[p.inv.activeThrow], slotState: null };
+    const s = p.inv.active === 2 ? p.inv.primary : p.inv.secondary;
+    return s ? { type: s.type, slotState: s } : { type: 'knife', slotState: null };
   }
 
   private eyePos(p: MatchPlayer): Vec3 {
@@ -1631,7 +1632,7 @@ export class GameRoom {
         distance: recap?.distance, attackerHp: attacker?.hp, headshot: recap?.headshot,
         finalDamage: recap?.amount,
       },
-      { type: 'kill', killer: attacker?.id ?? null, victim: target.id, weapon: cause === 'zone' ? 'zone' : (weapon ?? 'fists') },
+      { type: 'kill', killer: attacker?.id ?? null, victim: target.id, weapon: cause === 'zone' ? 'zone' : (weapon ?? 'knife') },
     ];
     // stay inside the tick batch when one exists — emitting immediately would
     // deliver death/kill BEFORE the damage/shot events that caused them
@@ -1746,8 +1747,8 @@ export class GameRoom {
   }
 
   private tryReload(p: MatchPlayer): void {
-    if (p.reloadUntil > 0 || p.inv.active === 3) return;
-    const s = p.inv.active === 1 ? p.inv.primary : p.inv.secondary;
+    if (p.reloadUntil > 0 || p.inv.active === 1 || p.inv.active === 4) return;
+    const s = p.inv.active === 2 ? p.inv.primary : p.inv.secondary;
     if (!s) return;
     const def = WEAPONS[s.type];
     if (!def.magSize || !def.ammo || !def.reloadTime) return;
@@ -1818,8 +1819,8 @@ export class GameRoom {
     // 1) weapon swap on interact edge when standing on a weapon with full slots
     if (edge) {
       const item = this.nearestWeaponPickup(p);
-      if (item && p.inv.primary && p.inv.secondary && p.inv.active !== 3) {
-        const slot = p.inv.active === 1 ? 'primary' : 'secondary';
+      if (item && p.inv.primary && p.inv.secondary && (p.inv.active === 2 || p.inv.active === 3)) {
+        const slot = p.inv.active === 2 ? 'primary' : 'secondary';
         const old = p.inv[slot]!;
         this.cancelReload(p, false);
         // drop old weapon where the new one was
@@ -1857,7 +1858,7 @@ export class GameRoom {
     let bestD = INTERACT_RANGE;
     for (const pk of this.pickups.values()) {
       if (pk.item === 'crate' || pk.item === 'care') continue;
-      if (!(pk.item in WEAPONS) || WEAPONS[pk.item as WeaponType].kind === 'throwable') continue;
+      if (!(pk.item in WEAPONS) || WEAPONS[pk.item as WeaponType].kind !== 'hitscan') continue;
       // honour the same drop/owner locks and vertical reach as the walkover
       // path — the swap must not snipe weapons mid-drop or through floors
       const lock = this.pickupLocks.get(pk.id);
@@ -1919,7 +1920,7 @@ export class GameRoom {
         if (!this.giveWeapon(p, 'rifle')) {
           // A care package must never disappear just because both slots are full:
           // replace the selected weapon and leave it at the package position.
-          const slot = inv.active === 2 ? 'secondary' : 'primary';
+          const slot = inv.active === 3 ? 'secondary' : 'primary';
           this.cancelReload(p, false);
           const old = inv[slot];
           if (old) this.addPickup(old.type, pk.x + 0.9, pk.z, { weaponMag: old.mag });
@@ -1984,7 +1985,7 @@ export class GameRoom {
       default: {
         // weapon on the ground → auto-equip into a free slot (walk-over §4.2)
         const w = pk.item as WeaponType;
-        if (!(w in WEAPONS) || WEAPONS[w].kind === 'throwable') return;
+        if (!(w in WEAPONS) || WEAPONS[w].kind !== 'hitscan') return;
         const dropped = pk.weaponMag !== undefined;
         if (!this.giveWeapon(p, w, pk.weaponMag, !dropped)) return; // both slots full → needs interact swap
         break;
@@ -2231,7 +2232,7 @@ export class GameRoom {
       else if (pk.item in ammoItemFor) {
         const ammo = ammoItemFor[pk.item]!;
         value = usesAmmo(ammo) && inv.ammo[ammo] < AMMO_CAP[ammo] * 0.6 ? 5 : 0;
-      } else if (pk.item in WEAPONS && WEAPONS[pk.item as WeaponType].kind !== 'throwable') {
+      } else if (pk.item in WEAPONS && WEAPONS[pk.item as WeaponType].kind === 'hitscan') {
         value = !inv.primary || !inv.secondary ? 8 : 0;
       }
       if (value <= 0) continue;
@@ -2277,7 +2278,7 @@ export class GameRoom {
       grounded: p.move.grounded,
       lastSeq: p.lastSeq,
       kills: p.kills,
-      ...(p.inv.active === 3 ? { activeThrow: p.inv.activeThrow } : {}),
+      ...(p.inv.active === 4 ? { activeThrow: p.inv.activeThrow } : {}),
       ...(p.cookingSince !== null ? { cookingUntil: round3(p.cookingSince + GRENADE_FUSE) } : {}),
     }));
     const projectiles: SnapProjectile[] = [...this.projectiles.values()].map((pr) => ({

@@ -50,6 +50,7 @@ export function shouldBlockGameplayKey(
     || /^Digit[1-6]$/.test(code)
     || code === 'F3'
     || code === 'Tab'
+    || code === 'KeyF'
     || code === 'KeyQ';
 }
 
@@ -65,7 +66,8 @@ export class InputState {
   pointerLocked = false;
 
   // per-frame edge events
-  slotPressed: 1 | 2 | 3 | null = null;
+  slotPressed: 1 | 2 | 3 | 4 | null = null;
+  inspectPressed = false;
   reloadPressed = false;
   dropPressed = false;
   jumpPressed = false;
@@ -86,11 +88,13 @@ export class InputState {
       if (k === 'Digit1') this.slotPressed = 1;
       else if (k === 'Digit2') this.slotPressed = 2;
       else if (k === 'Digit3') this.slotPressed = 3;
+      else if (k === 'Digit4') this.slotPressed = 4;
+      else if (k === 'KeyF' && this.gameplayActive && !Object.values(this.settings.keybinds).includes('KeyF')) this.inspectPressed = true;
       else if (k === this.settings.keybinds.reload) this.reloadPressed = true;
       else if (k === 'KeyQ' && this.pointerLocked) this.dropPressed = true;
       else if (k === this.settings.keybinds.jump) { this.jumpPressed = true; e.preventDefault(); }
-      else if (k === 'Digit4') this.craftPressed = 'bandage';
-      else if (k === 'Digit5') this.craftPressed = 'plate';
+      else if (k === 'Digit5') this.craftPressed = 'bandage';
+      else if (k === 'Digit6') this.craftPressed = 'plate';
       else if (k === this.settings.keybinds.heal) this.bandagePressed = true;
       else if (k === 'F3') { this.debugToggled = true; e.preventDefault(); }
     });
@@ -256,6 +260,7 @@ export class InputState {
   /** Reset one-frame edge flags; call at the end of each frame. */
   clearEdges(): void {
     this.slotPressed = null;
+    this.inspectPressed = false;
     this.reloadPressed = false;
     this.dropPressed = false;
     this.jumpPressed = false;

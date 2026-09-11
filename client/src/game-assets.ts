@@ -5,7 +5,7 @@ import type { WeaponType } from '@shared/constants';
 import type { PoiKind } from '@shared/worldgen';
 
 const WEAPON_NAMES = [
-  'fists', 'machete', 'spear', 'pistol', 'rifle', 'shotgun', 'sniper',
+  'pistol', 'rifle', 'shotgun', 'sniper',
   'grenade', 'smoke', 'flash',
 ] as const satisfies readonly WeaponType[];
 const LANDMARK_NAMES = ['wreck', 'watchtower', 'bunker'] as const satisfies readonly PoiKind[];
@@ -19,7 +19,7 @@ const ENVIRONMENT_NAMES = [
   'bush', 'grass', 'stump', 'rock_chips', 'rubble', 'barrel',
   'brazier', 'torch', 'spawn_marker', 'ruin_wall', 'ruin_cap',
 ] as const;
-const ASSET_REVISION = '2026-07-29-tactical-survivor-v2';
+const ASSET_REVISION = '2026-09-11-butterfly-loadout';
 
 type AssetWeapon = (typeof WEAPON_NAMES)[number];
 type AssetLandmark = (typeof LANDMARK_NAMES)[number];

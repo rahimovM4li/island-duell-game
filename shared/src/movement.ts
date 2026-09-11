@@ -66,7 +66,7 @@ export function stepMovement(
   id: string,
   st: MoveState,
   inp: InputMsg,
-  weapon: WeaponType = 'fists',
+  weapon: WeaponType = 'knife',
 ): void {
   const dt = clamp(inp.dt, 0.001, MAX_INPUT_DT);
 

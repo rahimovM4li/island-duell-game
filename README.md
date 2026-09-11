@@ -57,10 +57,13 @@ erhalten; bei einem Host-Austritt übernimmt ein verbundener Spieler.
 | Linksklick | Angreifen / Schießen / Granate werfen |
 | Rechte Maustaste | Mit Pistole/Gewehr/Schrotflinte/Scharfschützengewehr zielen |
 | R | Nachladen |
-| 1 / 2 / 3 oder Mausrad | Waffenslot 1 / 2 / Wurfslot auswählen beziehungsweise durch belegte Slots wechseln |
+| 1 / 2 / 3 / 4 oder Mausrad | Butterfly / Schusswaffe / Schusswaffe / Granaten; Mausrad wechselt durch belegte Slots |
+| 4 erneut | Zwischen vorhandenen Splitter-, Rauch- und Blendgranaten wechseln |
+| F | Butterfly inspizieren und flippen (Angriff unterbricht die Animation) |
+| Q | Ausgewählte Schusswaffe ablegen; das Messer bleibt immer erhalten |
 | E (halten ~1,5 s) | Ressourcen abbauen (Baum→Holz, Fels→Stein, Busch→Fasern); kurz drücken: Waffe tauschen wenn beide Slots voll |
 | H | Verband benutzen (30 HP über 3 s) |
-| 4 / 5 | Craften: Verband (2 Fasern) / Panzerplatte (3 Stein) |
+| 5 / 6 | Craften: Verband (2 Fasern) / Panzerplatte (3 Stein) |
 | F3 | Debug-Overlay (FPS, Draw Calls, Dreiecke, Position/Tempo, Entities, Rapier, Netzwerk) |
 | WASD + Maus (als Zuschauer) | Freecam fliegen und umsehen |
 | Leertaste / Strg / Shift (als Zuschauer) | Hoch / runter / schneller fliegen |

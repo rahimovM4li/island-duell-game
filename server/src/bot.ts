@@ -22,7 +22,7 @@ export interface BotEnemy {
 export interface BotSelfView {
   pos: Vec3;
   hp: number;
-  slot: 1 | 2 | 3;
+  slot: 1 | 2 | 3 | 4;
   primary: { type: WeaponType; mag: number } | null;
   secondary: { type: WeaponType; mag: number } | null;
   reserveAmmo: (weapon: WeaponType) => number;
@@ -136,7 +136,7 @@ export function scoreBotWeapon(type: WeaponType, distance: number, supply: numbe
   return dps * rangeFactor + Math.min(20, supply) * 0.1;
 }
 
-function bestRangedSlot(self: BotSelfView, distance = 25): 1 | 2 | null {
+function bestRangedSlot(self: BotSelfView, distance = 25): 2 | 3 | null {
   const score = (s: { type: WeaponType; mag: number } | null): number => {
     if (!s) return -1;
     const supply = s.mag + self.reserveAmmo(s.type);
@@ -144,17 +144,16 @@ function bestRangedSlot(self: BotSelfView, distance = 25): 1 | 2 | null {
   };
   const p = score(self.primary), s = score(self.secondary);
   if (p < 0 && s < 0) return null;
-  return p >= s ? 1 : 2;
+  return p >= s ? 2 : 3;
 }
 
-function meleeSlot(self: BotSelfView): 1 | 2 | null {
-  if (self.primary && WEAPONS[self.primary.type].kind === 'melee') return 1;
-  if (self.secondary && WEAPONS[self.secondary.type].kind === 'melee') return 2;
-  return null;
+function meleeSlot(_self: BotSelfView): 1 {
+  return 1;
 }
 
-function weaponInSlot(self: BotSelfView, slot: 1 | 2): WeaponType | null {
-  const s = slot === 1 ? self.primary : self.secondary;
+function weaponInSlot(self: BotSelfView, slot: 1 | 2 | 3): WeaponType | null {
+  if (slot === 1) return 'knife';
+  const s = slot === 2 ? self.primary : self.secondary;
   return s ? s.type : null;
 }
 
@@ -242,14 +241,14 @@ function aimAt(mem: BotMemory, ctx: BotCtx, enemy: BotEnemy): void {
   mem.pitch = angleLerp(mem.pitch, wantPitch, ENGAGE_TURN_RATE * BOT_DT);
 }
 
-/** Drive slot-3 selection + release for a planned throwable. Returns true while busy. */
+/** Drive slot-4 selection + release for a planned throwable. Returns true while busy. */
 function runThrowPlan(mem: BotMemory, ctx: BotCtx, inp: InputMsg): boolean {
   const plan = mem.throwPlan;
   if (!plan) return false;
   const count = ctx.self.throwables[plan.kind];
-  if (count <= 0 && !(plan.kind === 'frag' && ctx.self.slot === 3)) { mem.throwPlan = null; return false; }
+  if (count <= 0 && !(plan.kind === 'frag' && ctx.self.slot === 4)) { mem.throwPlan = null; return false; }
   if (ctx.t - plan.startedAt > 4) { mem.throwPlan = null; return false; } // safety
-  if (ctx.self.slot !== 3) { inp.slot = 3; return true; }
+  if (ctx.self.slot !== 4) { inp.slot = 4; return true; }
   if (ctx.self.activeThrow !== plan.kind) { inp.throwCycle = true; return true; }
   if (plan.kind === 'frag') {
     // hold to cook until releaseAt, then let go (server throws on the falling edge)
@@ -288,7 +287,7 @@ export function computeBotInput(mem: BotMemory, ctx: BotCtx): BotDecision {
     // choose a weapon for the range
     const ranged = bestRangedSlot(self, enemy.dist);
     const melee = meleeSlot(self);
-    let desiredSlot: 1 | 2 | null = null;
+    let desiredSlot: 1 | 2 | 3 | null = null;
     if (ranged) {
       const w = weaponInSlot(self, ranged);
       // shotgun wants to be close; sniper wants distance — otherwise just use it
@@ -325,9 +324,8 @@ export function computeBotInput(mem: BotMemory, ctx: BotCtx): BotDecision {
 
     // fire control: reaction delay, then bursts with pauses
     const reacted = ctx.t - mem.acquiredAt >= ctx.diff.reaction;
-    const activeType: WeaponType | null = self.slot === 3
-      ? null
-      : weaponInSlot(self, (desiredSlot === 1 || desiredSlot === 2 ? desiredSlot : self.slot === 2 ? 2 : 1));
+    const selected = desiredSlot ?? self.slot;
+    const activeType = selected === 4 ? null : weaponInSlot(self, selected);
     if (reacted && !self.blind && activeType) {
       const def = WEAPONS[activeType];
       const inRange = def.kind === 'melee' ? enemy.dist <= def.range + 0.3 : enemy.dist <= def.range;
@@ -339,8 +337,8 @@ export function computeBotInput(mem: BotMemory, ctx: BotCtx): BotDecision {
         inp.fire = ctx.t < mem.burstUntil;
         inp.aim = def.kind === 'hitscan';
       }
-      const magEmpty = self.slot !== 3
-        && (self.slot === 1 ? self.primary : self.secondary)?.mag === 0;
+      const magEmpty = (selected === 2 || selected === 3)
+        && (selected === 2 ? self.primary : self.secondary)?.mag === 0;
       if (magEmpty) inp.reload = true;
     }
 

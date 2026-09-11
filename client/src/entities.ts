@@ -16,6 +16,7 @@ import { gameAssets, isSharedAssetResource } from './game-assets';
 import { droppedPickupPose } from './pickup-drop-animation';
 import { shouldShowSpectatorLabel } from './spectator-labels';
 import { firstPersonWeapon, reloadPose } from './first-person-weapon';
+import { butterflyKnife, animateKnife, KNIFE_DRAW_SECONDS, KNIFE_INSPECT_SECONDS } from './butterfly-knife';
 
 const PLAYER_COLORS = PLAYER_SKINS.map((skin) => skin.color);
 const HIT_FLASH_BODY = new THREE.Color(0xffffff);
@@ -97,8 +98,7 @@ interface ItemVisual {
 }
 
 const ITEM_VISUALS: Record<string, ItemVisual> = {
-  machete: { label: 'Machete', color: 0xd9e2e8, glyph: 'M' },
-  spear: { label: 'Speer', color: 0xd9e2e8, glyph: 'S' },
+  knife: { label: 'Butterfly', color: 0xc6a6ef, glyph: '╱' },
   pistol: { label: 'Pistole', color: 0x65b7ee, glyph: 'P' },
   rifle: { label: 'Gewehr', color: 0xb68cff, glyph: 'G' },
   shotgun: { label: 'Schrotflinte', color: 0xff8c56, glyph: 'S' },
@@ -174,26 +174,7 @@ function proceduralWeaponModel(weapon: WeaponType | 'none'): THREE.Group {
   const dark = 0x26313a, steel = 0xc4ced5, wood = 0x7a5030, grip = 0x171d22;
   const bluedSteel = 0x3a444d, brass = 0xd9a441, leather = 0x5a3d28;
   switch (weapon) {
-    case 'machete': {
-      // tapered blade (wide → point) with a fuller line, brass guard and wrapped grip
-      addTaper(g, 0.02, 0.13, 0.66, [0, 0.3, -0.03], steel, [0, 0, 0], 4);
-      addCone(g, 0.09, 0.2, [0, 0.72, -0.03], steel, [0, Math.PI / 4, 0], 4); // pointed tip
-      addBox(g, [0.015, 0.5, 0.02], [0.02, 0.32, -0.08], 0x9aa4ac);           // fuller highlight
-      addBox(g, [0.24, 0.05, 0.13], [0, 0, 0], brass);                        // crossguard
-      addCylinder(g, 0.05, 0.26, [0, -0.16, 0.01], leather, [0, 0, 0], 8);    // grip
-      for (let i = 0; i < 3; i++) addCylinder(g, 0.052, 0.02, [0, -0.08 - i * 0.07, 0.01], 0x3a281a, [0, 0, 0], 8); // wrap ridges
-      addCylinder(g, 0.062, 0.05, [0, -0.3, 0.01], brass, [0, 0, 0], 8);      // pommel
-      g.rotation.z = -0.12;
-      break;
-    }
-    case 'spear': {
-      addTaper(g, 0.028, 0.036, 1.74, [0, 0, -0.5], wood, [Math.PI / 2, 0, 0], 8); // shaft
-      addCone(g, 0.11, 0.42, [0, 0, -1.55], steel, [-Math.PI / 2, 0, 0], 6);       // leaf tip
-      addBox(g, [0.02, 0.02, 0.24], [0, 0, -1.42], 0x9aa4ac);                       // socket highlight
-      for (let i = 0; i < 4; i++) addCylinder(g, 0.04, 0.02, [0, 0, -1.28 + i * 0.09], leather, [Math.PI / 2, 0, 0], 8); // bindings
-      addCone(g, 0.05, 0.14, [0, 0, 0.63], 0x8a7a5a, [Math.PI / 2, 0, 0], 6);       // butt cap
-      break;
-    }
+    case 'knife': return butterflyKnife();
     case 'pistol':
       addBox(g, [0.14, 0.14, 0.52], [0, 0.05, -0.15], bluedSteel);               // slide
       addBox(g, [0.145, 0.05, 0.5], [0, 0.115, -0.15], dark);                     // slide top
@@ -414,7 +395,7 @@ function pickupModel(p: PickupInfo): THREE.Group {
 }
 
 const WEAPON_MODEL_KEYS: Record<WeaponType, true> = {
-  fists: true, machete: true, spear: true, pistol: true,
+  knife: true, pistol: true,
   rifle: true, shotgun: true, sniper: true, grenade: true, smoke: true, flash: true,
 };
 
@@ -494,7 +475,7 @@ function spectatorNameLabel(playerName: string): THREE.Sprite {
 
 function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Group {
   const g = new THREE.Group();
-  if (weapon !== 'fists' && weapon !== 'none') g.add(firstPersonWeapon(weapon) ?? weaponModel(weapon));
+  if (weapon !== 'none') g.add(firstPersonWeapon(weapon) ?? weaponModel(weapon));
 
   const addHand = (
     x: number, y: number, z: number, mirrored = false, yaw = 0,
@@ -508,24 +489,26 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
     return hand;
   };
 
-  if (weapon === 'fists') {
-    const right = addHand(0.10, -0.04, -0.08, false, 0.08);
-    right.rotation.z = 0.12;
+  if (weapon === 'knife') {
+    const right = addHand(-0.04, -0.18, 0.025, false, 0.08);
+    // Keep the sleeve trailing below the camera while the blade points upward.
+    right.rotation.x = 1.0;
+    right.rotation.z = -0.25;
   } else if (weapon !== 'none') {
     addHand(0.02, -0.08, 0.035);
-    if (weapon === 'pistol' || weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper' || weapon === 'spear') {
-      const supportZ = weapon === 'pistol' ? 0.01 : weapon === 'sniper' ? -0.70 : weapon === 'spear' ? -0.58 : -0.55;
+    if (weapon === 'pistol' || weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper') {
+      const supportZ = weapon === 'pistol' ? 0.01 : weapon === 'sniper' ? -0.70 : -0.55;
       const support = addHand(-0.13, -0.035, supportZ, true, -0.12);
       support.rotation.z = -0.18;
       support.userData.restPosition = support.position.clone();
     }
   }
 
-  const scale = weapon === 'rifle' || weapon === 'shotgun' || weapon === 'spear' || weapon === 'sniper'
+  const scale = weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper'
     ? 0.36 : 0.54;
   g.scale.setScalar(scale);
-  const baseRotation = weapon === 'machete'
-    ? { x: 0.06, y: -0.28, z: -0.3 }
+  const baseRotation = weapon === 'knife'
+    ? { x: -0.55, y: -0.35, z: 0.35 }
     : { x: 0, y: -0.08, z: 0 };
   g.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
   g.userData.viewmodelBaseRotation = baseRotation;
@@ -590,6 +573,8 @@ export class Entities {
   private viewWeapon: THREE.Group | null = null;
   private viewWeaponType: WeaponType | 'none' | null = null;
   private viewSkinColor = PLAYER_COLORS[1];
+  private knifeT = -1;
+  private knifeInspect = false;
   private swingT = 1; // 0..1 melee swing animation
   private kickT = 1;  // fire recoil
   private aiming = false;
@@ -960,10 +945,10 @@ export class Entities {
     if (rig.currentWeapon !== weapon) {
       for (const child of [...rig.weapon.children]) disposeObject(child);
       rig.weapon.clear();
-      if (weapon !== 'fists') rig.weapon.add(weaponModel(weapon));
+      rig.weapon.add(weaponModel(weapon));
       rig.currentWeapon = weapon;
     }
-    rig.weapon.visible = effectiveAlive && weapon !== 'fists';
+    rig.weapon.visible = effectiveAlive;
     rig.weapon.position.z = aiming ? -0.28 : rig.weaponBasePosition.z;
   }
 
@@ -1371,7 +1356,17 @@ export class Entities {
     this.kickT = 0;
   }
 
-  meleeSwing(): void { this.swingT = 0; }
+  meleeSwing(): void {
+    this.swingT = 0;
+    this.knifeT = -1; // combat immediately interrupts a cosmetic flourish
+    this.weaponSwitchT = -1;
+  }
+
+  inspectKnife(): void {
+    if (this.viewWeaponType !== 'knife' || this.swingT < 1 || this.knifeT >= 0) return;
+    this.knifeInspect = true;
+    this.knifeT = 0;
+  }
 
   // ---------- viewmodel ----------
   setViewWeapon(weapon: WeaponType | 'none', animateSwitch = false): void {
@@ -1388,12 +1383,19 @@ export class Entities {
     this.viewWeapon = viewmodelFor(weapon, this.viewSkinColor);
     this.viewWeaponType = weapon;
     this.reloadT = -1;
+    this.swingT = 1;
+    this.knifeT = weapon === 'knife' ? 0 : -1;
+    this.knifeInspect = false;
     this.viewRoot.add(this.viewWeapon);
     if (animateSwitch && previousWeapon !== null) this.startWeaponSwitch(false);
   }
 
   private startWeaponSwitch(sameWeapon: boolean): void {
     this.weaponSwitchT = 0;
+    if (this.viewWeaponType === 'knife') {
+      this.knifeT = 0;
+      this.knifeInspect = false;
+    }
     this.weaponSwitchCount += 1;
     this.lastWeaponSwitchSameWeapon = sameWeapon;
   }
@@ -1500,7 +1502,7 @@ export class Entities {
         rig.group.rotation.x = -fall * 0.14;
         rig.group.position.y = rig.baseY + Math.sin(progress * Math.PI) * 0.08 - Math.max(0, progress - 0.72) * 0.32;
         rig.group.scale.set(1, THREE.MathUtils.lerp(1, 0.82, fall), 1);
-        rig.weapon.visible = rig.deathT < 0.28 && rig.currentWeapon !== 'fists';
+        rig.weapon.visible = rig.deathT < 0.28;
         if (rig.deathT >= DEATH_ANIMATION_DURATION) rig.group.visible = false;
       } else {
         const frame = rig.animation.update({
@@ -1559,7 +1561,7 @@ export class Entities {
         rig.lean = THREE.MathUtils.lerp(rig.lean ?? 0, rig.leanTarget ?? 0, 1 - Math.exp(-dt * 9));
         rig.group.rotation.z = pose.rootRoll + actionRootRoll + (rig.prone ? 0 : rig.lean);
         rig.group.position.y = rig.baseY + pose.rootHeight;
-        const armSwing = rig.currentWeapon !== 'fists' && !rig.sprinting && !rig.prone ? 0.15 : 1;
+        const armSwing = rig.currentWeapon !== 'knife' && !rig.sprinting && !rig.prone ? 0.15 : 1;
         rig.armLeft.rotation.x = rig.armLeftBase.x + pose.armLeftX * armSwing + actionArmLeftX;
         rig.armRight.rotation.x = rig.armRightBase.x + pose.armRightX * armSwing + actionArmRightX;
         rig.armLeft.rotation.z = rig.armLeftBase.z + pose.armLeftZ;
@@ -1614,14 +1616,15 @@ export class Entities {
     this.sprintBlend += ((this.viewSprinting && !this.aiming && this.reloadT < 0 ? 1 : 0) - this.sprintBlend) * (1 - Math.exp(-dt * 12));
     this.stridePhase += this.viewSpeed * dt * 1.9;
     this.viewRoot.position.set(
-      THREE.MathUtils.lerp(0.38, 0, this.aimBlend),
-      THREE.MathUtils.lerp(-0.38, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
-      THREE.MathUtils.lerp(-0.72, -0.57, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? 0.33 : 0.38, 0, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.22 : -0.38, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.82 : -0.72, -0.57, this.aimBlend),
     );
     if (this.viewWeapon) {
       const baseRotation = this.viewWeapon.userData.viewmodelBaseRotation as {
         x: number; y: number; z: number;
       } | undefined;
+      const isKnife = this.viewWeaponType === 'knife';
       const swing = Math.sin(this.swingT * Math.PI) * 1.1;
       const kick = Math.sin(this.kickT * Math.PI) * 0.06;
       let reloadDrop = 0;
@@ -1646,12 +1649,24 @@ export class Entities {
         switchSide = envelope * (this.reducedMotion ? 0.02 : 0.075);
         if (progress >= 1) this.weaponSwitchT = -1;
       }
-      this.viewWeapon.rotation.x = (baseRotation?.x ?? 0) - swing * 0.9 + reloadDrop * 0.35;
+      this.viewWeapon.rotation.x = (baseRotation?.x ?? 0) - swing * (isKnife ? 0.7 : 0.9) + reloadDrop * 0.35;
       this.viewWeapon.rotation.y = (baseRotation?.y ?? -0.08) * (1 - this.aimBlend);
       this.viewWeapon.rotation.z = (baseRotation?.z ?? 0) + reloadRoll + switchRoll;
       this.viewWeapon.position.x = -reloadDrop * 0.18 + switchSide;
-      this.viewWeapon.position.z = swing * -0.25 + kick + reloadDrop * 0.04 + switchDrop * 0.2;
+      this.viewWeapon.position.z = swing * (isKnife ? -0.5 : -0.25) + kick + reloadDrop * 0.04 + switchDrop * 0.2;
       this.viewWeapon.position.y = Math.sin(time * 1.7) * 0.008 + reloadDrop * 0.18 - switchDrop;
+      if (isKnife) {
+        const duration = this.knifeInspect ? KNIFE_INSPECT_SECONDS : KNIFE_DRAW_SECONDS;
+        if (this.knifeT >= 0) {
+          this.knifeT += dt;
+          if (this.knifeT >= duration) this.knifeT = -1;
+        }
+        const pose = animateKnife(this.viewWeapon, this.knifeT < 0 ? -1 : this.knifeT / duration, this.knifeInspect, this.reducedMotion);
+        this.viewWeapon.rotation.z += pose.wrist;
+        this.viewWeapon.rotation.y += pose.inspect * 0.7;
+        this.viewWeapon.position.x -= pose.inspect * 0.16 + swing * 0.16;
+        this.viewWeapon.position.y += pose.inspect * 0.10;
+      }
       const mechanism = reloadPose(progress);
       const magazine = this.viewWeapon.getObjectByName('moving-magazine');
       const bolt = this.viewWeapon.getObjectByName('moving-bolt');
@@ -1706,6 +1721,10 @@ export class Entities {
     switchCount: number;
     lastSwitchSameWeapon: boolean;
     switching: boolean;
+    knifeAnimating: boolean;
+    knifeInspecting: boolean;
+    knifeBladeAngle: number;
+    stabbing: boolean;
     reloadProgress: number;
     magazineOffset: number;
     boltOffset: number;
@@ -1745,6 +1764,10 @@ export class Entities {
       switchCount: this.weaponSwitchCount,
       lastSwitchSameWeapon: this.lastWeaponSwitchSameWeapon,
       switching: this.weaponSwitchT >= 0,
+      knifeAnimating: this.knifeT >= 0,
+      knifeInspecting: this.knifeT >= 0 && this.knifeInspect,
+      knifeBladeAngle: this.viewWeapon?.getObjectByName('knife-blade-pivot')?.rotation.z ?? 0,
+      stabbing: this.viewWeaponType === 'knife' && this.swingT < 1,
       reloadProgress: this.reloadT < 0 ? -1 : Math.min(1, this.reloadT / this.reloadDuration),
       magazineOffset: this.viewWeapon?.getObjectByName('moving-magazine')?.position.y ?? 0,
       boltOffset: this.viewWeapon?.getObjectByName('moving-bolt')?.position.z ?? 0,

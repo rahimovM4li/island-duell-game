@@ -6,7 +6,7 @@ import type { LightingPreset, Phase } from './timeline';
 import type { PlayerSkinId } from './multiplayer';
 import type { ImpactSurface, Vec3 } from './physics';
 
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 
 // ---------- lobby ----------
 export interface PlayerProfileMsg {
@@ -159,11 +159,11 @@ export interface InputMsg {
   interact: boolean;     // held: harvest resources / weapon swap
   /** Age of the rendered target when firing, clamped and verified host-side. */
   shotAgeMs?: number;
-  slot?: 1 | 2 | 3;      // weapon slot switch (3 = throwable)
+  slot?: 1 | 2 | 3 | 4;      // weapon slot switch (1 = knife, 2/3 = firearms, 4 = throwable)
   reload?: boolean;
-  /** One-shot request to place the selected slot-1/2 weapon into the world. */
+  /** One-shot request to place the selected slot-2/3 firearm into the world. */
   drop?: boolean;
-  /** Pressing the throwable key while slot 3 is active cycles frag → smoke → flash. */
+  /** Pressing the throwable key while slot 4 is active cycles frag → smoke → flash. */
   throwCycle?: boolean;
 }
 
@@ -181,7 +181,7 @@ export interface SnapPlayer {
   hp: number;
   alive: boolean;
   weapon: WeaponType;
-  slot: 1 | 2 | 3;
+  slot: 1 | 2 | 3 | 4;
   sprinting: boolean;
   sneaking: boolean;
   prone: boolean;
@@ -200,7 +200,7 @@ export interface SnapPlayer {
   grounded: boolean;
   lastSeq: number;       // reconciliation ack for the owning client
   kills: number;
-  /** Selected throwable while slot 3 is up (viewmodel + HUD). */
+  /** Selected throwable while slot 4 is up (viewmodel + HUD). */
   activeThrow?: ThrowKind;
   /** Round time when a cooked frag detonates in hand; absent when not cooking. */
   cookingUntil?: number;
@@ -255,7 +255,7 @@ export interface WeaponSlotState { type: WeaponType; mag: number }
 export interface InventoryState {
   primary: WeaponSlotState | null;
   secondary: WeaponSlotState | null;
-  active: 1 | 2 | 3;
+  active: 1 | 2 | 3 | 4;
   throwables: { frag: number; smoke: number; flash: number };
   activeThrow: ThrowKind;
   bandages: number;
@@ -391,7 +391,7 @@ export function isInputMsg(m: unknown): m is InputMsg {
     && isBool(x.sprint) && isBool(x.sneak) && (x.prone === undefined || isBool(x.prone)) && isBool(x.aim)
     && isBool(x.jump) && isBool(x.fire) && isBool(x.interact)
     && (x.shotAgeMs === undefined || (isNum(x.shotAgeMs) && x.shotAgeMs >= 0 && x.shotAgeMs <= 500))
-    && (x.slot === undefined || x.slot === 1 || x.slot === 2 || x.slot === 3)
+    && (x.slot === undefined || x.slot === 1 || x.slot === 2 || x.slot === 3 || x.slot === 4)
     && (x.reload === undefined || isBool(x.reload))
     && (x.drop === undefined || isBool(x.drop))
     && (x.throwCycle === undefined || isBool(x.throwCycle));

@@ -15,12 +15,12 @@ import type { ConnectionQuality } from './network-smoothing';
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 const WEAPON_NAMES: Record<WeaponType, string> = {
-  fists: 'Fäuste', machete: 'Machete', spear: 'Speer',
+  knife: 'Butterfly',
   pistol: 'Pistole', rifle: 'Gewehr', shotgun: 'Schrotflinte', sniper: 'Scharfschütze',
   grenade: 'Granate', smoke: 'Rauch', flash: 'Blend',
 };
 const WEAPON_GLYPHS: Record<WeaponType, string> = {
-  fists: '✦', machete: '╱', spear: '↑',
+  knife: '╱',
   pistol: 'P', rifle: 'G', shotgun: 'S', sniper: '◎',
   grenade: '●', smoke: '◌', flash: '✳',
 };
@@ -112,9 +112,11 @@ export class Hud {
   }
 
   setInventory(inv: InventoryState): void {
+    $('slot1').querySelector('.ammo')!.textContent = document.body.classList.contains('touch-mode')
+      ? 'Tippen · Flip' : 'F · Inspizieren';
     const slots = [
-      { el: $('slot1'), w: inv.primary },
-      { el: $('slot2'), w: inv.secondary },
+      { el: $('slot2'), w: inv.primary },
+      { el: $('slot3'), w: inv.secondary },
     ];
     for (const { el, w } of slots) {
       el.title = w ? `${WEAPON_NAMES[w.type]} · Q zum Ablegen` : 'Freier Waffenplatz';
@@ -125,16 +127,16 @@ export class Hud {
         ? `${w!.mag}/${inv.ammo[def.ammo]}${inv.reloading ? ' ⟳' : ''}`
         : w ? 'Nahkampf' : 'Waffe aufnehmen';
     }
-    // slot 3 shows the selected throwable; pressing 3 again cycles (§F2)
+    // slot 4 shows the selected throwable; pressing 4 again cycles (§F2)
     const throwCount = inv.throwables[inv.activeThrow];
-    $('slot3').querySelector('.slot-icon')!.textContent = THROW_GLYPHS[inv.activeThrow];
-    $('slot3').querySelector('.wname')!.textContent = THROW_LABELS[inv.activeThrow];
+    $('slot4').querySelector('.slot-icon')!.textContent = THROW_GLYPHS[inv.activeThrow];
+    $('slot4').querySelector('.wname')!.textContent = THROW_LABELS[inv.activeThrow];
     const others = (['frag', 'smoke', 'flash'] as const)
       .filter((kind) => kind !== inv.activeThrow && inv.throwables[kind] > 0)
       .map((kind) => `${THROW_GLYPHS[kind]}${inv.throwables[kind]}`)
       .join(' ');
-    $('slot3').querySelector('.ammo')!.textContent = `×${throwCount}${others ? `  ${others}` : ''}`;
-    for (const i of [1, 2, 3] as const) $(`slot${i}`).classList.toggle('active', inv.active === i);
+    $('slot4').querySelector('.ammo')!.textContent = `×${throwCount}${others ? `  ${others}` : ''}`;
+    for (const i of [1, 2, 3, 4] as const) $(`slot${i}`).classList.toggle('active', inv.active === i);
     $('plates-row').textContent =
       `Schild ${inv.shield}/${MAX_SHIELD} · Platten ${inv.plates}/${MAX_PLATES}${inv.helmet ? ' · 🪖 Helm' : ''}`;
     $('shield-bar').style.transform = `scaleX(${Math.max(0, Math.min(MAX_SHIELD, inv.shield)) / MAX_SHIELD})`;

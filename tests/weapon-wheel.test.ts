@@ -3,13 +3,13 @@ import type { InventoryState } from '@shared/protocol';
 import { nextWeaponSlot } from '../client/src/weapon-navigation';
 
 function inventory(
-  active: 1 | 2 | 3,
+  active: 1 | 2 | 3 | 4,
   secondary = true,
   throwables = true,
 ): InventoryState {
   return {
     primary: { type: 'pistol', mag: 7 },
-    secondary: secondary ? { type: 'machete', mag: 0 } : null,
+    secondary: secondary ? { type: 'pistol', mag: 0 } : null,
     active,
     throwables: { frag: throwables ? 1 : 0, smoke: 0, flash: 0 },
     activeThrow: 'frag',
@@ -27,14 +27,14 @@ describe('mouse-wheel weapon switching', () => {
   it('cycles down and up through every occupied combat slot', () => {
     expect(nextWeaponSlot(inventory(1), 1)).toBe(2);
     expect(nextWeaponSlot(inventory(2), 1)).toBe(3);
-    expect(nextWeaponSlot(inventory(3), 1)).toBe(1);
-    expect(nextWeaponSlot(inventory(1), -1)).toBe(3);
+    expect(nextWeaponSlot(inventory(3), 1)).toBe(4);
+    expect(nextWeaponSlot(inventory(1), -1)).toBe(4);
     expect(nextWeaponSlot(inventory(3), -1)).toBe(2);
   });
 
   it('skips empty weapon and throwable slots', () => {
-    expect(nextWeaponSlot(inventory(1, false, true), 1)).toBe(3);
-    expect(nextWeaponSlot(inventory(1, true, false), -1)).toBe(2);
-    expect(nextWeaponSlot(inventory(1, false, false), 1)).toBe(1);
+    expect(nextWeaponSlot(inventory(2, false, true), 1)).toBe(4);
+    expect(nextWeaponSlot(inventory(1, true, false), -1)).toBe(3);
+    expect(nextWeaponSlot(inventory(1, false, false), 1)).toBe(2);
   });
 });

@@ -5,9 +5,10 @@ export function viewWeaponForInventory(inv: Pick<
   InventoryState,
   'active' | 'primary' | 'secondary' | 'activeThrow'
 >): WeaponType {
-  if (inv.active === 3) return THROW_WEAPON[inv.activeThrow];
-  const slot = inv.active === 1 ? inv.primary : inv.secondary;
-  return slot?.type ?? 'fists';
+  if (inv.active === 1) return 'knife';
+  if (inv.active === 4) return THROW_WEAPON[inv.activeThrow];
+  const slot = inv.active === 2 ? inv.primary : inv.secondary;
+  return slot?.type ?? 'knife';
 }
 
 export function shouldAnimateWeaponSwitch(

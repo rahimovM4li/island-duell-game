@@ -17,13 +17,14 @@ process.on('message', (message: { id: number; action: string }) => {
       room.phys.setPlayerPos(player.id, player.move.pos);
       player.inv.primary = { type: 'rifle', mag: 20 };
       player.inv.secondary = { type: 'pistol', mag: 7 };
-      player.inv.active = 1;
+      player.inv.active = 2;
       player.inv.ammo.rifle = 60;
       player.inv.ammo.pistol = 48;
+      player.inv.throwables = { frag: 1, smoke: 1, flash: 1 };
       room.pushInventory(player);
       yaw = Math.atan2(x - wreck.x, z - wreck.z);
     }
-    process.send?.({ id: message.id, state: { ready: !!player, yaw, mag: player?.inv.primary?.mag, reloading: player?.reloadUntil > 0 } });
+    process.send?.({ id: message.id, state: { ready: !!player, yaw, mag: player?.inv.primary?.mag, reloading: player?.reloadUntil > 0, active: player?.inv.active, throwables: player?.inv.throwables, readyToFire: !!player && room.t >= player.cooldownUntil } });
   } catch (error) { process.send?.({ id: message.id, error: String(error) }); }
 });
 process.send?.({ ready: true });

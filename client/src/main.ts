@@ -176,7 +176,7 @@ let snapClock = { t: 0, at: 0 };   // round time + local receipt time
 let remoteBufs = new Map<string, RemoteBufEntry[]>();
 let remoteFootsteps = new Map<string, FootstepState>();
 let localFootstepDistance = 0;
-let myWeapon: WeaponType = 'fists';
+let myWeapon: WeaponType = 'knife';
 let bandageStart: number | null = null;
 let interactStart: number | null = null;
 let depletedNodes = new Set<number>();
@@ -336,7 +336,7 @@ function startVictoryCinematic(m: RoundEndMsg): void {
     ? renderMovePos.clone()
     : new THREE.Vector3(winnerSnap?.x ?? 0, winnerSnap?.y ?? 0, winnerSnap?.z ?? 0);
   const winnerYaw = localWinner ? input.yaw : winnerSnap?.yaw ?? 0;
-  const winnerWeapon = localWinner ? myWeapon : winnerSnap?.weapon ?? 'fists';
+  const winnerWeapon = localWinner ? myWeapon : winnerSnap?.weapon ?? 'knife';
   const victimPosition = lastElimination && lastElimination.victimId !== winner.id
     ? lastElimination.position.clone()
     : null;
@@ -1451,7 +1451,7 @@ function onRoundStart(m: RoundStartMsg): void {
   if (m.deaths !== undefined) myDeathsThisMatch = m.deaths;
   roundsThisMatch = roundRunning ? m.round - 1 : m.round;
   alive = true;
-  myWeapon = 'fists';
+  myWeapon = 'knife';
   pending = [];
   remoteBufs.clear();
   remoteFootsteps.clear();
@@ -1512,7 +1512,7 @@ function onRoundStart(m: RoundStartMsg): void {
   entities.clearProjectiles();
   for (const p of m.pickups) entities.addPickup(p);
   entities.resetPlayerAnimations();
-  entities.setViewWeapon('fists');
+  entities.setViewWeapon('knife');
   entities.setSpectatorLabels(false);
   entities.setAiming(false);
   entities.setReloading(false);
@@ -2052,8 +2052,8 @@ function frame(): void {
       // e.g. typing with the pause hint open must not switch weapons or heal
       if (input.gameplayActive) {
         if (input.slotPressed) {
-          // pressing 3 while the throwable is already up cycles frag → smoke → flash (§F2)
-          if (input.slotPressed === 3 && lastInv?.active === 3) inp.throwCycle = true;
+          // pressing 4 while the throwable is already up cycles frag → smoke → flash (§F2)
+          if (input.slotPressed === 4 && lastInv?.active === 4) inp.throwCycle = true;
           else inp.slot = input.slotPressed;
         }
         if (input.reloadPressed) inp.reload = true;
@@ -2069,6 +2069,7 @@ function frame(): void {
       phys.step(inputStep);
       updateLocalFootsteps(inputStep);
 
+      if (input.gameplayActive && input.inspectPressed) entities.inspectKnife();
       if (input.gameplayActive && input.craftPressed) net.craft(input.craftPressed);
       if (input.gameplayActive && input.bandagePressed) { net.useBandage(); bandageStart = now; }
       input.clearEdges();
@@ -2154,7 +2155,7 @@ function frame(): void {
     entities.updatePlayer(
       id, renderX, renderY, renderZ,
       sampled.yaw, sampled.pitch,
-      snapP?.alive ?? true, snapP?.weapon ?? 'fists',
+      snapP?.alive ?? true, snapP?.weapon ?? 'knife',
       snapP?.sneaking ?? false, snapP?.prone ?? false, snapP?.aiming ?? false,
       snapP?.helmet ?? false,
       {

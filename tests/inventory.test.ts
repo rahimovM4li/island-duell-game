@@ -13,6 +13,13 @@ function emptyInventory(): WeaponInventory {
 }
 
 describe('stateful weapon pickups', () => {
+  it('never inserts the permanent knife or grenades into firearm storage', () => {
+    const inv = emptyInventory();
+    expect(equipWeapon(inv, 'knife')).toBe(false);
+    expect(equipWeapon(inv, 'grenade')).toBe(false);
+    expect(inv.primary).toBeNull();
+    expect(inv.secondary).toBeNull();
+  });
   it('fresh world weapons start full and grant reserve ammo', () => {
     const inv = emptyInventory();
     expect(equipWeapon(inv, 'pistol')).toBe(true);
@@ -34,7 +41,7 @@ describe('stateful weapon pickups', () => {
 
   it('does not grant ammo when both slots are occupied', () => {
     const inv = emptyInventory();
-    equipWeapon(inv, 'machete');
+    equipWeapon(inv, 'pistol');
     equipWeapon(inv, 'rifle');
     const rifleAmmo = inv.ammo.rifle;
     expect(equipWeapon(inv, 'rifle')).toBe(false);
@@ -45,8 +52,8 @@ describe('stateful weapon pickups', () => {
 describe('dropping the selected weapon', () => {
   const activeInventory = (): ActiveWeaponInventory => ({
     primary: { type: 'rifle', mag: 7 },
-    secondary: { type: 'machete', mag: 0 },
-    active: 1,
+    secondary: { type: 'pistol', mag: 0 },
+    active: 2,
     ammo: { pistol: 0, rifle: 20, shell: 0, sniper: 0 },
   });
 
@@ -54,20 +61,33 @@ describe('dropping the selected weapon', () => {
     const inv = activeInventory();
     expect(takeSelectedWeapon(inv)).toEqual({ type: 'rifle', mag: 7 });
     expect(inv.primary).toBeNull();
-    expect(inv.secondary).toEqual({ type: 'machete', mag: 0 });
-    expect(inv.active).toBe(2);
+    expect(inv.secondary).toEqual({ type: 'pistol', mag: 0 });
+    expect(inv.active).toBe(3);
     expect(inv.ammo.rifle).toBe(20);
   });
 
   it('does nothing for the throwable slot or an empty selected slot', () => {
     const throwable = activeInventory();
-    throwable.active = 3;
+    throwable.active = 4;
     expect(takeSelectedWeapon(throwable)).toBeNull();
     expect(throwable.primary).not.toBeNull();
 
     const empty = activeInventory();
     empty.primary = null;
     expect(takeSelectedWeapon(empty)).toBeNull();
-    expect(empty.active).toBe(1);
+    expect(empty.active).toBe(2);
+  });
+
+  it('keeps slot 1 permanent and returns to it after dropping the last firearm', () => {
+    const inv = activeInventory();
+    inv.active = 1;
+    const before = structuredClone(inv);
+    expect(takeSelectedWeapon(inv)).toBeNull();
+    expect(inv).toEqual(before);
+    inv.active = 3;
+    takeSelectedWeapon(inv);
+    expect(inv.active).toBe(2);
+    takeSelectedWeapon(inv);
+    expect(inv.active).toBe(1);
   });
 });

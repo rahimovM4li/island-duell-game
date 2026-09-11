@@ -363,55 +363,7 @@ def weapon_base(collection, name):
 def build_weapons(collection):
     # Every held weapon uses the handle as origin and +Y as forward. Blender's
     # glTF exporter maps that direction to Three.js -Z.
-    r = weapon_base(collection, "fists"); p = []
-    for x, y in ((-.11, .04), (.11, .01)):
-        p.append(ico(r, collection, .13, (x, y, .02), T["skin"], (.9, 1.08, .82), 1))
-        for finger in (-.055, 0, .055):
-            p.append(beveled_box(r, collection, (.045, .09, .055), (x + finger, y + .08, .015), T["skin"], bevel=.012))
-    finish_mesh(r, p, "visual")
-
-    # Classic jungle machete: one broad, single-edged curved blade without the
-    # old spear-like tip and decorative bolts. The face remains camera-readable.
-    r = weapon_base(collection, "machete"); p = [
-        polygon_prism(
-            r, collection,
-            [(-.10,.06), (.08,.06), (.105,.34), (.14,.65), (.125,.82),
-             (.045,.96), (-.105,.91), (-.15,.72), (-.13,.34)],
-            .072, (0, .02, 0), T["steel"],
-        ),
-        # Dark blunt spine separates the silhouette from the sharpened edge.
-        polygon_prism(
-            r, collection,
-            [(.055,.08), (.082,.34), (.112,.64), (.102,.79), (.06,.86),
-             (.035,.82), (.065,.62), (.042,.32)],
-            .078, (0, .02, 0), T["gun"],
-        ),
-        polygon_prism(
-            r, collection,
-            [(-.105,.10), (-.08,.12), (-.105,.42), (-.125,.69),
-             (-.095,.86), (-.108,.89), (-.14,.71), (-.12,.35)],
-            .076, (0, .02, 0), T["white"],
-        ),
-        beveled_box(r, collection, (.25, .13, .065), (0, 0, .025), T["brass"], bevel=.018),
-        cylinder(r, collection, .06, .34, (0, 0, -.18), T["leather"], vertices=10, radius_top=.052),
-        cylinder(r, collection, .072, .05, (0, 0, -.375), T["gun"], vertices=8),
-        torus(r, collection, .042, .009, (0, 0, -.405), T["dark"],
-              major_segments=12, minor_segments=4),
-    ]
-    for z in (-.07, -.14, -.21, -.28):
-        p.append(torus(r, collection, .052, .009, (0, 0, z), T["grip"], major_segments=8, minor_segments=3))
-    finish_mesh(r, p, "visual")
-
-    r = weapon_base(collection, "spear"); p = [
-        cylinder(r, collection, .038, 1.9, (0, .08, 0), T["wood"], (-math.pi / 2, 0, 0), 10, radius_top=.03),
-        cone(r, collection, .13, .44, (0, 1.25, 0), T["steel"], (-math.pi / 2, 0, 0), 6),
-        cylinder(r, collection, .055, .19, (0, 1.0, 0), T["gun"], (-math.pi / 2, 0, 0), 8),
-        cone(r, collection, .062, .16, (0, -.94, 0), T["brass"], (math.pi / 2, 0, 0), 6),
-    ]
-    for y in (.82, .9, .98):
-        p.append(torus(r, collection, .044, .008, (0, y, 0), T["leather"], (math.pi / 2, 0, 0), 8, 3))
-    finish_mesh(r, p, "visual")
-
+    # The permanent butterfly knife is authored with articulated pivots in butterfly-knife.ts.
     # Service-pistol silhouette: long rectangular slide, flared magazine well,
     # visible trigger guard and strong front/rear sight separation.
     r = weapon_base(collection, "pistol"); p = [

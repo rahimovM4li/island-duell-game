@@ -65,11 +65,43 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.screenshot({ path: testInfo.outputPath('rifle-reload.png') });
     await expect.poll(async () => (await command('state')).reloading, { timeout: 8000 }).toBe(false);
     expect((await command('state')).mag).toBe(20);
-    await page.keyboard.press('2');
+    await page.keyboard.press('3');
     await expect.poll(async () => (await view()).weapon).toBe('pistol');
     await page.waitForTimeout(350);
     await page.screenshot({ path: testInfo.outputPath('pistol.png') });
     expect((await view()).hands).toHaveLength(2);
+    await page.keyboard.press('1');
+    await expect.poll(async () => (await view()).weapon).toBe('knife');
+    await expect.poll(async () => (await view()).knifeAnimating).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath('butterfly-draw.png') });
+    await expect.poll(async () => (await view()).knifeAnimating).toBe(false);
+    await page.screenshot({ path: testInfo.outputPath('butterfly-ready.png') });
+    expect((await view()).hands).toHaveLength(1);
+    await page.keyboard.press('q');
+    expect((await command('state')).active).toBe(1);
+    await page.keyboard.press('f');
+    await expect.poll(async () => (await view()).knifeInspecting).toBe(true);
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: testInfo.outputPath('butterfly-inspect.png') });
+    await page.mouse.down();
+    await expect.poll(async () => (await view()).stabbing).toBe(true);
+    await page.mouse.up();
+    expect((await view()).knifeAnimating).toBe(false);
+    await page.screenshot({ path: testInfo.outputPath('butterfly-stab.png') });
+    await page.keyboard.press('4');
+    await expect.poll(async () => (await view()).weapon).toBe('grenade');
+    await page.keyboard.press('4');
+    await expect.poll(async () => (await view()).weapon).toBe('smoke');
+    await page.keyboard.press('4');
+    await expect.poll(async () => (await view()).weapon).toBe('flash');
+    // Slot changes deliberately preserve the stab cooldown; wait for the server.
+    await expect.poll(async () => (await command('state')).readyToFire).toBe(true);
+    await page.mouse.down(); await page.waitForTimeout(120); await page.mouse.up();
+    await expect.poll(async () => (await command('state')).throwables.flash).toBe(0);
+    await page.keyboard.press('2');
+    await expect.poll(async () => (await view()).weapon).toBe('rifle');
+    await page.keyboard.press('1');
+    await expect.poll(async () => (await view()).knifeAnimating).toBe(true);
     expect(errors).toEqual([]);
   } finally {
     if (server.exitCode === null && server.signalCode === null) {

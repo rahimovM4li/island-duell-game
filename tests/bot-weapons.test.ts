@@ -9,6 +9,6 @@ describe('range-aware bot loadout scoring', () => {
 
   it('never chooses empty or melee weapons as ranged options', () => {
     expect(scoreBotWeapon('rifle', 25, 0)).toBe(-1);
-    expect(scoreBotWeapon('machete', 3, 1)).toBe(-1);
+    expect(scoreBotWeapon('knife', 3, 1)).toBe(-1);
   });
 });

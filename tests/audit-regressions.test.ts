@@ -30,8 +30,35 @@ beforeAll(async () => { await RAPIER.init(); });
 afterEach(() => { rooms.splice(0).forEach(room => room.dispose()); vi.restoreAllMocks(); });
 
 describe('combat and inventory regressions', () => {
+  it('starts with a permanent knife that stabs once per cooldown and respects cover/range', () => {
+    const { room, player } = harness();
+    expect(player.inv.active).toBe(1);
+    expect(room.activeWeapon(player)).toMatchObject({ type: 'knife', slotState: null });
+    player.move.pos = { x: 0, y: 0, z: 0 };
+    player.yaw = 0;
+    player.pitch = Math.atan2(-0.7, 1.2);
+    const target = room.freshMatchPlayer('b', 'Bob', false);
+    target.move.pos = { x: 0, y: 0, z: -1.2 };
+    room.players.set(target.id, target);
+    room.t = 10;
+    room.tryFire(player, []);
+    expect(target.hp).toBe(65);
+    room.tryFire(player, []);
+    expect(target.hp).toBe(65);
+    room.t = 11;
+    room.phys.raycast = () => ({ dist: 0.4 });
+    room.tryFire(player, []);
+    expect(target.hp).toBe(65);
+    room.t = 12;
+    room.phys.raycast = () => null;
+    target.move.pos.z = -5;
+    room.tryFire(player, []);
+    expect(target.hp).toBe(65);
+    expect(room.dropSelectedWeapon(player)).toBe(false);
+  });
   it('finishes an empty-magazine reload while fire remains held', () => {
     const { room, player } = harness();
+    player.inv.active = 2;
     player.inv.primary = { type: 'rifle', mag: 0 };
     player.inv.ammo.rifle = 60;
     for (let tick = 0; tick < 150; tick++) {
@@ -44,6 +71,7 @@ describe('combat and inventory regressions', () => {
 
   it('still permits firing a loaded weapon to interrupt a manual reload', () => {
     const { room, player } = harness();
+    player.inv.active = 2;
     player.inv.primary = { type: 'rifle', mag: 3 };
     player.inv.ammo.rifle = 20;
     room.t = 1;
@@ -55,8 +83,9 @@ describe('combat and inventory regressions', () => {
 
   it('does not transfer a pistol reload to a swapped sniper', () => {
     const { room, player } = harness();
+    player.inv.active = 2;
     player.inv.primary = { type: 'pistol', mag: 0 };
-    player.inv.secondary = { type: 'machete', mag: 0 };
+    player.inv.secondary = { type: 'pistol', mag: 0 };
     player.inv.ammo.pistol = 30;
     player.inv.ammo.sniper = 10;
     room.t = 10;
@@ -74,7 +103,7 @@ describe('combat and inventory regressions', () => {
 
   it('does not reload a holstered weapon while the throwable slot is active', () => {
     const { room, player } = harness();
-    player.inv.active = 3;
+    player.inv.active = 4;
     player.inv.secondary = { type: 'sniper', mag: 0 };
     player.inv.ammo.sniper = 10;
     room.tryReload(player);

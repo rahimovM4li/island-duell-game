@@ -16,7 +16,7 @@ interface TestPlayer {
   inv: {
     primary: WeaponSlotState | null;
     secondary: WeaponSlotState | null;
-    active: 1 | 2 | 3;
+    active: 1 | 2 | 3 | 4;
     ammo: { pistol: number; rifle: number; shell: number; sniper: number };
   };
 }
@@ -50,15 +50,15 @@ describe('authoritative selected-weapon drop', () => {
     player.move.pos = { x: 4, y: 3, z: 6 };
     player.yaw = 0;
     player.inv.primary = { type: 'rifle', mag: 9 };
-    player.inv.secondary = { type: 'machete', mag: 0 };
-    player.inv.active = 1;
+    player.inv.secondary = { type: 'pistol', mag: 0 };
+    player.inv.active = 2;
     internals.players.set(player.id, player);
 
     expect(internals.dropSelectedWeapon(player)).toBe(true);
 
     expect(player.inv.primary).toBeNull();
-    expect(player.inv.secondary?.type).toBe('machete');
-    expect(player.inv.active).toBe(2);
+    expect(player.inv.secondary?.type).toBe('pistol');
+    expect(player.inv.active).toBe(3);
     const pickup = [...internals.pickups.values()].at(-1);
     expect(pickup).toMatchObject({
       item: 'rifle',

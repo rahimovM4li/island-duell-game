@@ -51,7 +51,7 @@ describe('recognisable weapon GLB silhouettes', () => {
     expect(triangles.get('weapon_sniper_visual_mesh')).toBeGreaterThanOrEqual(980);
   });
 
-  it('keeps the redesigned machete detailed enough to remain readable in first person', () => {
+  it('excludes retired melee weapons from the shipped asset bundle', () => {
     const buffer = readFileSync(path.resolve('client/public/assets/weapons.glb'));
     const jsonLength = buffer.readUInt32LE(12);
     const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLength)) as {
@@ -65,7 +65,9 @@ describe('recognisable weapon GLB silhouettes', () => {
         return sum + Math.floor((accessor === undefined ? 0 : gltf.accessors?.[accessor]?.count ?? 0) / 3);
       }, 0);
     };
-    expect(triangleCount('weapon_machete_visual_mesh')).toBeGreaterThanOrEqual(420);
+    expect(triangleCount('weapon_machete_visual_mesh')).toBe(0);
+    expect(triangleCount('weapon_spear_visual_mesh')).toBe(0);
+    expect(triangleCount('weapon_fists_visual_mesh')).toBe(0);
     expect(triangleCount('weapon_bow_visual_mesh')).toBe(0);
   });
 });

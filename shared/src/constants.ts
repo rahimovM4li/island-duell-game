@@ -77,12 +77,12 @@ export const ROUND_END_SCOREBOARD_SECS = 8;
 
 // ---------- Combat (§4.3) ----------
 export type WeaponType =
-  | 'fists' | 'machete' | 'spear' | 'pistol' | 'rifle' | 'shotgun' | 'sniper'
+  | 'knife' | 'pistol' | 'rifle' | 'shotgun' | 'sniper'
   | 'grenade' | 'smoke' | 'flash';
 
 export type AmmoType = 'pistol' | 'rifle' | 'shell' | 'sniper';
 
-/** The three throwables sharing slot 3; cycled with the throwable key. */
+/** The three throwables sharing slot 4; cycled with the throwable key. */
 export type ThrowKind = 'frag' | 'smoke' | 'flash';
 export const THROW_ORDER: readonly ThrowKind[] = ['frag', 'smoke', 'flash'] as const;
 /** Weapon identity used for events/viewmodels per throwable kind. */
@@ -113,9 +113,7 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: Record<WeaponType, WeaponDef> = {
-  fists:   { type: 'fists',   kind: 'melee', damage: 8,  cooldown: 0.5,  range: 1.5, loud: false },
-  machete: { type: 'machete', kind: 'melee', damage: 35, cooldown: 0.6,  range: 2.0, loud: false },
-  spear:   { type: 'spear',   kind: 'melee', damage: 28, cooldown: 0.8,  range: 3.5, loud: false },
+  knife: { type: 'knife', kind: 'melee', damage: 35, cooldown: 0.55, range: 1.8, loud: false },
   pistol: {
     type: 'pistol', kind: 'hitscan', damage: 22, cooldown: 0.25, range: 60,
     ammo: 'pistol', magSize: 7, falloffStart: 30, falloffEnd: 60, loud: true, reloadTime: 1.4,
@@ -154,8 +152,7 @@ export const WEAPONS: Record<WeaponType, WeaponDef> = {
 
 /** Applies only while normally walking or sprinting with this weapon active. */
 export const WEAPON_MOVE_MULTIPLIER: Partial<Record<WeaponType, number>> = {
-  machete: 1.08,
-  spear: 1.05,
+  knife: 1.08,
   sniper: 0.9,
 };
 

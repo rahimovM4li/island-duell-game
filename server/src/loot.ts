@@ -46,7 +46,7 @@ export function rollCrateLoot(
       ['pistolAmmo', 'pistolAmmo', 'bandageItem', 'smokeGrenade', 'flashGrenade'] as ItemType[],
     ));
   } else {
-    drops.push(pick(rng, ['machete', 'spear', 'pistol', 'bandageItem'] as ItemType[]));
+    drops.push(pick(rng, ['pistol', 'pistolAmmo', 'bandageItem'] as ItemType[]));
     if (rng() < 0.6) drops.push('pistolAmmo');
   }
   return { drops, helmetDropped };

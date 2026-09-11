@@ -111,7 +111,8 @@ describe('wreck routes with real collision', () => {
         for (let i = 0; i < 20; i++) { stepMovement(phys, 'walker', st, input()); phys.step(); }
         let maxY = st.pos.y;
         for (let i = 0; i < count; i++) {
-          stepMovement(phys, 'walker', st, input({ yaw: poi.rootYaw, ...changes }));
+          // Keep this route fixture at 6 m/s; the permanent knife has an 8% speed bonus.
+          stepMovement(phys, 'walker', st, input({ yaw: poi.rootYaw, ...changes }), 'pistol');
           phys.step(); maxY = Math.max(maxY, st.pos.y);
         }
         phys.removePlayer('walker');

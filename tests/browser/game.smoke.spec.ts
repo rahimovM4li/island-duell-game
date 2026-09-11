@@ -64,7 +64,7 @@ test('player can enter training from the new 3D lobby and render the match', asy
   const renderedCanvas = await page.locator('canvas.game').screenshot();
   expect(renderedCanvas.byteLength).toBeGreaterThan(15_000);
 
-  const fistViewmodel = await page.evaluate(() => (
+  const knifeViewmodel = await page.evaluate(() => (
     (window as Window & {
       __ISLAND_DUELL_DIAGNOSTICS__?: {
         snapshot(): {
@@ -84,10 +84,10 @@ test('player can enter training from the new 3D lobby and render the match', asy
       };
     }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().entities?.viewmodel
   ));
-  expect(fistViewmodel?.weapon).toBe('fists');
-  expect(fistViewmodel?.visible).toBe(true);
-  expect(fistViewmodel?.hands).toHaveLength(1);
-  const handsWithVisibleArea = fistViewmodel?.hands.filter((hand) => {
+  expect(knifeViewmodel?.weapon).toBe('knife');
+  expect(knifeViewmodel?.visible).toBe(true);
+  expect(knifeViewmodel?.hands).toHaveLength(1);
+  const handsWithVisibleArea = knifeViewmodel?.hands.filter((hand) => {
     const visibleWidth = Math.min(1, hand.ndcMax.x) - Math.max(-1, hand.ndcMin.x);
     const visibleHeight = Math.min(1, hand.ndcMax.y) - Math.max(-1, hand.ndcMin.y);
     return visibleWidth > 0.2 && visibleHeight > 0.2
@@ -170,7 +170,7 @@ test('player can enter training from the new 3D lobby and render the match', asy
       };
     }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().entities?.viewmodel
   ))).toMatchObject({
-    weapon: 'fists',
+    weapon: 'knife',
     switchCount: switchCountBefore + 1,
     lastSwitchSameWeapon: true,
   });

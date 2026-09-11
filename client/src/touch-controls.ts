@@ -284,11 +284,14 @@ export class TouchControls implements TouchInputSource {
 
   /** Weapon slots and craft recipes stay where they are — taps switch/craft. */
   private bindHudTaps(): void {
-    const slots: Array<[string, 1 | 2 | 3]> = [['slot1', 1], ['slot2', 2], ['slot3', 3]];
+    const slots: Array<[string, 1 | 2 | 3 | 4]> = [['slot1', 1], ['slot2', 2], ['slot3', 3], ['slot4', 4]];
     for (const [id, slot] of slots) {
       document.getElementById(id)?.addEventListener('pointerdown', (event) => {
         if (!this.active) return;
         event.preventDefault();
+        if (slot === 1 && document.getElementById(id)?.classList.contains('active')) {
+          this.input.inspectPressed = true;
+        }
         this.input.slotPressed = slot;
       });
     }

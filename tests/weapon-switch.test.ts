@@ -3,7 +3,7 @@ import type { InventoryState } from '@shared/protocol';
 import { shouldAnimateWeaponSwitch, viewWeaponForInventory } from '../client/src/weapon-switch';
 
 function inventory(
-  active: 1 | 2 | 3,
+  active: 1 | 2 | 3 | 4,
   primary: InventoryState['primary'] = { type: 'rifle', mag: 20 },
   secondary: InventoryState['secondary'] = { type: 'rifle', mag: 20 },
 ): InventoryState {
@@ -24,23 +24,23 @@ function inventory(
 }
 
 describe('first-person weapon switching', () => {
-  it('uses fists for an empty selected weapon slot', () => {
-    expect(viewWeaponForInventory(inventory(2, null, null))).toBe('fists');
+  it('uses the knife for an empty selected weapon slot', () => {
+    expect(viewWeaponForInventory(inventory(2, null, null))).toBe('knife');
   });
 
   it('animates a slot change even when both slots contain the same weapon', () => {
-    expect(shouldAnimateWeaponSwitch(inventory(1), inventory(2))).toBe(true);
+    expect(shouldAnimateWeaponSwitch(inventory(2), inventory(3))).toBe(true);
   });
 
   it('animates different equipped weapons but ignores ordinary inventory updates', () => {
     expect(shouldAnimateWeaponSwitch(
-      inventory(1),
-      inventory(1, { type: 'shotgun', mag: 5 }),
+      inventory(2),
+      inventory(2, { type: 'shotgun', mag: 5 }),
     )).toBe(true);
-    expect(shouldAnimateWeaponSwitch(inventory(1), {
-      ...inventory(1),
+    expect(shouldAnimateWeaponSwitch(inventory(2), {
+      ...inventory(2),
       bandages: 2,
     })).toBe(false);
-    expect(shouldAnimateWeaponSwitch(null, inventory(1))).toBe(false);
+    expect(shouldAnimateWeaponSwitch(null, inventory(2))).toBe(false);
   });
 });

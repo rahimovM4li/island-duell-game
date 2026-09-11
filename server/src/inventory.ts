@@ -11,7 +11,7 @@ export interface WeaponInventory {
 }
 
 export interface ActiveWeaponInventory extends WeaponInventory {
-  active: 1 | 2 | 3;
+  active: 1 | 2 | 3 | 4;
 }
 
 export interface EquipWeaponOptions {
@@ -33,6 +33,7 @@ export function grantStarterAmmo(inv: WeaponInventory, type: WeaponType): void {
 }
 
 export function equipWeapon(inv: WeaponInventory, type: WeaponType, options: EquipWeaponOptions = {}): boolean {
+  if (WEAPONS[type].kind !== 'hitscan') return false;
   const state = weaponSlotState(type, options.mag);
   if (!inv.primary) inv.primary = state;
   else if (!inv.secondary) inv.secondary = state;
@@ -42,17 +43,18 @@ export function equipWeapon(inv: WeaponInventory, type: WeaponType, options: Equ
 }
 
 /**
- * Remove only the weapon currently held in slot 1/2. Throwables are managed
+ * Remove only the firearm currently held in slot 2/3. The knife is permanent.
+ * Throwables are managed
  * separately and an empty selected slot is intentionally a no-op.
  */
 export function takeSelectedWeapon(inv: ActiveWeaponInventory): WeaponSlotState | null {
-  if (inv.active === 3) return null;
-  const slot = inv.active === 1 ? 'primary' : 'secondary';
+  if (inv.active === 1 || inv.active === 4) return null;
+  const slot = inv.active === 2 ? 'primary' : 'secondary';
   const selected = inv[slot];
   if (!selected) return null;
   inv[slot] = null;
 
-  const otherSlot = inv.active === 1 ? 'secondary' : 'primary';
-  if (inv[otherSlot]) inv.active = inv.active === 1 ? 2 : 1;
+  const otherSlot = inv.active === 2 ? 'secondary' : 'primary';
+  inv.active = inv[otherSlot] ? (inv.active === 2 ? 3 : 2) : 1;
   return selected;
 }

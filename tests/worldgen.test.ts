@@ -48,12 +48,12 @@ describe('spawn POIs (§5.3)', () => {
     }
   });
 
-  it('loot floor per spawn: melee + pistol + reserve ammo + 2 bandages within 20 m', () => {
+  it('loot floor per spawn: pistol + reserve ammo + 2 bandages within 20 m', () => {
     for (const sp of gen.spawns) {
       const items = gen.spawnFloorItems.filter((gi) => gi.id.startsWith(`spawn${sp.index}-`));
-      expect(items).toHaveLength(5);
+      expect(items).toHaveLength(4);
       const kinds = items.map((i) => i.item);
-      expect(kinds.filter((k) => k === 'machete' || k === 'spear')).toHaveLength(1);
+      expect(kinds).not.toContain('knife');
       expect(kinds.filter((k) => k === 'pistol')).toHaveLength(1);
       expect(kinds.filter((k) => k === 'pistolAmmo')).toHaveLength(1);
       expect(kinds.filter((k) => k === 'bandageItem')).toHaveLength(2);
