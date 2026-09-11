@@ -45,6 +45,7 @@ export interface TerrainParams {
   seed: number;
   plateauAngle: number; // where the highground POI sits
   bunkerAngle: number; // deterministic pad + entrance orientation
+  wreckAngle: number;
 }
 
 export function terrainParams(seed: number): TerrainParams {
@@ -63,6 +64,7 @@ export function terrainParams(seed: number): TerrainParams {
     seed: deriveSeed(seed, 'terrain'),
     plateauAngle: a,
     bunkerAngle,
+    wreckAngle: spawnRing + Math.PI * 0.34,
   };
 }
 
@@ -122,6 +124,9 @@ export function sampleHeight(p: TerrainParams, x: number, z: number): number {
   const bunkerDistance = Math.hypot(x - bunker.x, z - bunker.z);
   const bunkerBlend = 1 - smoothstep(7.5, 12, bunkerDistance);
   h = lerp(h, naturalHeight(p, bunker.x, bunker.z), bunkerBlend);
+  const wreckX = Math.cos(p.wreckAngle) * 88, wreckZ = Math.sin(p.wreckAngle) * 88;
+  const wreckBlend = 1 - smoothstep(10, 14, Math.hypot(x - wreckX, z - wreckZ));
+  h = lerp(h, naturalHeight(p, wreckX, wreckZ), wreckBlend);
   return h;
 }
 

@@ -2,6 +2,7 @@
 // suggested Kenney asset pack: all art is generated — zero downloads).
 // Terrain is meshed in 8×8 chunks of 32 m (§5); vegetation is instanced.
 import * as THREE from 'three';
+import { buildWreck } from './wreck-model';
 import {
   CHUNK_SIZE, CHUNKS_PER_SIDE, ISLAND_LAND_RADIUS, TERRAIN_CELL, WORLD_HALF,
 } from '@shared/constants';
@@ -101,8 +102,10 @@ export class World {
   private torchLights: THREE.PointLight[] = [];
   private colliderDebug: THREE.Group | null = null;
   private readonly auditReport: WorldAuditReport;
+  private wreckSail: THREE.Mesh | null = null;
+  private grassRest: Float32Array | null = null;
 
-  constructor(readonly gen: WorldGen) {
+  constructor(readonly gen: WorldGen, private reducedMotion = false) {
     this.auditReport = auditWorld(gen);
     this.fog = new THREE.Fog(DAY_FOGC.clone(), 10, 120);
     this.scene.fog = this.fog;
@@ -126,6 +129,12 @@ export class World {
     this.buildTerrain();
     this.water = this.buildWater();
     this.buildVegetation();
+    if (this.grassMesh) {
+      // Clone before deformation: loader geometry is shared with future matches.
+      this.grassMesh.geometry = this.grassMesh.geometry.clone();
+      this.grassMesh.geometry.userData.assetShared = false;
+      this.grassRest = Float32Array.from(this.grassMesh.geometry.attributes.position.array);
+    }
     this.buildRuins();
     this.buildLandmarks();
     this.buildNightTorches();
@@ -181,7 +190,7 @@ export class World {
   }
 
   private buildWater(): THREE.Mesh {
-    const geo = new THREE.PlaneGeometry(900, 900, 1, 1);
+    const geo = new THREE.PlaneGeometry(900, 900, 80, 80);
     const mat = new THREE.MeshLambertMaterial({
       color: 0x2a6d9e, transparent: true, opacity: 0.82,
     });
@@ -601,7 +610,7 @@ export class World {
 
   private buildLandmarks(): void {
     const compactModels = new Map(this.gen.pois.map((poi) => (
-      [poi.id, gameAssets.cloneLandmark(poi.id)] as const
+      [poi.id, poi.id === 'wreck' ? buildWreck() : gameAssets.cloneLandmark(poi.id)] as const
     )));
     const needsFallback = [...compactModels.values()].some((model) => !model);
     const materials: Record<'wood' | 'metal' | 'stone', THREE.MeshLambertMaterial> | null = needsFallback ? {
@@ -624,6 +633,7 @@ export class World {
           poi.z,
         );
         compactModel.rotation.y = poi.structures[0]?.rotY ?? 0;
+        if (poi.id === 'wreck') this.wreckSail = compactModel.getObjectByName('wreck-torn-sail') as THREE.Mesh;
         for (const detail of barrels) {
           const barrel = gameAssets.cloneEnvironment('barrel');
           if (!barrel) break;
@@ -861,7 +871,34 @@ export class World {
   }
 
   /** Per-frame environment update from round time (fog §6.2, day/night, zone). */
-  update(t: number, zoneRadius: number, zoneTarget: number, authoritativeTimeOfDay?: number): void {
+  update(t: number, zoneRadius: number, zoneTarget: number, authoritativeTimeOfDay?: number, visualTime = t): void {
+    if (!this.reducedMotion) {
+      const waterPositions = this.water.geometry.attributes.position;
+      for (let i = 0; i < waterPositions.count; i++) {
+        const x = waterPositions.getX(i), z = waterPositions.getY(i);
+        waterPositions.setZ(i, Math.sin(x * 0.12 + visualTime * 0.7) * 0.055 + Math.cos(z * 0.16 - visualTime * 0.55) * 0.035);
+      }
+      waterPositions.needsUpdate = true;
+      this.water.geometry.computeVertexNormals();
+      if (this.wreckSail) {
+        const positions = this.wreckSail.geometry.attributes.position;
+        const rest = this.wreckSail.userData.restPositions as Float32Array;
+        for (let i = 0; i < positions.count; i++) {
+          const x = rest[i * 3], y = rest[i * 3 + 1];
+          positions.setZ(i, Math.sin(x * 2.1 + visualTime * 1.8) * 0.1 * (1.55 - y));
+        }
+        positions.needsUpdate = true;
+        this.wreckSail.geometry.computeVertexNormals();
+      }
+      if (this.grassMesh?.visible && this.grassRest) {
+        const positions = this.grassMesh.geometry.attributes.position;
+        for (let i = 0; i < positions.count; i++) {
+          const x = this.grassRest[i * 3], y = this.grassRest[i * 3 + 1];
+          positions.setX(i, x + Math.sin(visualTime * 1.45 + x * 2.8) * Math.max(0, y) ** 2 * 0.06);
+        }
+        positions.needsUpdate = true;
+      }
+    }
     const night = authoritativeTimeOfDay ?? timeOfDayAt(t, 1, this.lightingPreset ?? undefined);
     const fogDist = fogAt(t, 1, this.lightingPreset ?? undefined);
     this.fog.near = fogDist * 0.25;

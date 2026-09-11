@@ -12,6 +12,7 @@ import type { WorldGen } from './worldgen';
 export type RapierModule = typeof RAPIER;
 
 export interface Vec3 { x: number; y: number; z: number }
+export type ImpactSurface = 'wood' | 'stone' | 'metal' | 'sand' | 'flesh';
 export type PlayerHitRegion = 'body' | 'head';
 
 const CAPSULE_HALF = (PLAYER_HEIGHT - 2 * PLAYER_RADIUS) / 2; // 0.5
@@ -38,6 +39,8 @@ export interface RayHit {
   point: Vec3;
   playerId: string | null; // null → terrain / obstacle
   playerRegion?: PlayerHitRegion;
+  surface?: ImpactSurface;
+  normal?: Vec3;
 }
 
 export interface PhysicsStats {
@@ -120,6 +123,7 @@ export class GamePhysics {
   private players = new Map<string, RAPIER.Collider>();
   private handleToPlayer = new Map<number, string>();
   private resourceColliders = new Map<number, RAPIER.Collider>();
+  private impactSurfaces = new Map<number, ImpactSurface>();
   private playerPoses = new Map<string, PlayerPose>();
   private sneakingPlayers = new Set<string>();
   private pronePlayers = new Set<string>();
@@ -127,6 +131,7 @@ export class GamePhysics {
   // solid for raycasts (no shooting through decks/ramps), but excluded from
   // character movement, which uses the walk-surface snapping below instead
   private walkSurfaceHandles = new Set<number>();
+  private deckUndersides = new Map<number, number>();
 
   constructor(R: RapierModule, gen: WorldGen, grid?: Float32Array) {
     this.R = R;
@@ -134,10 +139,11 @@ export class GamePhysics {
 
     const heights = toRapierHeights(grid ?? buildHeightGrid(gen.params));
     const sub = TERRAIN_VERTS - 1;
-    this.world.createCollider(
+    const terrainCollider = this.world.createCollider(
       R.ColliderDesc.heightfield(sub, sub, heights, { x: WORLD_SIZE, y: 1, z: WORLD_SIZE })
         .setTranslation(0, 0, 0),
     );
+    this.impactSurfaces.set(terrainCollider.handle, 'sand');
 
     // static obstacles: tree trunks + rocks + authored landmark primitives.
     for (const v of gen.vegetation) {
@@ -147,6 +153,7 @@ export class GamePhysics {
         R.ColliderDesc.cylinder(h / 2, v.colliderRadius).setTranslation(v.x, v.y + h / 2, v.z),
       );
       this.resourceColliders.set(v.id, collider);
+      this.impactSurfaces.set(collider.handle, v.kind === 'tree' ? 'wood' : 'stone');
     }
     for (const structure of gen.centralStructures) {
       if (structure.shape === 'cylinder') {
@@ -169,6 +176,7 @@ export class GamePhysics {
             .setRotation(quatFromYawPitch(structure.rotY, structure.rotX)),
         );
         this.walkSurfaceHandles.add(surfaceCol.handle);
+        if (Math.abs(structure.rotX) < 0.001) this.deckUndersides.set(surfaceCol.handle, structure.y - structure.h / 2);
         continue;
       }
       this.world.createCollider(
@@ -194,13 +202,16 @@ export class GamePhysics {
               .setRotation(quatFromYawPitch(s.rotY, s.rotX ?? 0)),
           );
           this.walkSurfaceHandles.add(surfaceCol.handle);
+          if (Math.abs(s.rotX ?? 0) < 0.001) this.deckUndersides.set(surfaceCol.handle, poiBaseY + (s.yOffset ?? 0));
+          this.impactSurfaces.set(surfaceCol.handle, s.material);
           continue;
         }
-        this.world.createCollider(
+        const collider = this.world.createCollider(
           R.ColliderDesc.cuboid(s.w / 2, s.h / 2, s.d / 2)
             .setTranslation(s.x, poiBaseY + (s.yOffset ?? 0) + s.h / 2, s.z)
             .setRotation(quatFromYawPitch(s.rotY, s.rotX ?? 0)),
         );
+        this.impactSurfaces.set(collider.handle, s.material);
       }
     }
 
@@ -291,10 +302,12 @@ export class GamePhysics {
   moveCharacter(id: string, disp: Vec3): { pos: Vec3; grounded: boolean } {
     const col = this.players.get(id);
     if (!col) throw new Error(`no collider for ${id}`);
+    const previousFeetY = col.translation().y - this.playerCapsuleCenter(id);
     this.controller.computeColliderMovement(
       col, disp, undefined, undefined,
       (other) => !this.handleToPlayer.has(other.handle)
-        && !this.walkSurfaceHandles.has(other.handle),
+        && (!this.walkSurfaceHandles.has(other.handle)
+          || previousFeetY < (this.deckUndersides.get(other.handle) ?? -Infinity) - 0.6),
     );
     const mv = this.controller.computedMovement();
     const cur = col.translation();
@@ -343,7 +356,7 @@ export class GamePhysics {
     const direction = { x: dir.x / dirLength, y: dir.y / dirLength, z: dir.z / dirLength };
     const ray = new this.R.Ray(origin, direction);
     const excludedIds = new Set(excludePlayerIds ?? []);
-    const hit = this.world.castRay(
+    const hit = this.world.castRayAndGetNormal(
       ray, maxDist, true, undefined, undefined, undefined, undefined,
       (c) => {
         const playerId = this.handleToPlayer.get(c.handle);
@@ -375,6 +388,9 @@ export class GamePhysics {
       dist: closestDist,
       point: { x: point.x, y: point.y, z: point.z },
       playerId,
+      surface: playerId ? 'flesh' : hit ? this.impactSurfaces.get(hit.collider.handle) ?? 'stone' : 'stone',
+      normal: playerId ? { x: -direction.x, y: -direction.y, z: -direction.z }
+        : hit ? { x: hit.normal.x, y: hit.normal.y, z: hit.normal.z } : { x: 0, y: 1, z: 0 },
       ...(playerRegion ? { playerRegion } : {}),
     };
   }
@@ -401,6 +417,8 @@ export class GamePhysics {
   /** Release the WASM allocation when leaving or restarting a match. */
   dispose(): void {
     this.resourceColliders.clear();
+    this.impactSurfaces.clear();
+    this.deckUndersides.clear();
     this.players.clear();
     this.handleToPlayer.clear();
     this.playerPoses.clear();

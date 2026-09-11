@@ -11,6 +11,7 @@ import {
   bunkerCenter, isOnLand, plateauCenter, sampleHeight, terrainParams, TerrainParams, RUINS_RADIUS,
 } from './terrain';
 import landmarkColliderManifest from './landmark-colliders.json';
+import { WRECK_PARTS } from './wreck';
 import middleIslandManifest from './middle-island.json';
 
 export type CrateTier = 'common' | 'good' | 'top';
@@ -177,7 +178,7 @@ function landmarkStructures(
 ): PoiStructure[] {
   const material: PoiStructure['material'] = id === 'wreck' || id === 'watchtower' ? 'wood' : 'stone';
   const c = Math.cos(rootYaw), s = Math.sin(rootYaw);
-  return LANDMARK_COLLIDERS[id].colliders.map((collider) => {
+  return (id === 'wreck' ? WRECK_PARTS : LANDMARK_COLLIDERS[id].colliders).map((collider) => {
     const [lx, cy, lz] = collider.center;
     const [w, h, d] = collider.size;
     return {
@@ -189,7 +190,7 @@ function landmarkStructures(
       rotY: rootYaw + collider.yaw,
       rotX: collider.pitch ?? 0,
       walkSurface: collider.walkSurface ?? false,
-      material,
+      material: id === 'wreck' && collider.name.includes('rail') ? 'metal' : material,
       collider: true,
     };
   });
@@ -264,8 +265,8 @@ function buildNavigationLights(spawns: SpawnPoi[], pois: LandmarkPoi[]): Placeme
     const length = Math.max(1, Math.hypot(poi.x, poi.z));
     const outwardX = poi.x / length, outwardZ = poi.z / length;
     const tangentX = -outwardZ, tangentZ = outwardX;
-    const forward = poi.id === 'watchtower' ? 7 : poi.id === 'bunker' ? 4.4 : 0;
-    const spread = poi.id === 'wreck' ? 4.6 : 2.25;
+    const forward = poi.id === 'watchtower' ? 7 : poi.id === 'bunker' ? 4.4 : -5;
+    const spread = poi.id === 'wreck' ? 8.5 : 2.25;
     for (const side of [-1, 1]) {
       positions.push({
         x: poi.x + outwardX * forward + tangentX * spread * side,
@@ -538,7 +539,7 @@ export function generateWorld(seed: number, n: number): WorldGen {
     const count = 2 + Math.floor(propRng() * 2);
     for (let index = 0; index < count; index++) {
       const angle = propRng() * Math.PI * 2;
-      const distance = randRange(propRng, 3.2, 4.8);
+      const distance = poi.id === 'wreck' ? randRange(propRng, 8, 10) : randRange(propRng, 3.2, 4.8);
       const scale = randRange(propRng, 0.92, 1.08);
       const point = requiredNearbySpot(
         placement,
@@ -546,8 +547,8 @@ export function generateWorld(seed: number, n: number): WorldGen {
         poi.z + Math.sin(angle) * distance,
         DECORATION_RADIUS.barrel * scale,
         propRng() * Math.PI * 2,
-        4,
-        (x, z) => isOnLand(params, x, z) && Math.hypot(x - poi.x, z - poi.z) <= 8,
+        poi.id === 'wreck' ? 8 : 4,
+        (x, z) => isOnLand(params, x, z) && Math.hypot(x - poi.x, z - poi.z) <= (poi.id === 'wreck' ? 12 : 8),
         `${poi.id} barrel ${index} seed ${seed}`,
       );
       decorations.push({
@@ -570,7 +571,7 @@ export function generateWorld(seed: number, n: number): WorldGen {
     if (Math.hypot(x, z) < RUINS_RADIUS + 4) return false;
     for (const sp of spawns) if (Math.hypot(x - sp.x, z - sp.z) < 5) return false;
     for (const poi of pois) {
-      const clearRadius = poi.id === 'wreck' ? 8 : poi.id === 'watchtower' ? 12 : 10.5;
+      const clearRadius = poi.id === 'wreck' ? 11.5 : poi.id === 'watchtower' ? 12 : 10.5;
       if (Math.hypot(x - poi.x, z - poi.z) < clearRadius) return false;
     }
     return true;

@@ -232,6 +232,7 @@ export function auditWorld(gen: WorldGen): WorldAuditReport {
 
   const walkSurfaces = boxes.filter((box) => box.walkSurface);
   for (const ramp of walkSurfaces) {
+    if (Math.abs(ramp.pitch) < 0.001) continue; // flat decks have no ramp joins
     const [low, high] = rampEndpoints(ramp);
     const lowGround = sampleHeight(gen.params, low.x, low.z);
     const lowSupport = solids
@@ -243,7 +244,7 @@ export function auditWorld(gen: WorldGen): WorldAuditReport {
         message: `Unterer Rampenanschluss weicht ${(low.y - lowSupport).toFixed(2)} m ab.`,
       });
     }
-    const highSupport = solids
+    const highSupport = boxes.filter((box) => box !== ramp && Math.abs(box.pitch) < 0.001)
       .filter((solid) => containsXZ(solid, high.x, high.z, 0.5))
       .map((solid) => topY(solid))
       .reduce((best, candidate) =>

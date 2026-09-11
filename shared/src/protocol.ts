@@ -4,8 +4,9 @@ import type { BotDifficulty, ItemType, MatchMode, Recipe, ThrowKind, WeaponType 
 import type { CrateTier, VegKind } from './worldgen';
 import type { LightingPreset, Phase } from './timeline';
 import type { PlayerSkinId } from './multiplayer';
+import type { ImpactSurface, Vec3 } from './physics';
 
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 // ---------- lobby ----------
 export interface PlayerProfileMsg {
@@ -168,6 +169,10 @@ export interface InputMsg {
 
 // ---------- snapshot (host → clients, 20 Hz full state §8) ----------
 export interface SnapPlayer {
+  coyoteTime?: number;
+  jumpBuffer?: number;
+  jumpHeld?: boolean;
+  sprintExhausted?: boolean;
   id: string;
   /** Stable display name for spectator labels and the in-round roster. */
   name: string;
@@ -269,7 +274,7 @@ export type GameEvent =
   | { type: 'helmetBreak'; target: string; attacker: string | null }
   | { type: 'death'; target: string; attacker: string | null; cause: 'weapon' | 'zone' | 'grenade'; weapon?: WeaponType; distance?: number; attackerHp?: number; headshot?: boolean; finalDamage?: number }
   | { type: 'kill'; killer: string | null; victim: string; weapon: WeaponType | 'zone' }
-  | { type: 'shot'; by: string; weapon: WeaponType; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; primary?: boolean; hx?: number; hy?: number; hz?: number }
+  | { type: 'shot'; by: string; weapon: WeaponType; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; primary?: boolean; hx?: number; hy?: number; hz?: number; surface?: ImpactSurface; normal?: Vec3 }
   | { type: 'melee'; by: string; weapon: WeaponType }
   | { type: 'explosion'; x: number; y: number; z: number; radius: number }
   | { type: 'pickupSpawn'; pickup: PickupInfo }

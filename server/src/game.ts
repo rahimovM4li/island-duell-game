@@ -1370,7 +1370,10 @@ export class GameRoom {
         ox: eye.x, oy: eye.y, oz: eye.z, dx: dir.x, dy: dir.y, dz: dir.z,
         primary: i === 0,
       };
-      if (hit) { ev.hx = hit.point.x; ev.hy = hit.point.y; ev.hz = hit.point.z; }
+      if (hit) {
+        ev.hx = hit.point.x; ev.hy = hit.point.y; ev.hz = hit.point.z;
+        ev.surface = hit.surface; ev.normal = hit.normal;
+      }
       if (i === 0 || (hit && hit.playerId)) events.push(ev);
       if (hit?.playerId) {
         const target = this.players.get(hit.playerId);
@@ -2264,6 +2267,10 @@ export class GameRoom {
       shield: p.inv.shield,
       helmet: p.inv.helmet,
       stamina: round3(p.move.stamina),
+      coyoteTime: p.move.coyoteTime,
+      jumpBuffer: p.move.jumpBuffer,
+      jumpHeld: p.move.jumpHeld,
+      sprintExhausted: p.move.sprintExhausted,
       vx: round3(p.move.velX),
       vy: round3(p.move.velY),
       vz: round3(p.move.velZ),

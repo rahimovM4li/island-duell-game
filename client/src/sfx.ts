@@ -5,6 +5,7 @@ import { distanceAttenuation } from './surface-audio';
 
 export type SfxName =
   | 'pistol' | 'rifle' | 'shotgun' | 'sniper' | 'melee' | 'explosion'
+  | 'impactWood' | 'impactStone' | 'impactMetal' | 'impactSand'
   | 'smokePop' | 'flashBang' | 'flashTinnitus' | 'grenadeBeep'
   | 'hit' | 'headshot' | 'shieldHit' | 'shieldBreak' | 'helmetBreak' | 'hurt'
   | 'pickup' | 'pickupWeapon' | 'pickupAmmo'
@@ -165,6 +166,10 @@ export class Sfx {
       case 'pickupHeal': tone(hz(520), 0.12, 0.18 * level, 'sine', 120); tone(hz(760), 0.16, 0.12 * level, 'sine', 80); break;
       case 'pickupArmor': noise(0.07, hz(1200), 0.2 * level); tone(hz(240), 0.13, 0.18 * level, 'triangle', -40); break;
       case 'reload': noise(0.045, hz(1600), 0.16 * level); tone(hz(360), 0.07, 0.11 * level, 'square', 80); break;
+      case 'impactWood': noise(0.075, hz(1150), 0.2 * level); tone(hz(180), 0.08, 0.08 * level, 'triangle', -70); break;
+      case 'impactStone': noise(0.09, hz(2300), 0.18 * level); tone(hz(320), 0.035, 0.045 * level, 'triangle', -100); break;
+      case 'impactMetal': noise(0.035, hz(3800), 0.14 * level); tone(hz(1450), 0.16, 0.09 * level, 'sine', -240); break;
+      case 'impactSand': noise(0.13, hz(650), 0.16 * level); break;
       case 'heal': tone(hz(520), 0.25, 0.2 * level, 'sine', 180); break;
       case 'craft': tone(hz(440), 0.1, 0.25 * level, 'square'); tone(hz(660), 0.12, 0.2 * level, 'square'); break;
       case 'zone': tone(hz(140), 0.6, 0.3 * level, 'sawtooth', 40); break;

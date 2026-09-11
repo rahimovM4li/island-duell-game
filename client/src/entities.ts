@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { WEAPONS, type WeaponType } from '@shared/constants';
 import { PLAYER_SKINS } from '@shared/multiplayer';
 import type { PickupInfo, SmokeSnap, SnapProjectile } from '@shared/protocol';
+import type { ImpactSurface, Vec3 } from '@shared/physics';
 import { deriveSeed, mulberry32, type Rng } from '@shared/rng';
 import {
   CharacterAnimationStateMachine,
@@ -14,6 +15,7 @@ import {
 import { gameAssets, isSharedAssetResource } from './game-assets';
 import { droppedPickupPose } from './pickup-drop-animation';
 import { shouldShowSpectatorLabel } from './spectator-labels';
+import { firstPersonWeapon, reloadPose } from './first-person-weapon';
 
 const PLAYER_COLORS = PLAYER_SKINS.map((skin) => skin.color);
 const HIT_FLASH_BODY = new THREE.Color(0xffffff);
@@ -48,6 +50,14 @@ interface PlayerRig {
   locomotion: LocomotionState;
   action: CharacterAction;
   speed: number;
+  strideYaw?: number;
+  strideTarget?: number;
+  backwards?: boolean;
+  lean?: number;
+  leanTarget?: number;
+  legLeftY?: number;
+  legRightY?: number;
+  reloadElapsed?: number;
   grounded: boolean;
   sprinting: boolean;
   sneaking: boolean;
@@ -484,12 +494,13 @@ function spectatorNameLabel(playerName: string): THREE.Sprite {
 
 function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Group {
   const g = new THREE.Group();
-  if (weapon !== 'fists' && weapon !== 'none') g.add(weaponModel(weapon));
+  if (weapon !== 'fists' && weapon !== 'none') g.add(firstPersonWeapon(weapon) ?? weaponModel(weapon));
 
   const addHand = (
     x: number, y: number, z: number, mirrored = false, yaw = 0,
   ): THREE.Group => {
     const hand = viewHandModel(skinColor);
+    hand.name = mirrored ? 'support-hand' : 'trigger-hand';
     hand.position.set(x, y, z);
     hand.rotation.y = yaw;
     if (mirrored) hand.scale.x = -1;
@@ -502,10 +513,11 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
     right.rotation.z = 0.12;
   } else if (weapon !== 'none') {
     addHand(0.02, -0.08, 0.035);
-    if (weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper' || weapon === 'spear') {
-      const supportZ = weapon === 'sniper' ? -0.70 : weapon === 'spear' ? -0.58 : -0.55;
+    if (weapon === 'pistol' || weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper' || weapon === 'spear') {
+      const supportZ = weapon === 'pistol' ? 0.01 : weapon === 'sniper' ? -0.70 : weapon === 'spear' ? -0.58 : -0.55;
       const support = addHand(-0.13, -0.035, supportZ, true, -0.12);
       support.rotation.z = -0.18;
+      support.userData.restPosition = support.position.clone();
     }
   }
 
@@ -582,6 +594,11 @@ export class Entities {
   private kickT = 1;  // fire recoil
   private aiming = false;
   private aimBlend = 0;
+  private sprintBlend = 0;
+  private viewSpeed = 0;
+  private viewSprinting = false;
+  private viewGrounded = true;
+  private stridePhase = 0;
   private reloadT = -1;
   private reloadDuration = 1;
   private weaponSwitchT = -1;
@@ -760,6 +777,8 @@ export class Entities {
     if (rig.forearmRight && rig.forearmRightBase) rig.forearmRight.rotation.copy(rig.forearmRightBase);
     rig.legLeft.rotation.copy(rig.legLeftBase);
     rig.legRight.rotation.copy(rig.legRightBase);
+    if (rig.legLeftY !== undefined) rig.legLeft.position.y = rig.legLeftY;
+    if (rig.legRightY !== undefined) rig.legRight.position.y = rig.legRightY;
     rig.head.rotation.copy(rig.headBase);
     rig.helmet.rotation.copy(rig.headBase);
   }
@@ -886,6 +905,8 @@ export class Entities {
     helmetEquipped = false,
     motion: {
       speed?: number;
+      vx?: number;
+      vz?: number;
       grounded?: boolean;
       sprinting?: boolean;
       reloading?: boolean;
@@ -918,10 +939,19 @@ export class Entities {
     rig.baseY = y;
     rig.group.rotation.y = yaw;
     rig.speed = Math.max(0, motion.speed ?? rig.speed);
+    const localSide = (motion.vx ?? 0) * Math.cos(yaw) - (motion.vz ?? 0) * Math.sin(yaw);
+    const localForward = -(motion.vx ?? 0) * Math.sin(yaw) - (motion.vz ?? 0) * Math.cos(yaw);
+    rig.backwards = localForward < -0.1;
+    let strideTarget = Math.atan2(-localSide, localForward);
+    if (strideTarget > Math.PI / 2) strideTarget -= Math.PI;
+    if (strideTarget < -Math.PI / 2) strideTarget += Math.PI;
+    rig.strideTarget = rig.speed > 0.3 && !prone ? strideTarget : 0;
+    rig.leanTarget = THREE.MathUtils.clamp(-localSide * 0.012, -0.09, 0.09);
     rig.grounded = motion.grounded ?? rig.grounded;
     rig.sprinting = motion.sprinting ?? false;
     rig.sneaking = sneaking;
     rig.prone = prone;
+    if (!rig.reloading || !motion.reloading) rig.reloadElapsed = 0;
     rig.reloading = motion.reloading ?? false;
     rig.blindedTarget = Math.max(0, Math.min(1, motion.flashIntensity ?? 0));
     rig.aiming = aiming;
@@ -1091,6 +1121,10 @@ export class Entities {
       if (rig.forearmRight && rig.forearmRightBase) rig.forearmRight.rotation.copy(rig.forearmRightBase);
       rig.legLeft.rotation.copy(rig.legLeftBase);
       rig.legRight.rotation.copy(rig.legRightBase);
+      if (rig.legLeftY !== undefined) rig.legLeft.position.y = rig.legLeftY;
+      if (rig.legRightY !== undefined) rig.legRight.position.y = rig.legRightY;
+      rig.strideYaw = rig.strideTarget = rig.lean = rig.leanTarget = 0;
+      rig.reloadElapsed = 0;
       rig.head.rotation.copy(rig.headBase);
       rig.helmet.rotation.copy(rig.headBase);
       rig.lookPitch = 0;
@@ -1296,22 +1330,26 @@ export class Entities {
     this.fx.push({ obj: light, life: 0.25, maxLife: 0.25, lightIntensity: 30 });
   }
 
-  addImpact(x: number, y: number, z: number, weapon: WeaponType): void {
-    const color = weapon === 'rifle' ? 0xc7a4ff : weapon === 'shotgun' ? 0xffa66f : 0xffe2a0;
-    for (let i = 0; i < 5; i++) {
+  addImpact(x: number, y: number, z: number, _weapon: WeaponType, surface: ImpactSurface = 'stone', normal: Vec3 = { x: 0, y: 1, z: 0 }): void {
+    if (this.fx.length > 200 || surface === 'flesh') return;
+    const colors = { wood: 0xb18a54, stone: 0xaaa99b, metal: 0xffd287, sand: 0xc6af7e };
+    const dust = surface === 'sand' || surface === 'stone';
+    const lifetime = dust ? 0.45 : surface === 'wood' ? 0.38 : 0.2;
+    const count = this.reducedMotion ? 3 : 7;
+    for (let i = 0; i < count; i++) {
       const spark = new THREE.Mesh(
-        new THREE.BoxGeometry(0.035, 0.035, 0.09),
-        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 }),
+        dust ? new THREE.IcosahedronGeometry(0.065, 0) : new THREE.BoxGeometry(0.025, 0.025, surface === 'wood' ? 0.15 : 0.08),
+        new THREE.MeshBasicMaterial({ color: colors[surface], transparent: true, opacity: 0.8, depthWrite: false }),
       );
       spark.position.set(x, y, z);
       const velocity = new THREE.Vector3(
-        (this.rng() - 0.5) * 2.8,
-        0.5 + this.rng() * 1.9,
-        (this.rng() - 0.5) * 2.8,
+        normal.x * 1.7 + (this.rng() - 0.5) * 2,
+        normal.y * 1.7 + this.rng() * 1.3,
+        normal.z * 1.7 + (this.rng() - 0.5) * 2,
       );
       spark.lookAt(spark.position.clone().add(velocity));
       this.scene.add(spark);
-      this.fx.push({ obj: spark, life: 0.18, maxLife: 0.18, velocity });
+      this.fx.push({ obj: spark, life: lifetime, maxLife: lifetime, velocity, expand: dust ? 2 : undefined, spin: surface === 'wood' ? 8 : undefined });
     }
   }
 
@@ -1371,6 +1409,12 @@ export class Entities {
   }
 
   setAiming(aiming: boolean): void { this.aiming = aiming; }
+
+  setViewMotion(speed: number, sprinting: boolean, grounded: boolean): void {
+    this.viewSpeed = speed;
+    this.viewSprinting = sprinting;
+    this.viewGrounded = grounded;
+  }
 
   setReloading(reloading: boolean, duration = 1): void {
     if (reloading) {
@@ -1499,11 +1543,12 @@ export class Entities {
           actionArmLeftX = -Math.sin(phase * Math.PI) * 0.08;
           actionArmRightX = -Math.sin(phase * Math.PI) * 0.1;
         } else if (rig.action === 'reload') {
-          const reloadWave = Math.sin(time * 8.5);
-          actionArmLeftX = 0.3 + reloadWave * 0.12;
-          actionArmRightX = -0.18 - reloadWave * 0.08;
+          rig.reloadElapsed = (rig.reloadElapsed ?? 0) + dt;
+          const reload = reloadPose(Math.min(0.99, rig.reloadElapsed / (WEAPONS[rig.currentWeapon ?? 'pistol'].reloadTime ?? 1)));
+          actionArmLeftX = 0.25 + reload.reach * 0.4 + reload.magazine * 0.3;
+          actionArmRightX = -0.2;
           actionWeaponPitch = 0.28;
-          actionWeaponRoll = -0.35 + reloadWave * 0.08;
+          actionWeaponRoll = -0.35;
         } else if (rig.action === 'aim' && !rig.prone) {
           actionArmLeftX = 0.28;
           actionArmRightX = 0.34;
@@ -1511,10 +1556,12 @@ export class Entities {
 
         rig.group.scale.set(1, pose.rootScaleY, 1);
         rig.group.rotation.x = pose.rootPitch;
-        rig.group.rotation.z = pose.rootRoll + actionRootRoll;
+        rig.lean = THREE.MathUtils.lerp(rig.lean ?? 0, rig.leanTarget ?? 0, 1 - Math.exp(-dt * 9));
+        rig.group.rotation.z = pose.rootRoll + actionRootRoll + (rig.prone ? 0 : rig.lean);
         rig.group.position.y = rig.baseY + pose.rootHeight;
-        rig.armLeft.rotation.x = rig.armLeftBase.x + pose.armLeftX + actionArmLeftX;
-        rig.armRight.rotation.x = rig.armRightBase.x + pose.armRightX + actionArmRightX;
+        const armSwing = rig.currentWeapon !== 'fists' && !rig.sprinting && !rig.prone ? 0.15 : 1;
+        rig.armLeft.rotation.x = rig.armLeftBase.x + pose.armLeftX * armSwing + actionArmLeftX;
+        rig.armRight.rotation.x = rig.armRightBase.x + pose.armRightX * armSwing + actionArmRightX;
         rig.armLeft.rotation.z = rig.armLeftBase.z + pose.armLeftZ;
         rig.armRight.rotation.z = rig.armRightBase.z + pose.armRightZ;
         if (rig.forearmLeft && rig.forearmLeftBase) {
@@ -1523,8 +1570,18 @@ export class Entities {
         if (rig.forearmRight && rig.forearmRightBase) {
           rig.forearmRight.rotation.x = rig.forearmRightBase.x + pose.forearmRightX;
         }
-        rig.legLeft.rotation.x = rig.legLeftBase.x + pose.legLeftX;
-        rig.legRight.rotation.x = rig.legRightBase.x + pose.legRightX;
+        rig.strideYaw = THREE.MathUtils.lerp(rig.strideYaw ?? 0, rig.strideTarget ?? 0, 1 - Math.exp(-dt * 12));
+        const strideSign = rig.backwards && !rig.prone ? -1 : 1;
+        rig.legLeft.rotation.y = rig.legLeftBase.y + rig.strideYaw;
+        rig.legRight.rotation.y = rig.legRightBase.y + rig.strideYaw;
+        rig.legLeft.rotation.x = rig.legLeftBase.x + pose.legLeftX * strideSign;
+        rig.legRight.rotation.x = rig.legRightBase.x + pose.legRightX * strideSign;
+        rig.legLeftY ??= rig.legLeft.position.y;
+        rig.legRightY ??= rig.legRight.position.y;
+        // Preserve boot height during the contact half of the stride. The other foot lifts.
+        const contact = rig.grounded && !rig.prone && !rig.sneaking;
+        rig.legLeft.position.y = rig.legLeftY + (contact ? -0.83 * (1 - Math.cos(pose.legLeftX)) + Math.max(0, -pose.legLeftX) * 0.12 : 0);
+        rig.legRight.position.y = rig.legRightY + (contact ? -0.83 * (1 - Math.cos(pose.legRightX)) + Math.max(0, -pose.legRightX) * 0.12 : 0);
         rig.legLeft.rotation.z = rig.legLeftBase.z + pose.legLeftZ;
         rig.legRight.rotation.z = rig.legRightBase.z + pose.legRightZ;
         const headPitch = rig.headBase.x - rig.lookPitch * 0.8 + pose.headLift;
@@ -1553,10 +1610,12 @@ export class Entities {
     }
     this.swingT = Math.min(1, this.swingT + dt * 3.2);
     this.kickT = Math.min(1, this.kickT + dt * 7);
-    this.aimBlend += ((this.aiming ? 1 : 0) - this.aimBlend) * (1 - Math.exp(-dt * 14));
+    this.aimBlend += ((this.aiming && this.reloadT < 0 ? 1 : 0) - this.aimBlend) * (1 - Math.exp(-dt * 14));
+    this.sprintBlend += ((this.viewSprinting && !this.aiming && this.reloadT < 0 ? 1 : 0) - this.sprintBlend) * (1 - Math.exp(-dt * 12));
+    this.stridePhase += this.viewSpeed * dt * 1.9;
     this.viewRoot.position.set(
       THREE.MathUtils.lerp(0.38, 0, this.aimBlend),
-      THREE.MathUtils.lerp(-0.38, -0.255, this.aimBlend),
+      THREE.MathUtils.lerp(-0.38, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
       THREE.MathUtils.lerp(-0.72, -0.57, this.aimBlend),
     );
     if (this.viewWeapon) {
@@ -1570,9 +1629,10 @@ export class Entities {
       let switchDrop = 0;
       let switchRoll = 0;
       let switchSide = 0;
+      let progress = -1;
       if (this.reloadT >= 0) {
         this.reloadT += dt;
-        const progress = Math.min(1, this.reloadT / this.reloadDuration);
+        progress = Math.min(1, this.reloadT / this.reloadDuration);
         reloadDrop = Math.sin(progress * Math.PI);
         reloadRoll = Math.sin(progress * Math.PI * 2) * 0.18 - reloadDrop * 0.55;
         if (progress >= 1) this.reloadT = -1;
@@ -1587,11 +1647,32 @@ export class Entities {
         if (progress >= 1) this.weaponSwitchT = -1;
       }
       this.viewWeapon.rotation.x = (baseRotation?.x ?? 0) - swing * 0.9 + reloadDrop * 0.35;
-      this.viewWeapon.rotation.y = baseRotation?.y ?? -0.08;
+      this.viewWeapon.rotation.y = (baseRotation?.y ?? -0.08) * (1 - this.aimBlend);
       this.viewWeapon.rotation.z = (baseRotation?.z ?? 0) + reloadRoll + switchRoll;
-      this.viewWeapon.position.x = reloadDrop * 0.08 + switchSide;
+      this.viewWeapon.position.x = -reloadDrop * 0.18 + switchSide;
       this.viewWeapon.position.z = swing * -0.25 + kick + reloadDrop * 0.04 + switchDrop * 0.2;
-      this.viewWeapon.position.y = Math.sin(time * 1.7) * 0.008 - reloadDrop * 0.16 - switchDrop;
+      this.viewWeapon.position.y = Math.sin(time * 1.7) * 0.008 + reloadDrop * 0.18 - switchDrop;
+      const mechanism = reloadPose(progress);
+      const magazine = this.viewWeapon.getObjectByName('moving-magazine');
+      const bolt = this.viewWeapon.getObjectByName('moving-bolt');
+      if (magazine) {
+        magazine.position.y = -mechanism.magazine * 0.52;
+        magazine.rotation.z = mechanism.magazine * -0.15;
+      }
+      if (bolt) bolt.position.z = mechanism.bolt * 0.13 + Math.sin(this.kickT * Math.PI) * 0.055;
+      const support = this.viewWeapon.getObjectByName('support-hand');
+      if (support) {
+        const rest = support.userData.restPosition as THREE.Vector3;
+        support.position.copy(rest);
+        support.position.z += mechanism.reach * (this.viewWeaponType === 'pistol' ? 0 : 0.33);
+        support.position.y -= mechanism.reach * 0.16 + mechanism.magazine * 0.4;
+        support.rotation.x = mechanism.bolt * -0.45;
+      }
+      const motion = this.reducedMotion ? 0 : (1 - this.aimBlend) * (this.viewGrounded ? Math.min(1, this.viewSpeed / 6) : 0);
+      this.viewWeapon.position.x += Math.sin(this.stridePhase) * 0.028 * motion;
+      this.viewWeapon.position.y += Math.cos(this.stridePhase * 2) * 0.018 * motion - this.sprintBlend * 0.08;
+      this.viewWeapon.rotation.x += this.sprintBlend * 0.32;
+      this.viewWeapon.rotation.z -= this.sprintBlend * 0.3;
     }
     for (let i = this.fx.length - 1; i >= 0; i--) {
       const f = this.fx[i];
@@ -1625,6 +1706,9 @@ export class Entities {
     switchCount: number;
     lastSwitchSameWeapon: boolean;
     switching: boolean;
+    reloadProgress: number;
+    magazineOffset: number;
+    boltOffset: number;
     hands: Array<{
       ndcMin: { x: number; y: number; z: number };
       ndcMax: { x: number; y: number; z: number };
@@ -1637,7 +1721,7 @@ export class Entities {
       ndcMax: { x: number; y: number; z: number };
     }> = [];
     this.viewWeapon?.traverse((object) => {
-      if (object.name !== 'view_hand_root') return;
+      if (object.name !== 'view_hand_root' && object.name !== 'trigger-hand' && object.name !== 'support-hand') return;
       const bounds = new THREE.Box3().setFromObject(object);
       const ndcMin = new THREE.Vector3(Infinity, Infinity, Infinity);
       const ndcMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
@@ -1661,6 +1745,9 @@ export class Entities {
       switchCount: this.weaponSwitchCount,
       lastSwitchSameWeapon: this.lastWeaponSwitchSameWeapon,
       switching: this.weaponSwitchT >= 0,
+      reloadProgress: this.reloadT < 0 ? -1 : Math.min(1, this.reloadT / this.reloadDuration),
+      magazineOffset: this.viewWeapon?.getObjectByName('moving-magazine')?.position.y ?? 0,
+      boltOffset: this.viewWeapon?.getObjectByName('moving-bolt')?.position.z ?? 0,
       hands,
     };
   }

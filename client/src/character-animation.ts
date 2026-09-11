@@ -114,7 +114,7 @@ export function sampleLocomotionPose(
       const doublePhase = Math.sin(t * rate * 2);
       const legAmount = (sprint ? 0.78 : 0.5) * movementScale;
       const armAmount = (sprint ? 0.58 : 0.38) * movementScale;
-      pose.rootHeight = Math.abs(doublePhase) * (sprint ? 0.055 : 0.032);
+      pose.rootHeight = -Math.abs(doublePhase) * (sprint ? 0.018 : 0.01);
       pose.rootPitch = sprint ? -0.11 : -0.025;
       pose.rootRoll = phase * (sprint ? 0.035 : 0.02);
       pose.legLeftX = phase * legAmount;
@@ -211,8 +211,15 @@ export class CharacterAnimationStateMachine {
       this.duration = transitionDuration(this.previous, this.current);
     }
     const safeDt = Math.max(0, dt);
-    this.stateTime += safeDt;
-    this.previousTime += safeDt;
+    // Integrate cadence; multiplying total elapsed time by live speed would
+    // jump the leg phase every time the player accelerates or stops.
+    const cadence = (state: LocomotionState): number => {
+      const reference = state === 'sprint' ? 9 : state === 'walk' ? 6
+        : state === 'sneak-walk' ? 3.2 : state === 'prone-crawl' ? 1.8 : 0;
+      return reference ? Math.max(0.2, intent.speed / reference) : 1;
+    };
+    this.stateTime += safeDt * cadence(this.current);
+    this.previousTime += safeDt * cadence(this.previous);
     this.transition = this.duration <= 0
       ? 1
       : Math.min(1, this.transition + safeDt / this.duration);

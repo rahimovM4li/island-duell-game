@@ -513,6 +513,7 @@ const diagnostics = {
     },
     input: {
       moveX: input.moveX, moveZ: input.moveZ, fire: input.fire, aim: input.aim,
+      yaw: input.yaw, pitch: input.pitch,
       sprint: input.sprint, sneak: input.sneak, interact: input.interact,
       dropRequestsSent,
     },
@@ -1420,7 +1421,7 @@ function onMatchStart(m: MatchStartMsg): void {
   });
 
   gen = generateWorld(m.seed, m.n);
-  world = new World(gen);
+  world = new World(gen, reduceMotion);
   world.setGraphicsQuality(settings.graphics);
   world.setColliderDebugVisible(showDebug);
   world.scene.add(camera);
@@ -1559,6 +1560,7 @@ function onSnapshot(m: SnapshotMsg): void {
       p.sneaking, p.prone, p.aiming, p.helmet,
       {
         speed: Math.hypot(p.vx, p.vz),
+        vx: p.vx, vz: p.vz,
         grounded: p.grounded,
         sprinting: p.sprinting,
         reloading: p.reloading,
@@ -1583,6 +1585,10 @@ function reconcile(self: SnapPlayer): void {
 
   // drop acknowledged inputs
   pending = pending.filter((i) => i.seq > self.lastSeq);
+  move.coyoteTime = self.coyoteTime ?? 0;
+  move.jumpBuffer = self.jumpBuffer ?? 0;
+  move.jumpHeld = self.jumpHeld ?? false;
+  move.sprintExhausted = self.sprintExhausted ?? false;
   if (forceAuthority) {
     move.pos = { x: self.x, y: self.y, z: self.z };
     move.velX = self.vx; move.velY = self.vy; move.velZ = self.vz;
@@ -1696,7 +1702,11 @@ function onEvent(e: GameEvent): void {
       else playSpatial(sound, e.ox, e.oy, e.oz);
       if (WEAPONS[w].kind === 'hitscan' && e.hx !== undefined && e.hy !== undefined && e.hz !== undefined) {
         entities?.addTracer(new THREE.Vector3(e.ox, e.oy, e.oz), new THREE.Vector3(e.hx, e.hy, e.hz));
-        entities?.addImpact(e.hx, e.hy, e.hz, w);
+        entities?.addImpact(e.hx, e.hy, e.hz, w, e.surface, e.normal);
+        if (e.surface && e.surface !== 'flesh' && e.primary !== false) {
+          const cue = { wood: 'impactWood', stone: 'impactStone', metal: 'impactMetal', sand: 'impactSand' } as const;
+          playSpatial(cue[e.surface], e.hx, e.hy, e.hz);
+        }
       }
       if (e.by === myId && e.primary !== false) entities?.addMuzzleFlash(camera);
       if (e.primary !== false) entities?.triggerPlayerFire(e.by);
@@ -1957,6 +1967,7 @@ function frame(): void {
   const aiming = roundRunning && alive && input.aim && aimable && !wasReloading;
   if (aiming) onboarding.signal('aim');
   entities.setAiming(aiming);
+  entities.setViewMotion(Math.hypot(move.velX, move.velZ), move.sprinting, move.grounded);
   $('hud').classList.toggle('aiming', aiming);
 
   // ---- sniper scope: hard zoom + overlay + breathing sway (§F1) ----
@@ -2148,6 +2159,7 @@ function frame(): void {
       snapP?.helmet ?? false,
       {
         speed: Math.hypot(snapP?.vx ?? 0, snapP?.vz ?? 0),
+        vx: snapP?.vx ?? 0, vz: snapP?.vz ?? 0,
         grounded: snapP?.grounded ?? true,
         sprinting: snapP?.sprinting ?? false,
         reloading: snapP?.reloading ?? false,
@@ -2210,7 +2222,7 @@ function frame(): void {
     roundRosterVisible,
   );
   if (lastSnap) {
-    world.update(t * matchPace, lastSnap.zone.radius, lastSnap.zone.targetRadius, lastSnap.timeOfDay);
+    world.update(t * matchPace, lastSnap.zone.radius, lastSnap.zone.targetRadius, lastSnap.timeOfDay, visualElapsed);
     entities.syncSmokes(lastSnap.smokes, t);
     hud.setTimer(t, lastSnap.phase);
     hud.setZoneInfo(lastSnap.zone, t);

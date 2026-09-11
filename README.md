@@ -66,6 +66,22 @@ erhalten; bei einem Host-Austritt übernimmt ein verbundener Spieler.
 | Leertaste / Strg / Shift (als Zuschauer) | Hoch / runter / schneller fliegen |
 
 Items am Boden werden durch Drüberlaufen aufgehoben.
+
+Das Movement bietet 100 ms Sprungpuffer vor der Landung und 100 ms Sprungtoleranz
+nach einer Kante. Für einen weiteren Sprung die Leertaste loslassen und erneut
+drücken. Nach vollständiger Erschöpfung regeneriert sich zuerst ein kleiner
+Ausdauervorrat, bevor Sprinten wieder möglich ist.
+
+Pistole, Gewehr, Schrotflinte und Sniper haben detaillierte Ego-Modelle mit
+beweglichem Magazin beziehungsweise Patrone und Verschluss. Die Stützhand folgt
+dem Nachladen; Zielen und Sprinten gehen weich ineinander über. Gegner richten
+ihre Beine zur Bewegung aus und halten den Oberkörper zum Ziel.
+
+Das Strandwrack besitzt einen offenen Heckzugang, einen Seiteneingang, Fracht
+als Deckung und ein erhöhtes Deck mit Rampe. Treffer erzeugen Holzsplitter,
+Steinstaub oder Metallfunken samt passendem räumlichem Ton. Wasser, Gras und das
+zerrissene Segel bewegen sich dezent; reduzierte Bewegung deaktiviert diese
+Umgebungsanimationen. Details und Prüfnachweise: [Gameplay-Upgrade](docs/gameplay-upgrade.md).
 Über **Einstellungen** im Hauptmenü oder Pause-Hinweis lassen sich Maus,
 Gesamt-/Effekt-/Schrittlautstärke, Kamerabewegung, Grafikqualität und die
 wichtigsten Tasten dauerhaft konfigurieren.
