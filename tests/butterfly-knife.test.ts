@@ -4,8 +4,35 @@ import { WEAPONS } from '@shared/constants';
 import { butterflyKnife, knifePose, KNIFE_DRAW_SECONDS } from '../client/src/butterfly-knife';
 import { Entities } from '../client/src/entities';
 import { viewWeaponForInventory } from '../client/src/weapon-switch';
+import { firstPersonHand } from '../client/src/first-person-hands';
 
 describe('permanent butterfly loadout', () => {
+  it('keeps the sleeve attached to the wrist throughout both attacks', () => {
+    const camera = new THREE.PerspectiveCamera(75, 16 / 9, 0.08, 400);
+    const entities = new Entities(new THREE.Scene(), camera, 42);
+    entities.setViewWeapon('knife');
+    entities.update(1, 1);
+    for (const attack of ['primary', 'secondary'] as const) {
+      entities.meleeSwing(attack);
+      for (let i = 0; i < 70; i++) {
+        entities.update(0.01, 1 + i * 0.01);
+        camera.updateMatrixWorld(true);
+        const hand = entities.viewRoot.getObjectByName('trigger-hand')!;
+        const sleeve = hand.getObjectByName('tapered-sleeve')!;
+        const wrist = hand.localToWorld(hand.userData.sleeveWrist.clone());
+        const sleeveWrist = sleeve.localToWorld(new THREE.Vector3(0, -0.5, 0));
+        expect(wrist.distanceTo(sleeveWrist)).toBeLessThan(0.00001);
+        const elbow = sleeve.localToWorld(new THREE.Vector3(0, 0.5, 0));
+        expect(camera.worldToLocal(elbow).z).toBeGreaterThan(0);
+      }
+    }
+    entities.dispose();
+    const hand = firstPersonHand('knife', 0x3399aa);
+    expect(hand.children).toHaveLength(5);
+    hand.traverse(o => {
+      if (o instanceof THREE.Mesh) expect(Array.from(o.geometry.attributes.position.array).every(Number.isFinite)).toBe(true);
+    });
+  });
   it('has exactly one melee weapon and resolves all four slots', () => {
     expect(Object.values(WEAPONS).filter(w => w.kind === 'melee').map(w => w.type)).toEqual(['knife']);
     const inv = { primary: { type: 'rifle' as const, mag: 20 }, secondary: { type: 'pistol' as const, mag: 7 }, activeThrow: 'smoke' as const };

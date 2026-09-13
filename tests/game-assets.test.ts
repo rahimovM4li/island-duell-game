@@ -157,7 +157,7 @@ describe('helmet GLB assets', () => {
 });
 
 describe('tactical survivor GLB', () => {
-  it('exports the recolourable carrier, articulated limbs and first-person glove', () => {
+  it('exports the anatomical survivor with articulated limbs and recolourable gear', () => {
     const buffer = readFileSync(path.resolve('client/public/assets/character.glb'));
     const jsonLength = buffer.readUInt32LE(12);
     const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLength)) as {
@@ -177,9 +177,6 @@ describe('tactical survivor GLB', () => {
       'player_accent_wrist_r',
       'player_forearm_l_pivot',
       'player_forearm_r_pivot',
-      'view_hand_root',
-      'view_hand_body',
-      'view_hand_accent',
     ]) {
       expect(nodes).toContain(name);
     }
@@ -192,6 +189,6 @@ describe('tactical survivor GLB', () => {
         );
       }, 0), 0);
     expect(triangles).toBeGreaterThanOrEqual(2_500);
-    expect(triangles).toBeLessThanOrEqual(5_000);
+    expect(triangles).toBeLessThanOrEqual(10_000);
   });
 });

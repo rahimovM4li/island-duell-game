@@ -26,6 +26,7 @@ import { InputState } from './input';
 import { detectTouchDevice, TouchControls } from './touch-controls';
 import { World } from './world';
 import { Entities } from './entities';
+import { renderGame } from './render-game';
 import { Hud, weaponName } from './hud';
 import { Sfx, type SfxName } from './sfx';
 import { OnboardingGuide } from './onboarding';
@@ -1722,13 +1723,13 @@ function onEvent(e: GameEvent): void {
       break;
     }
     case 'melee':
-      entities?.triggerPlayerMelee(e.by);
+      entities?.triggerPlayerMelee(e.by, e.attack);
       if (e.by === myId) sfx.play('melee');
       else {
         const source = lastSnap?.players.find((player) => player.id === e.by);
         if (source) playSpatial('melee', source.x, source.y, source.z);
       }
-      if (e.by === myId) entities?.meleeSwing();
+      if (e.by === myId) entities?.meleeSwing(e.attack);
       break;
     case 'explosion':
       entities?.addExplosion(e.x, e.y, e.z, e.radius);
@@ -2037,6 +2038,7 @@ function frame(): void {
         aim: aiming,
         jump: input.gameplayActive && input.jumpHeld,
         fire: input.gameplayActive && input.fire,
+        secondary: input.gameplayActive && myWeapon === 'knife' && input.aim,
         interact: input.gameplayActive && input.interact,
         shotAgeMs: input.fire || input.firePressed
           ? recommendedShotRewindMs(interpolationDelayMs, net.rttMs)
@@ -2046,6 +2048,11 @@ function frame(): void {
       // samples (important for quick clicks and cooked-grenade release).
       if (input.gameplayActive && input.firePressed && input.fireReleased && !input.fire) {
         net.sendInput({ ...inp, fire: true });
+        inp.seq = ++seq;
+      }
+      // Preserve a quick secondary tap between fixed input samples.
+      if (input.gameplayActive && myWeapon === 'knife' && input.secondaryPressed && !inp.secondary) {
+        net.sendInput({ ...inp, secondary: true });
         inp.seq = ++seq;
       }
       // action keys while unlocked belong to menus/dialogs, not the match —
@@ -2302,7 +2309,7 @@ function frame(): void {
     : null);
 
   if (!roundRunning || !alive || !inMatch || !networkConnected) input.clearEdges();
-  renderer.render(world.scene, camera);
+  renderGame(renderer, world.scene, camera, entities.viewRoot.visible);
   if (finishVictoryAfterRender) finishVictoryCinematic();
 }
 

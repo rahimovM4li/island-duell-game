@@ -156,6 +156,13 @@ export const WEAPON_MOVE_MULTIPLIER: Partial<Record<WeaponType, number>> = {
   sniper: 0.9,
 };
 
+export type KnifeAttack = 'primary' | 'secondary';
+/** A fast cut and a committed, shorter heavy thrust share one cooldown. */
+export const KNIFE_ATTACKS = {
+  primary: { damage: 35, cooldown: 0.55, range: 1.8, animation: 0.34 },
+  secondary: { damage: 65, cooldown: 0.95, range: 1.45, animation: 0.62 },
+} as const;
+
 export const GRENADE_FUSE = 3; // s (§4.3); also the cooking budget before a hand detonation
 export const GRENADE_RADIUS = 5; // m
 export const GRENADE_MIN_THROW_FUSE = 0.2; // s: a fully cooked release still flies briefly

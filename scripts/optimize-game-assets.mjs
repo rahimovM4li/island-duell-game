@@ -16,8 +16,7 @@ const requiredRoots = {
   'landmarks.glb': ['poi_wreck', 'poi_watchtower', 'poi_bunker'],
   'character.glb': [
     'player_survivor', 'player_body', 'player_head', 'player_helmet', 'player_gear',
-    'player_accent_chest', 'player_weapon_socket', 'view_hand_root', 'view_hand_body',
-    'view_hand_accent',
+    'player_accent_chest', 'player_weapon_socket',
   ],
   'middle-island.glb': ['middle_island'],
 };
@@ -26,7 +25,7 @@ const triangleBudgets = {
   'props.glb': 20_000,
   'environment.glb': 20_000,
   'landmarks.glb': 25_000,
-  'character.glb': 5_000,
+  'character.glb': 6_500,
   'middle-island.glb': 15_000,
 };
 

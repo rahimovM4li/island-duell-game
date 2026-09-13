@@ -55,7 +55,7 @@ erhalten; bei einem Host-Austritt übernimmt ein verbundener Spieler.
 | Strg | Schleichen; mit ausgerüsteter Sniper auf den Bauch legen |
 | Leertaste | Springen |
 | Linksklick | Angreifen / Schießen / Granate werfen |
-| Rechte Maustaste | Mit Pistole/Gewehr/Schrotflinte/Scharfschützengewehr zielen |
+| Rechte Maustaste | Butterfly: kräftiger Stich; mit Schusswaffen zielen |
 | R | Nachladen |
 | 1 / 2 / 3 / 4 oder Mausrad | Butterfly / Schusswaffe / Schusswaffe / Granaten; Mausrad wechselt durch belegte Slots |
 | 4 erneut | Zwischen vorhandenen Splitter-, Rauch- und Blendgranaten wechseln |

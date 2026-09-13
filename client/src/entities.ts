@@ -1,7 +1,7 @@
 // Dynamic scene objects: remote players (interpolated in main.ts), pickups,
 // projectiles, care package, tracer/explosion FX and the first-person viewmodel.
 import * as THREE from 'three';
-import { WEAPONS, type WeaponType } from '@shared/constants';
+import { WEAPONS, KNIFE_ATTACKS, type KnifeAttack, type WeaponType } from '@shared/constants';
 import { PLAYER_SKINS } from '@shared/multiplayer';
 import type { PickupInfo, SmokeSnap, SnapProjectile } from '@shared/protocol';
 import type { ImpactSurface, Vec3 } from '@shared/physics';
@@ -17,13 +17,19 @@ import { droppedPickupPose } from './pickup-drop-animation';
 import { shouldShowSpectatorLabel } from './spectator-labels';
 import { firstPersonWeapon, reloadPose } from './first-person-weapon';
 import { butterflyKnife, animateKnife, KNIFE_DRAW_SECONDS, KNIFE_INSPECT_SECONDS } from './butterfly-knife';
+import { firstPersonHand, updateHandSleeves } from './first-person-hands';
 
 const PLAYER_COLORS = PLAYER_SKINS.map((skin) => skin.color);
 const HIT_FLASH_BODY = new THREE.Color(0xffffff);
 const HIT_FLASH_HEAD = new THREE.Color(0xffe7a3);
 const FLASH_FACE_WHITE = new THREE.Color(0xffffff);
+const GRIP_POINT = new THREE.Vector3();
+const GRIP_ROTATION = new THREE.Quaternion();
+const GRIP_ROOT_ROTATION = new THREE.Quaternion();
+const KNIFE_GRIP_ROTATION = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
 
 interface PlayerRig {
+  knifeAttack?: KnifeAttack;
   group: THREE.Group;
   nameLabel: THREE.Sprite;
   playerName: string;
@@ -88,7 +94,6 @@ interface PlayerRig {
 
 const DEATH_ANIMATION_DURATION = 1.35;
 const FIRE_ACTION_DURATION = 0.14;
-const MELEE_ACTION_DURATION = 0.42;
 const HIT_ACTION_DURATION = 0.22;
 
 interface ItemVisual {
@@ -254,29 +259,6 @@ type LitPlayerMaterial = THREE.MeshLambertMaterial | THREE.MeshStandardMaterial;
 
 function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
   return gameAssets.cloneWeapon(weapon) ?? proceduralWeaponModel(weapon);
-}
-
-function proceduralViewHand(color: number): THREE.Group {
-  const g = new THREE.Group();
-  const glove = 0x171d22;
-  const armour = 0x30383f;
-  const skin = 0xd8a878;
-  addCylinder(g, 0.14, 0.48, [0, -0.07, 0.34], 0x20272e, [Math.PI / 2, 0, 0], 8);
-  addBox(g, [0.25, 0.17, 0.17], [0, -0.05, 0.08], armour);
-  addBox(g, [0.22, 0.13, 0.23], [0, -0.01, -0.06], glove);
-  addBox(g, [0.18, 0.04, 0.14], [0, 0.07, -0.06], armour);
-  addCylinder(g, 0.155, 0.075, [0, -0.075, 0.23], color, [Math.PI / 2, 0, 0], 10);
-  for (const x of [-0.073, -0.025, 0.025, 0.073]) {
-    addBox(g, [0.04, 0.06, 0.12], [x, 0, -0.18], glove);
-    addBox(g, [0.036, 0.055, 0.07], [x, 0, -0.275], skin);
-  }
-  addBox(g, [0.065, 0.07, 0.12], [-0.135, -0.01, -0.11], glove, [0, 0.35, -0.42]);
-  addBox(g, [0.055, 0.06, 0.07], [-0.17, -0.01, -0.19], skin, [0, 0.35, -0.42]);
-  return g;
-}
-
-function viewHandModel(color: number): THREE.Group {
-  return gameAssets.cloneViewHand(color)?.group ?? proceduralViewHand(color);
 }
 
 function crateModel(color: number, care = false): THREE.Group {
@@ -480,7 +462,7 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
   const addHand = (
     x: number, y: number, z: number, mirrored = false, yaw = 0,
   ): THREE.Group => {
-    const hand = viewHandModel(skinColor);
+    const hand = firstPersonHand(weapon === 'knife' ? 'knife' : mirrored ? 'support' : 'trigger', skinColor);
     hand.name = mirrored ? 'support-hand' : 'trigger-hand';
     hand.position.set(x, y, z);
     hand.rotation.y = yaw;
@@ -490,10 +472,7 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
   };
 
   if (weapon === 'knife') {
-    const right = addHand(-0.04, -0.18, 0.025, false, 0.08);
-    // Keep the sleeve trailing below the camera while the blade points upward.
-    right.rotation.x = 1.0;
-    right.rotation.z = -0.25;
+    addHand(0, 0, 0);
   } else if (weapon !== 'none') {
     addHand(0.02, -0.08, 0.035);
     if (weapon === 'pistol' || weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper') {
@@ -575,6 +554,7 @@ export class Entities {
   private viewSkinColor = PLAYER_COLORS[1];
   private knifeT = -1;
   private knifeInspect = false;
+  private knifeAttack: KnifeAttack = 'primary';
   private swingT = 1; // 0..1 melee swing animation
   private kickT = 1;  // fire recoil
   private aiming = false;
@@ -602,6 +582,8 @@ export class Entities {
     private reducedMotion = false,
   ) {
     this.rng = mulberry32(deriveSeed(seed, 'client-entity-fx'));
+    // The first-person pass uses the same daylight as the island.
+    scene.traverse(o => { if (o instanceof THREE.Light) o.layers.enable(1); });
     camera.add(this.viewRoot);
     this.viewRoot.position.set(0.38, -0.38, -0.72);
   }
@@ -945,6 +927,7 @@ export class Entities {
     if (rig.currentWeapon !== weapon) {
       for (const child of [...rig.weapon.children]) disposeObject(child);
       rig.weapon.clear();
+      rig.weapon.rotation.set(0, 0, 0);
       rig.weapon.add(weaponModel(weapon));
       rig.currentWeapon = weapon;
     }
@@ -987,9 +970,12 @@ export class Entities {
     if (rig) rig.fireT = FIRE_ACTION_DURATION;
   }
 
-  triggerPlayerMelee(id: string): void {
+  triggerPlayerMelee(id: string, attack: KnifeAttack = 'primary'): void {
     const rig = this.players.get(id);
-    if (rig) rig.meleeT = MELEE_ACTION_DURATION;
+    if (rig) {
+      rig.knifeAttack = attack;
+      rig.meleeT = KNIFE_ATTACKS[attack].animation;
+    }
   }
 
   breakHelmet(id: string): void {
@@ -1356,7 +1342,8 @@ export class Entities {
     this.kickT = 0;
   }
 
-  meleeSwing(): void {
+  meleeSwing(attack: KnifeAttack = 'primary'): void {
+    this.knifeAttack = attack;
     this.swingT = 0;
     this.knifeT = -1; // combat immediately interrupts a cosmetic flourish
     this.weaponSwitchT = -1;
@@ -1387,6 +1374,7 @@ export class Entities {
     this.knifeT = weapon === 'knife' ? 0 : -1;
     this.knifeInspect = false;
     this.viewRoot.add(this.viewWeapon);
+    this.viewWeapon.traverse(o => { o.layers.set(1); o.castShadow = false; });
     if (animateSwitch && previousWeapon !== null) this.startWeaponSwitch(false);
   }
 
@@ -1534,11 +1522,11 @@ export class Entities {
           actionRootRoll = Math.sin(phase * Math.PI) * rig.deathSide * 0.095;
           actionArmLeftX = -Math.sin(phase * Math.PI) * 0.16;
         } else if (rig.action === 'melee') {
-          const phase = 1 - rig.meleeT / MELEE_ACTION_DURATION;
+          const phase = 1 - rig.meleeT / KNIFE_ATTACKS[rig.knifeAttack ?? 'primary'].animation;
           const strike = Math.sin(phase * Math.PI);
-          actionArmRightX = strike * 1.15;
+          actionArmRightX = strike * (rig.knifeAttack === 'secondary' ? 1.35 : 0.65);
           actionWeaponPitch = strike * 0.62;
-          actionWeaponRoll = -strike * 0.36;
+          actionWeaponRoll = -strike * (rig.knifeAttack === 'secondary' ? 0.12 : 0.8);
         } else if (rig.action === 'fire') {
           const phase = rig.fireT / FIRE_ACTION_DURATION;
           actionWeaponPitch = -Math.sin(phase * Math.PI) * 0.16;
@@ -1571,6 +1559,10 @@ export class Entities {
         }
         if (rig.forearmRight && rig.forearmRightBase) {
           rig.forearmRight.rotation.x = rig.forearmRightBase.x + pose.forearmRightX;
+          if (rig.currentWeapon === 'knife' && !rig.prone) {
+            rig.forearmRight.rotation.x += 1.1 - actionArmRightX * 0.35;
+            rig.armRight.rotation.x += 0.18;
+          }
         }
         rig.strideYaw = THREE.MathUtils.lerp(rig.strideYaw ?? 0, rig.strideTarget ?? 0, 1 - Math.exp(-dt * 12));
         const strideSign = rig.backwards && !rig.prone ? -1 : 1;
@@ -1598,6 +1590,23 @@ export class Entities {
         1.3,
         rig.aiming ? 1 : 0,
       );
+      if (rig.currentWeapon === 'knife' && rig.forearmRight && rig.alive) {
+        // Attach the handle to the animated hand, including strafe, crouch and attack.
+        // Grip is expressed in the exported forearm's Y-up/-Z-forward coordinates.
+        rig.group.updateMatrixWorld(true);
+        const grip = rig.forearmRight.localToWorld(GRIP_POINT.set(0.02, -0.32, -0.12));
+        rig.weapon.position.copy(rig.group.worldToLocal(grip));
+        const rotation = rig.forearmRight.getWorldQuaternion(GRIP_ROTATION);
+        rotation.premultiply(rig.group.getWorldQuaternion(GRIP_ROOT_ROTATION).invert());
+        rotation.multiply(KNIFE_GRIP_ROTATION);
+        rig.weapon.quaternion.copy(rotation);
+        const knife = rig.weapon.getObjectByName('butterfly-knife');
+        if (knife) {
+          knife.scale.setScalar(0.48);
+          // The hilt midpoint, not the blade pivot, belongs inside the closed fist.
+          knife.position.y = 0.12;
+        }
+      }
       rig.flashT = Math.max(0, rig.flashT - dt);
       rig.blindedBlend += (rig.blindedTarget - rig.blindedBlend) * (1 - Math.exp(-dt * 11));
       const flash = Math.min(1, rig.flashT / 0.08);
@@ -1610,7 +1619,7 @@ export class Entities {
         .lerp(FLASH_FACE_WHITE, rig.blindedBlend);
       headMat.emissiveIntensity = rig.headBaseEmissiveIntensity + rig.blindedBlend * 3.4;
     }
-    this.swingT = Math.min(1, this.swingT + dt * 3.2);
+    this.swingT = Math.min(1, this.swingT + dt / KNIFE_ATTACKS[this.knifeAttack].animation);
     this.kickT = Math.min(1, this.kickT + dt * 7);
     this.aimBlend += ((this.aiming && this.reloadT < 0 ? 1 : 0) - this.aimBlend) * (1 - Math.exp(-dt * 14));
     this.sprintBlend += ((this.viewSprinting && !this.aiming && this.reloadT < 0 ? 1 : 0) - this.sprintBlend) * (1 - Math.exp(-dt * 12));
@@ -1656,6 +1665,12 @@ export class Entities {
       this.viewWeapon.position.z = swing * (isKnife ? -0.5 : -0.25) + kick + reloadDrop * 0.04 + switchDrop * 0.2;
       this.viewWeapon.position.y = Math.sin(time * 1.7) * 0.008 + reloadDrop * 0.18 - switchDrop;
       if (isKnife) {
+        // A horizontal light cut and a deeper heavy thrust have different silhouettes.
+        const heavy = this.knifeAttack === 'secondary';
+        const stroke = Math.sin(this.swingT * Math.PI);
+        this.viewWeapon.rotation.x = (baseRotation?.x ?? 0) - stroke * (heavy ? 0.6 : 0.12);
+        this.viewWeapon.rotation.z -= stroke * (heavy ? 0.12 : 0.95);
+        this.viewWeapon.position.z = -stroke * (heavy ? 0.30 : 0.16) + switchDrop * 0.2;
         const duration = this.knifeInspect ? KNIFE_INSPECT_SECONDS : KNIFE_DRAW_SECONDS;
         if (this.knifeT >= 0) {
           this.knifeT += dt;
@@ -1664,7 +1679,7 @@ export class Entities {
         const pose = animateKnife(this.viewWeapon, this.knifeT < 0 ? -1 : this.knifeT / duration, this.knifeInspect, this.reducedMotion);
         this.viewWeapon.rotation.z += pose.wrist;
         this.viewWeapon.rotation.y += pose.inspect * 0.7;
-        this.viewWeapon.position.x -= pose.inspect * 0.16 + swing * 0.16;
+        this.viewWeapon.position.x -= pose.inspect * 0.16 + stroke * (heavy ? 0.20 : 0.28);
         this.viewWeapon.position.y += pose.inspect * 0.10;
       }
       const mechanism = reloadPose(progress);
@@ -1688,6 +1703,7 @@ export class Entities {
       this.viewWeapon.position.y += Math.cos(this.stridePhase * 2) * 0.018 * motion - this.sprintBlend * 0.08;
       this.viewWeapon.rotation.x += this.sprintBlend * 0.32;
       this.viewWeapon.rotation.z -= this.sprintBlend * 0.3;
+      updateHandSleeves(this.viewRoot, this.camera);
     }
     for (let i = this.fx.length - 1; i >= 0; i--) {
       const f = this.fx[i];
@@ -1725,6 +1741,7 @@ export class Entities {
     knifeInspecting: boolean;
     knifeBladeAngle: number;
     stabbing: boolean;
+    knifeAttack: KnifeAttack;
     reloadProgress: number;
     magazineOffset: number;
     boltOffset: number;
@@ -1768,6 +1785,7 @@ export class Entities {
       knifeInspecting: this.knifeT >= 0 && this.knifeInspect,
       knifeBladeAngle: this.viewWeapon?.getObjectByName('knife-blade-pivot')?.rotation.z ?? 0,
       stabbing: this.viewWeaponType === 'knife' && this.swingT < 1,
+      knifeAttack: this.knifeAttack,
       reloadProgress: this.reloadT < 0 ? -1 : Math.min(1, this.reloadT / this.reloadDuration),
       magazineOffset: this.viewWeapon?.getObjectByName('moving-magazine')?.position.y ?? 0,
       boltOffset: this.viewWeapon?.getObjectByName('moving-bolt')?.position.z ?? 0,

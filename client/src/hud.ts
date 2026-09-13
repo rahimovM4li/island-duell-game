@@ -89,6 +89,12 @@ export class Hud {
 
   setWeapon(weapon: WeaponType): void {
     $('hud').dataset.weapon = weapon;
+    const button = document.getElementById('touch-aim');
+    if (button) {
+      button.title = weapon === 'knife' ? 'Kräftiger Stich' : 'Zielen';
+      const caption = button.querySelector('.touch-btn-caption');
+      if (caption) caption.textContent = weapon === 'knife' ? 'Stich' : 'Zielen';
+    }
   }
 
   setCrosshairSpread(pixels: number): void {
