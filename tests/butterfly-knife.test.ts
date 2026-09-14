@@ -1,37 +1,64 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { WEAPONS } from '@shared/constants';
 import { butterflyKnife, knifePose, KNIFE_DRAW_SECONDS } from '../client/src/butterfly-knife';
 import { Entities } from '../client/src/entities';
 import { viewWeaponForInventory } from '../client/src/weapon-switch';
-import { firstPersonHand } from '../client/src/first-person-hands';
+import { gameAssets } from '../client/src/game-assets';
+import { clone } from 'three/addons/utils/SkeletonUtils.js';
+import { loadModel } from './helpers/load-model';
+
+beforeAll(async () => {
+  const hands = await loadModel('hands.glb');
+  const knife = await loadModel('butterfly.glb');
+  vi.spyOn(gameAssets, 'cloneHand').mockImplementation(() => clone(hands));
+  vi.spyOn(gameAssets, 'cloneButterfly').mockImplementation(() => knife.clone(true));
+});
+afterAll(() => vi.restoreAllMocks());
 
 describe('permanent butterfly loadout', () => {
-  it('keeps the sleeve attached to the wrist throughout both attacks', () => {
+  it('keeps the anatomical wrist fixed to the grip and the elbow off camera in both attacks', () => {
     const camera = new THREE.PerspectiveCamera(75, 16 / 9, 0.08, 400);
     const entities = new Entities(new THREE.Scene(), camera, 42);
     entities.setViewWeapon('knife');
     entities.update(1, 1);
+    const hand = entities.viewRoot.getObjectByName('trigger-hand')!;
+    const wrist = hand.getObjectByName('view-wrist')!;
+    const restWrist = wrist.position.clone();
+    const arm = hand.getObjectByName('anatomical-arm') as THREE.SkinnedMesh;
+    expect(arm.isSkinnedMesh).toBe(true);
+    camera.updateMatrixWorld(true);
+    arm.skeleton.update();
+    const wristWorld = wrist.getWorldPosition(new THREE.Vector3());
+    const elbowWorld = hand.getObjectByName('view-elbow')!.getWorldPosition(new THREE.Vector3());
+    const screenStart = wristWorld.clone().project(camera);
+    const screenEnd = wristWorld.clone().lerp(elbowWorld, 0.25).project(camera);
+    const axis = new THREE.Vector2(screenEnd.x - screenStart.x, screenEnd.y - screenStart.y).normalize();
+    const widths: number[] = [];
+    for (let i = 0; i < arm.geometry.attributes.position.count; i++) {
+      const p = arm.localToWorld(arm.getVertexPosition(i, new THREE.Vector3())).project(camera);
+      if (p.y < -0.65 && p.y > -1 && p.z < 1 && p.z > -1) {
+        widths.push((p.x - screenStart.x) * -axis.y + (p.y - screenStart.y) * axis.x);
+      }
+    }
+    // The forearm must retain volume; merely translating its elbow collapses it to a strip.
+    expect(widths.length).toBeGreaterThan(10);
+    expect(Math.max(...widths) - Math.min(...widths)).toBeGreaterThan(0.055);
     for (const attack of ['primary', 'secondary'] as const) {
       entities.meleeSwing(attack);
       for (let i = 0; i < 70; i++) {
         entities.update(0.01, 1 + i * 0.01);
         camera.updateMatrixWorld(true);
-        const hand = entities.viewRoot.getObjectByName('trigger-hand')!;
-        const sleeve = hand.getObjectByName('tapered-sleeve')!;
-        const wrist = hand.localToWorld(hand.userData.sleeveWrist.clone());
-        const sleeveWrist = sleeve.localToWorld(new THREE.Vector3(0, -0.5, 0));
-        expect(wrist.distanceTo(sleeveWrist)).toBeLessThan(0.00001);
-        const elbow = sleeve.localToWorld(new THREE.Vector3(0, 0.5, 0));
-        expect(camera.worldToLocal(elbow).z).toBeGreaterThan(0);
+        expect(wrist.position.distanceTo(restWrist)).toBeLessThan(0.00001);
+        const elbow = hand.getObjectByName('view-elbow')!.getWorldPosition(new THREE.Vector3());
+        expect(camera.worldToLocal(elbow).z).toBeGreaterThan(0.08);
+        arm.skeleton.update();
+        for (let index = 0; index < arm.geometry.attributes.position.count; index += 40) {
+          expect(arm.getVertexPosition(index, new THREE.Vector3()).toArray().every(Number.isFinite)).toBe(true);
+        }
       }
     }
     entities.dispose();
-    const hand = firstPersonHand('knife', 0x3399aa);
-    expect(hand.children).toHaveLength(5);
-    hand.traverse(o => {
-      if (o instanceof THREE.Mesh) expect(Array.from(o.geometry.attributes.position.array).every(Number.isFinite)).toBe(true);
-    });
   });
   it('has exactly one melee weapon and resolves all four slots', () => {
     expect(Object.values(WEAPONS).filter(w => w.kind === 'melee').map(w => w.type)).toEqual(['knife']);
@@ -51,7 +78,7 @@ describe('permanent butterfly loadout', () => {
       expect(Array.from(p.array).every(Number.isFinite)).toBe(true);
       triangles += (o.geometry.index?.count ?? p.count) / 3;
     });
-    expect(triangles).toBeLessThan(12000);
+    expect(triangles).toBeLessThan(22000);
     expect(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).length()).toBeLessThan(1.5);
   });
 

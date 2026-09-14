@@ -34,7 +34,7 @@ interface PlayerRig {
   nameLabel: THREE.Sprite;
   playerName: string;
   body: THREE.Mesh;
-  head: THREE.Mesh;
+  head: THREE.Object3D & { material: THREE.Material };
   helmet: THREE.Object3D;
   weapon: THREE.Group;
   armLeft: THREE.Object3D;
@@ -484,7 +484,7 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
   }
 
   const scale = weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper'
-    ? 0.36 : 0.54;
+    ? 0.36 : weapon === 'knife' ? 0.68 : 0.54;
   g.scale.setScalar(scale);
   const baseRotation = weapon === 'knife'
     ? { x: -0.55, y: -0.35, z: 0.35 }
@@ -495,11 +495,13 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
 }
 
 function disposeObject(root: THREE.Object3D): void {
+  const skeletons = new Set<THREE.Skeleton>();
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();
   const textures = new Set<THREE.Texture>();
   root.traverse((obj) => {
     const renderable = obj as THREE.Mesh & THREE.Sprite;
+    if ((obj as THREE.SkinnedMesh).isSkinnedMesh) skeletons.add((obj as THREE.SkinnedMesh).skeleton);
     if (!renderable.isSprite && renderable.geometry && !isSharedAssetResource(renderable.geometry)) {
       geometries.add(renderable.geometry);
     }
@@ -512,6 +514,7 @@ function disposeObject(root: THREE.Object3D): void {
     }
   });
   textures.forEach((texture) => texture.dispose());
+  skeletons.forEach((skeleton) => skeleton.dispose());
   materials.forEach((mat) => mat.dispose());
   geometries.forEach((geometry) => geometry.dispose());
 }
@@ -1580,7 +1583,7 @@ export class Entities {
         rig.legRight.rotation.z = rig.legRightBase.z + pose.legRightZ;
         const headPitch = rig.headBase.x - rig.lookPitch * 0.8 + pose.headLift;
         rig.head.rotation.x = headPitch;
-        rig.helmet.rotation.x = headPitch;
+        if (!rig.head.getObjectById(rig.helmet.id)) rig.helmet.rotation.x = headPitch;
         rig.weapon.position.x = THREE.MathUtils.lerp(rig.weaponBasePosition.x, 0, pose.weaponCenter);
         rig.weapon.rotation.x = -rig.lookPitch + Math.PI / 2 * pose.weaponCenter + actionWeaponPitch;
         rig.weapon.rotation.z = actionWeaponRoll;
@@ -1590,19 +1593,23 @@ export class Entities {
         1.3,
         rig.aiming ? 1 : 0,
       );
-      if (rig.currentWeapon === 'knife' && rig.forearmRight && rig.alive) {
+      const handJoint = rig.group.getObjectByName('hand_r');
+      if ((rig.currentWeapon === 'knife' || handJoint) && rig.forearmRight && rig.alive) {
         // Attach the handle to the animated hand, including strafe, crouch and attack.
         // Grip is expressed in the exported forearm's Y-up/-Z-forward coordinates.
         rig.group.updateMatrixWorld(true);
-        const grip = rig.forearmRight.localToWorld(GRIP_POINT.set(0.02, -0.32, -0.12));
+        const gripJoint = handJoint ?? rig.forearmRight;
+        const grip = gripJoint.localToWorld(handJoint
+          ? GRIP_POINT.set(-0.015, -0.035, 0.028)
+          : GRIP_POINT.set(0.02, -0.32, -0.12));
         rig.weapon.position.copy(rig.group.worldToLocal(grip));
-        const rotation = rig.forearmRight.getWorldQuaternion(GRIP_ROTATION);
+        const rotation = gripJoint.getWorldQuaternion(GRIP_ROTATION);
         rotation.premultiply(rig.group.getWorldQuaternion(GRIP_ROOT_ROTATION).invert());
-        rotation.multiply(KNIFE_GRIP_ROTATION);
+        if (rig.currentWeapon === 'knife') rotation.multiply(KNIFE_GRIP_ROTATION);
         rig.weapon.quaternion.copy(rotation);
         const knife = rig.weapon.getObjectByName('butterfly-knife');
         if (knife) {
-          knife.scale.setScalar(0.48);
+          knife.scale.setScalar(0.36);
           // The hilt midpoint, not the blade pivot, belongs inside the closed fist.
           knife.position.y = 0.12;
         }
@@ -1625,9 +1632,9 @@ export class Entities {
     this.sprintBlend += ((this.viewSprinting && !this.aiming && this.reloadT < 0 ? 1 : 0) - this.sprintBlend) * (1 - Math.exp(-dt * 12));
     this.stridePhase += this.viewSpeed * dt * 1.9;
     this.viewRoot.position.set(
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? 0.33 : 0.38, 0, this.aimBlend),
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.22 : -0.38, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.82 : -0.72, -0.57, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? 0.27 : 0.38, 0, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.18 : -0.38, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.76 : -0.72, -0.57, this.aimBlend),
     );
     if (this.viewWeapon) {
       const baseRotation = this.viewWeapon.userData.viewmodelBaseRotation as {

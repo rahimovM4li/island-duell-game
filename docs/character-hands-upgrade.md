@@ -19,47 +19,13 @@ secondary attack follows the established Counter-Strike pattern documented in
 the [knife guide](https://liquipedia.net/counterstrike/Knife); these game values
 are our own balance choices. No reference-site models or code were extracted.
 
-## Models and animation
+## Current models and verification
 
-The Blender character now has shaped torso, upper arms, forearms and legs,
-a fitted face covering, closed gloves, cloth seams, vest webbing, pouch flaps,
-boot details and a radio. Profile colors and existing equipment toggles remain.
-`art/survivor.blend` is the editable character source; regenerate it with:
+The September 14 anatomical-model replacement supersedes the former procedural
+hands and low-poly character described by this upgrade. See
+[model sources, rebuilding and verification](model-sources.md) and the
+[shipped credits](../client/public/assets/CREDITS.md).
 
-```powershell
-& 'C:/Program Files/Blender Foundation/Blender 5.2/blender.exe' --background --python scripts/blender/build_island_assets.py -- --character-only
-npm run assets:build
-```
-
-The export uses the existing paired Object3D limb pivots, rather than a new
-skeleton. Structured Blender inspection measured Z bounds -0.005 to 1.959 m,
-X bounds ±0.488 m, Z-up/+Y-forward before glTF conversion. Exported gameplay
-coordinates remain Y-up/-Z-forward. Ground contact is within 5 mm of the origin.
-The optimized character has 5,728 triangles and is 122,704 bytes.
-
-First-person hands are original procedural geometry: rounded palm, four curled
-fingers, opposing thumb, knuckle pads, seams and cuffs. Knife, trigger and support
-grips use separate poses. Fixed glove geometry is merged by material, keeping
-each hand to five draw calls. The sleeve follows the wrist and an off-screen elbow
-through attacks, inspection, running and firearm reloads. Individual finger
-joints are not yet animated.
-
-The remote knife follows the animated right forearm and sits at the closed fist.
-Local hands and weapons render after clearing world depth, so nearby terrain
-cannot cut the blade off. Internal hand/weapon depth tests remain enabled.
-
-## Verification
-
-Type checking, production build, gameplay and protocol tests, asset validation,
-and browser input scenarios cover the changes. Regression coverage includes
-secondary damage/reach, the shared cooldown, interruption of inspection, sleeve
-attachment over both attack cycles, and restoration of rendering state.
-The browser suite writes lobby, firearm and knife pose screenshots under
-`test-results`. The total validated asset payload is 746.2 KiB.
-
-The protocol is now version 21: deploy the server and client together.
-
-Verified 2026-09-13: all 265 tests in the full Vitest run passed; the added sleeve
-regression and the affected animation/render tests then passed (266 tests total).
-The final complete browser run passed all eight scenarios. Ready, inspection,
-attack, firearm and lobby screenshots were visually reviewed.
+The secondary attack, shared cooldown, touch controls and depth-separated
+viewmodel rendering described above remain in place. This asset replacement
+requires no new protocol version; gameplay protocol 21 is unchanged.

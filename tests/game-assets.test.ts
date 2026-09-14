@@ -170,11 +170,11 @@ describe('tactical survivor GLB', () => {
     };
     const nodes = new Set((gltf.nodes ?? []).flatMap((node) => node.name ? [node.name] : []));
     for (const name of [
-      'player_accent_chest',
-      'player_accent_leg_l',
-      'player_accent_leg_r',
-      'player_accent_wrist_l',
-      'player_accent_wrist_r',
+      'survivor-skeleton',
+      'hand_r',
+      'hand_l',
+      'index_03_r',
+      'middle_03_l',
       'player_forearm_l_pivot',
       'player_forearm_r_pivot',
     ]) {
@@ -189,6 +189,6 @@ describe('tactical survivor GLB', () => {
         );
       }, 0), 0);
     expect(triangles).toBeGreaterThanOrEqual(2_500);
-    expect(triangles).toBeLessThanOrEqual(10_000);
+    expect(triangles).toBeLessThanOrEqual(40_000);
   });
 });

@@ -112,6 +112,15 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect.poll(async () => (await view()).weapon).toBe('rifle');
     await page.keyboard.press('1');
     await expect.poll(async () => (await view()).knifeAnimating).toBe(true);
+    // Let the just-thrown flash finish before reviewing the remote character.
+    await page.waitForTimeout(5000);
+    const preview = await command('preview-model');
+    await page.evaluate((yaw: number) => {
+      const input = (window as any).__ISLAND_DUELL_DIAGNOSTICS__.snapshot().input;
+      document.dispatchEvent(new MouseEvent('mousemove', { movementX: (input.yaw - yaw) / 0.0023, movementY: input.pitch / 0.0023 }));
+    }, preview.yaw);
+    await page.waitForTimeout(1100);
+    await page.screenshot({ path: testInfo.outputPath('survivor-in-game.png') });
     expect(errors).toEqual([]);
   } finally {
     if (server.exitCode === null && server.signalCode === null) {

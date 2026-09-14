@@ -1119,24 +1119,14 @@ def main() -> None:
     atlas = bpy.data.images.load(str(PUBLIC / "island-atlas.png")) if character_only else create_atlas()
     ATLAS_MATERIAL = create_material(atlas)
     if character_only:
-        collection = asset_collection("05_CHARACTER")
-        build_character(collection)
-        bpy.context.view_layer.update()
-        player = bpy.data.objects["player_survivor"]
-        verts = [obj.matrix_world @ v.co for obj in collection.all_objects
-                 if obj.type == 'MESH' and obj.name != 'visual_lod1' for v in obj.data.vertices]
-        print(json.dumps({"character_bounds": [[min(v[i] for v in verts),max(v[i] for v in verts)] for i in range(3)],
-            "up": "+Z", "forward": "+Y", "pivots": {obj.name: list(obj.location) for obj in collection.all_objects if 'pivot' in obj.name}}))
-        bpy.ops.wm.save_as_mainfile(filepath=str(ART / "survivor.blend"))
-        detach_preview_texture_for_glb_export()
-        export_collection(collection, "character.glb")
+        import runpy
+        runpy.run_path(str(Path(__file__).with_name('build_realistic_models.py')), run_name='__main__')
         return
     packages = {
         "01_WEAPONS": ("weapons.glb", build_weapons),
         "02_PROPS": ("props.glb", build_props),
         "03_ENVIRONMENT": ("environment.glb", build_environment),
         "04_LANDMARKS": ("landmarks.glb", build_landmarks),
-        "05_CHARACTER": ("character.glb", build_character),
     }
     collections = []
     for name, (_, builder) in packages.items():

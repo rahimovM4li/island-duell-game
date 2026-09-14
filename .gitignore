@@ -14,6 +14,12 @@ test-results/
 .vite/
 *.log
 *.blend1
+__pycache__/
+*.py[cod]
+art/source/
+art/preview-*.png
+client/public/assets/*.blender.glb
+client/public/assets/*.textures.glb
 
 # Local-only configuration and editor metadata
 .env

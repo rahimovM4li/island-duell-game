@@ -205,7 +205,8 @@ Der editierbare Master liegt unter `art/island-duell-assets.blend`.
 `scripts/blender/build_island_assets.py` erzeugt daraus Atlas, GLBs und das
 gemeinsame Collider-Manifest. `npm run assets:build` weldet und komprimiert die
 Blender-Exporte und prüft Namen, UVs, Dreiecks- sowie Downloadbudgets. Der genaue
-Ablauf steht in `docs/ASSET_PIPELINE.md`.
+Ablauf steht in `docs/ASSET_PIPELINE.md`. Die neuen anatomischen Figuren, Hände
+und das Butterfly haben eigene Blender-Dateien: [Modelle und Quellen](docs/model-sources.md).
 
 ## Bewusste Abweichungen vom PRD
 

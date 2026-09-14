@@ -7,7 +7,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const assetDir = join(root, 'client', 'public', 'assets');
 const files = [
   'weapons.glb', 'props.glb', 'environment.glb', 'landmarks.glb', 'character.glb',
-  'middle-island.glb',
+  'middle-island.glb', 'hands.glb', 'butterfly.glb',
 ];
 const requiredRoots = {
   'weapons.glb': ['weapon_pistol', 'weapon_rifle', 'weapon_shotgun', 'weapon_sniper', 'weapon_grenade', 'weapon_smoke', 'weapon_flash'],
@@ -15,9 +15,11 @@ const requiredRoots = {
   'environment.glb': ['env_tree_pine', 'env_tree_broadleaf', 'env_tree_palm', 'env_rock_boulder', 'env_rock_slab', 'env_rock_cluster', 'env_bush', 'env_grass', 'env_stump', 'env_rock_chips', 'env_rubble', 'env_barrel', 'env_brazier', 'env_torch', 'env_spawn_marker', 'env_ruin_wall', 'env_ruin_cap'],
   'landmarks.glb': ['poi_wreck', 'poi_watchtower', 'poi_bunker'],
   'character.glb': [
-    'player_survivor', 'player_body', 'player_head', 'player_helmet', 'player_gear',
-    'player_accent_chest', 'player_weapon_socket',
+    'player_survivor', 'player_body', 'player_head', 'player_helmet', 'survivor-skeleton',
+    'hand_r', 'player_weapon_socket',
   ],
+  'hands.glb': ['anatomical_hand', 'anatomical-arm', 'view-wrist', 'view-elbow'],
+  'butterfly.glb': ['butterfly-knife', 'knife-blade', 'knife-safe-handle', 'knife-blade-pivot', 'knife-bite-pivot'],
   'middle-island.glb': ['middle_island'],
 };
 const triangleBudgets = {
@@ -25,7 +27,9 @@ const triangleBudgets = {
   'props.glb': 20_000,
   'environment.glb': 20_000,
   'landmarks.glb': 25_000,
-  'character.glb': 6_500,
+  'character.glb': 40_000,
+  'hands.glb': 16_000,
+  'butterfly.glb': 22_000,
   'middle-island.glb': 15_000,
 };
 
@@ -71,7 +75,7 @@ async function validate() {
     bytes += buffer.byteLength;
     report.push({ file, bytes: buffer.byteLength, nodes: names.size, meshes: meshes.length, triangles });
   }
-  if (bytes > 1_000_000) throw new Error(`Asset payload ${bytes} exceeds the 1 MB browser budget`);
+  if (bytes > 4_000_000) throw new Error(`Asset payload ${bytes} exceeds the 4 MB textured-model browser budget`);
   console.table(report);
   console.log(`Validated complete asset payload: ${(bytes / 1024).toFixed(1)} KiB`);
 }
@@ -87,13 +91,16 @@ if (!process.argv.includes('--validate-only')) {
     }
     const raw = join(assetDir, file.replace('.glb', '.blender.glb'));
     const welded = join(assetDir, file.replace('.glb', '.weld.glb'));
+    const textured = join(assetDir, file.replace('.glb', '.textures.glb'));
     await rm(raw, { force: true });
     await rm(welded, { force: true });
     await rename(output, raw);
-    execFileSync(process.execPath, [cli, 'weld', raw, welded], { cwd: root, stdio: 'inherit' });
+    execFileSync(process.execPath, [cli, 'webp', raw, textured, '--quality', '88'], { cwd: root, stdio: 'inherit' });
+    execFileSync(process.execPath, [cli, 'weld', textured, welded], { cwd: root, stdio: 'inherit' });
     execFileSync(process.execPath, [cli, 'meshopt', welded, output, '--level', 'high'], { cwd: root, stdio: 'inherit' });
     await rm(raw, { force: true });
     await rm(welded, { force: true });
+    await rm(textured, { force: true });
   }
 }
 

@@ -553,10 +553,13 @@ export class LobbyScene {
   private clearCharacters(): void {
     for (const entry of this.characters) {
       this.scene.remove(entry.asset.group, entry.label);
+      const skeletons = new Set<THREE.Skeleton>();
       entry.asset.group.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (mesh.isMesh) disposeMaterial(mesh.material);
+        if ((object as THREE.SkinnedMesh).isSkinnedMesh) skeletons.add((object as THREE.SkinnedMesh).skeleton);
       });
+      skeletons.forEach(skeleton => skeleton.dispose());
       entry.label.material.map?.dispose();
       entry.label.material.dispose();
     }

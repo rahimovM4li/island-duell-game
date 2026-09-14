@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { WeaponType } from '@shared/constants';
 import type { PoiKind } from '@shared/worldgen';
 
@@ -19,7 +21,7 @@ const ENVIRONMENT_NAMES = [
   'bush', 'grass', 'stump', 'rock_chips', 'rubble', 'barrel',
   'brazier', 'torch', 'spawn_marker', 'ruin_wall', 'ruin_cap',
 ] as const;
-const ASSET_REVISION = '2026-09-11-survivor-grips-v3';
+const ASSET_REVISION = '2026-09-14-anatomical-v2';
 
 type AssetWeapon = (typeof WEAPON_NAMES)[number];
 type AssetLandmark = (typeof LANDMARK_NAMES)[number];
@@ -29,7 +31,7 @@ export type AssetEnvironment = (typeof ENVIRONMENT_NAMES)[number];
 export interface CharacterAsset {
   group: THREE.Group;
   body: THREE.Mesh;
-  head: THREE.Mesh;
+  head: THREE.Object3D & { material: THREE.Material };
   helmet: THREE.Mesh;
   weaponSocket: THREE.Group;
   armLeft: THREE.Object3D;
@@ -82,6 +84,8 @@ class GameAssetLibrary {
   private props = new Map<AssetProp, THREE.Object3D>();
   private environment = new Map<AssetEnvironment, THREE.Object3D>();
   private character: THREE.Object3D | null = null;
+  private hand: THREE.Object3D | null = null;
+  private knife: THREE.Object3D | null = null;
   private middleIsland: THREE.Object3D | null = null;
   private atlasMaterial: THREE.MeshStandardMaterial | null = null;
 
@@ -108,7 +112,7 @@ class GameAssetLibrary {
       const loader = new GLTFLoader();
       loader.setMeshoptDecoder(MeshoptDecoder);
       const [
-        weaponGltf, propGltf, environmentGltf, landmarkGltf, characterGltf, middleIslandGltf,
+        weaponGltf, propGltf, environmentGltf, landmarkGltf, characterGltf, middleIslandGltf, handGltf, knifeGltf,
       ] = await Promise.all([
         loader.loadAsync(publicAsset('weapons.glb')),
         loader.loadAsync(publicAsset('props.glb')),
@@ -116,6 +120,8 @@ class GameAssetLibrary {
         loader.loadAsync(publicAsset('landmarks.glb')),
         loader.loadAsync(publicAsset('character.glb')),
         loader.loadAsync(publicAsset('middle-island.glb')),
+        loader.loadAsync(publicAsset('hands.glb')),
+        loader.loadAsync(publicAsset('butterfly.glb')),
       ]);
 
       const baseMaterial = new THREE.MeshStandardMaterial({
@@ -130,7 +136,32 @@ class GameAssetLibrary {
       this.prepareTemplates(propGltf.scene, baseMaterial);
       this.prepareTemplates(environmentGltf.scene, baseMaterial);
       this.prepareTemplates(landmarkGltf.scene, baseMaterial);
-      this.prepareTemplates(characterGltf.scene, baseMaterial);
+      this.prepareStandaloneTemplate(characterGltf.scene);
+      this.prepareStandaloneTemplate(handGltf.scene);
+      this.prepareStandaloneTemplate(knifeGltf.scene);
+      const studio = new RoomEnvironment();
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const reflections = pmrem.fromScene(studio, 0.04).texture;
+      reflections.userData.assetShared = true;
+      for (const root of [characterGltf.scene, handGltf.scene, knifeGltf.scene]) {
+        root.traverse(object => {
+          const mesh = object as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const material = mesh.material as THREE.MeshStandardMaterial;
+          material.envMap = reflections;
+          material.envMapIntensity = root === knifeGltf.scene ? 0.9 : root === handGltf.scene ? 0.8 : 0.35;
+          if (material.name === 'tactical-leather') {
+            material.color.setRGB(1.2, 1.2, 1.2);
+            material.bumpMap = material.map;
+            material.bumpScale = 0.004;
+          }
+          if (material.name === 'arm-skin') material.color.setRGB(0.72, 0.72, 0.72);
+        });
+      }
+      studio.dispose();
+      pmrem.dispose();
+      this.hand = handGltf.scene;
+      this.knife = knifeGltf.scene;
       this.prepareStandaloneTemplate(middleIslandGltf.scene);
       this.weapons = collectTemplates(weaponGltf.scene, WEAPON_NAMES, 'weapon');
       this.props = collectTemplates(propGltf.scene, PROP_NAMES, 'prop');
@@ -150,6 +181,8 @@ class GameAssetLibrary {
       this.environment.clear();
       this.landmarks.clear();
       this.character = null;
+      this.hand = null;
+      this.knife = null;
       this.middleIsland = null;
       console.warn('Compact game assets unavailable; using procedural fallback.', error);
       return false;
@@ -192,8 +225,9 @@ class GameAssetLibrary {
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const material of materials) {
         material.userData.assetShared = true;
-        const withMap = material as THREE.Material & { map?: THREE.Texture };
-        if (withMap.map) withMap.map.userData.assetShared = true;
+        for (const value of Object.values(material)) {
+          if (value instanceof THREE.Texture) value.userData.assetShared = true;
+        }
       }
     });
   }
@@ -281,9 +315,9 @@ class GameAssetLibrary {
 
   cloneCharacter(color: number): CharacterAsset | null {
     if (!this.character || !this.atlasMaterial) return null;
-    const group = this.character.clone(true) as THREE.Group;
+    const group = cloneSkeleton(this.character) as THREE.Group;
     const body = group.getObjectByName('player_body') as THREE.Mesh | undefined;
-    const head = group.getObjectByName('player_head') as THREE.Mesh | undefined;
+    const head = group.getObjectByName('player_head') as (THREE.Object3D & { material: THREE.Material }) | undefined;
     const helmet = group.getObjectByName('player_helmet') as THREE.Mesh | undefined;
     const weaponSocket = group.getObjectByName('player_weapon_socket') as THREE.Group | undefined;
     const armLeft = group.getObjectByName('player_arm_l_pivot');
@@ -292,28 +326,36 @@ class GameAssetLibrary {
     const forearmRight = group.getObjectByName('player_forearm_r_pivot');
     const legLeft = group.getObjectByName('player_leg_l_pivot');
     const legRight = group.getObjectByName('player_leg_r_pivot');
-    if (!body?.isMesh || !head?.isMesh || !helmet?.isMesh || !weaponSocket
+    if (!body?.isMesh || !head || !helmet?.isMesh || !weaponSocket
       || !armLeft || !armRight || !forearmLeft || !forearmRight || !legLeft || !legRight) return null;
     const lod1 = findSemanticChild(group, 'visual_lod1');
     if (lod1) lod1.visible = false;
     group.traverse((object) => {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
-      const material = this.instanceMaterial();
-      material.flatShading = false;
-      material.roughness = 0.9;
-      material.metalness = 0.02;
-      material.emissive.setHex(0x233128);
-      material.emissiveIntensity = 0.22;
+      const material = (mesh.material as THREE.MeshStandardMaterial).clone();
+      material.userData.assetShared = false;
       if (mesh.name.startsWith('player_accent')) material.color.setHex(color);
+      if (mesh.name === 'player_body') material.color.setHex(color).lerp(new THREE.Color(0xffffff), 0.8);
       mesh.material = material;
     });
+    head.material = (group.getObjectByName('survivor-skin') as THREE.Mesh).material as THREE.Material;
     helmet.visible = false;
     group.userData.compactAsset = true;
     return {
       group, body, head, helmet, weaponSocket,
       armLeft, armRight, forearmLeft, forearmRight, legLeft, legRight,
     };
+  }
+
+  cloneHand(): THREE.Group | null {
+    if (!this.hand) return null;
+    return cloneSkeleton(this.hand) as THREE.Group;
+  }
+
+  cloneButterfly(): THREE.Group | null {
+    if (!this.knife) return null;
+    return this.knife.clone(true) as THREE.Group;
   }
 
 

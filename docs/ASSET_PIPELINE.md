@@ -4,22 +4,24 @@
 
 - Promise: tactical low-poly objects that remain recognizable while moving and at mid-range.
 - Feeling: rugged, improvised island-survival gear; chunky silhouettes; restrained detail.
-- Non-goals: photorealism, large PBR texture sets, skeletal character animation, and visual-mesh collision.
+- Environment assets remain stylized. Characters and first-person hands use textured anatomical models; see [the model pipeline](model-sources.md). Visual meshes never drive collision.
 - Coordinate system: metres, Y-up in glTF/Three.js, asset origin at ground/handle pivot, ranged weapons face `-Z` after export.
 
 ## Browser budgets
 
 | Package | Contents | Target download | Geometry budget |
 | --- | --- | ---: | ---: |
-| `weapons.glb` | 10 held/pickup weapons | 220 KB | 1,500 triangles per weapon |
+| `weapons.glb` | 7 firearm/throwable models | 220 KB | 1,500 triangles per weapon |
 | `props.glb` | crates, healing, armour, ammo, projectiles | 180 KB | 800 triangles per prop |
 | `environment.glb` | tree, rock, bush, grass, remnants, ruins props | 180 KB | 600 triangles per LOD0 asset |
 | `landmarks.glb` | wreck, watchtower, bunker with LODs/proxies | 300 KB | 8,000 triangles per LOD0 POI |
-| `character.glb` | modular survivor with named sockets | 150 KB | 2,500 triangles LOD0 |
+| `character.glb` | textured survivor, 53 joints | 1.2 MB | 40,000 triangles |
+| `hands.glb` | anatomical glove and skinned forearm | 350 KB | 16,000 triangles |
+| `butterfly.glb` | blade and two animated handles | 300 KB | 22,000 triangles |
 | `middle-island.glb` | complete central combat arena | 350 KB | 15,000 triangles |
-| Atlas + all GLBs | complete initial art payload | **1 MB maximum** | Meshopt-compressed |
+| Atlas + all GLBs | complete initial art payload | **4 MB maximum** | Meshopt-compressed |
 
-The atlas is a single power-of-two `512×256` sRGB PNG. Geometry reuses one matte atlas material. Normal, metallic and roughness maps are deliberately omitted; form, UV colour blocks and lighting provide readability.
+For environment, props and firearms, the atlas is a single power-of-two `512×256` sRGB PNG. Those meshes reuse one matte atlas material. Anatomical models retain their own WebP skin/clothing textures and PBR materials. For atlas assets, normal, metallic and roughness maps are omitted; form, UV colour blocks and lighting provide readability.
 
 ## Names, pivots and LODs
 
@@ -27,10 +29,10 @@ The atlas is a single power-of-two `512×256` sRGB PNG. Geometry reuses one matt
 - Props: `prop_<type>`. Origin is centred on the footprint at ground level.
 - Environment: `env_<type>` with children `visual_lod0` and `visual_lod1` where useful.
 - Landmarks: `poi_<type>` with `visual_lod0`, `visual_lod1`, and `COL_*` proxy empties.
-- Character: `player_survivor`, with `player_body`, `player_head`, `player_gear`, and `player_weapon_socket`.
+- Character: `player_survivor`, with `player_body`, `player_head`, `survivor-skeleton`, and `player_weapon_socket`.
 - Middle island: `middle_island`; its Blender ground surface at `Z=1.08` is placed on the deterministic ruins floor at game `Y=5.5`.
-- Character transform rig: `player_arm_l_pivot`, `player_arm_r_pivot`, `player_leg_l_pivot`, and `player_leg_r_pivot`. These are lightweight Empty pivots, not a skinned armature.
-- Landmark LOD1 switches at 55 m. The survivor LOD1 is authored but kept hidden until component-aware character switching is added; instanced vegetation uses its compact LOD0 because it is already below the mobile-safe triangle target.
+- Character transform rig: `player_arm_l_pivot`, `player_arm_r_pivot`, `player_leg_l_pivot`, and `player_leg_r_pivot`. These names now identify joints of the skinned armature.
+- Landmark LOD1 switches at 55 m. The survivor uses its anatomical mesh; instanced vegetation uses its compact LOD0 because it is already below the mobile-safe triangle target.
 
 Blender object names are unique across the complete master scene. Repeated semantic child names are therefore exported with suffixes such as `visual_lod0.001`. Runtime lookup resolves these suffixes inside the owning asset root; code must never assume the first scene-global `visual_lod0` belongs to every template.
 
@@ -40,10 +42,10 @@ Blender object names are unique across the complete master scene. Repeated seman
 - Crates use chamfered corners, structural cross-braces, latches and handles. Healing, armour and ammunition have unique profiles rather than colour-only variants.
 - Trees, bushes and grass use asymmetric clustered geometry. Repeated vegetation remains instanced and grass/bushes remain walk-through cover.
 - The wreck uses a faceted V-hull and triangular sail; the watchtower uses thin stair treads, stringers, railings and structural X-braces; the bunker has a recessed entrance, roof lip, vents and firing slits.
-- The survivor faces Blender `+Y`: goggles and weapon socket are forward, backpack and bedroll are behind. Head pitch pivots at the neck and feet contact ground at `Z=0`.
+- The survivor faces Blender `+Y` and Three.js `-Z`. Head pitch pivots at the neck, and the weapon follows the actual right-hand joint. Its jacket, face, gloves, hair and shoes have separate materials.
 - The shared atlas adds tile-local wood grain, foliage mottling, metal highlights and hazard bands without adding another texture request.
 
-The current optimized payload is 692.3 KiB. The middle island contributes 262.3 KB and 11,650 triangles while rendering as only 17 material-group meshes. The complete initial art payload remains below the 1 MB browser cap.
+The complete optimized payload is approximately 2.3 MB, including the anatomical models. The middle island contributes 262.3 KB and 11,650 triangles while rendering as 17 material-group meshes.
 
 ## Collision policy
 
@@ -56,9 +58,9 @@ The current optimized payload is 692.3 KiB. The middle island contributes 262.3 
 
 ## Required validation
 
-1. Blender scene contains every named asset and saves as `art/island-duell-assets.blend`.
+1. Environment master saves as `art/island-duell-assets.blend`; the anatomical models have their own packed sources and build script documented in [model-sources.md](model-sources.md).
 2. Each GLB contains the expected roots and no missing UVs where a texture is used. The color-only middle island intentionally permits untextured primitives.
-3. Optimized GLBs use Meshopt and the total payload stays below 1 MB.
+3. Optimized GLBs use Meshopt and the total payload stays below 4 MB.
 4. Runtime loading, fallback paths, typecheck, unit tests and production build pass.
 5. Browser smoke test has no page/console error and visually renders the imported assets.
 6. Automated physics traversal proves the watchtower stair route and both middle-island ramps reach their platforms.

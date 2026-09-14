@@ -24,6 +24,26 @@ process.on('message', (message: { id: number; action: string }) => {
       room.pushInventory(player);
       yaw = Math.atan2(x - wreck.x, z - wreck.z);
     }
+    if (message.action === 'preview-model') {
+      const bot = [...room.players.values()].find((p: any) => p.isBot) as any;
+      const { x, z } = player.move.pos;
+      // Choose a nearby point at the same terrain height for an unobstructed model view.
+      let angle = 0, best = Infinity;
+      for (let i = 0; i < 32; i++) {
+        const a = i * Math.PI / 16;
+        const h = sampleHeight(room.gen.params, x + Math.cos(a) * 3.2, z + Math.sin(a) * 3.2);
+        const error = Math.abs(h - player.move.pos.y);
+        if (error < best) { best = error; angle = a; }
+      }
+      const position = { x: x + Math.cos(angle) * 3.2, y: sampleHeight(room.gen.params, x + Math.cos(angle) * 3.2, z + Math.sin(angle) * 3.2) + 0.1, z: z + Math.sin(angle) * 3.2 };
+      bot.move = freshMoveState(position);
+      room.phys.setPlayerPos(bot.id, position);
+      bot.inv.active = 1;
+      bot.yaw = Math.atan2(position.x - x, position.z - z);
+      yaw = Math.atan2(x - position.x, z - position.z);
+      player.blindUntil = 0;
+      player.blindIntensity = 0;
+    }
     process.send?.({ id: message.id, state: { ready: !!player, yaw, mag: player?.inv.primary?.mag, reloading: player?.reloadUntil > 0, active: player?.inv.active, throwables: player?.inv.throwables, readyToFire: !!player && room.t >= player.cooldownUntil } });
   } catch (error) { process.send?.({ id: message.id, error: String(error) }); }
 });
