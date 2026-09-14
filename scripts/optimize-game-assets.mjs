@@ -18,7 +18,7 @@ const requiredRoots = {
     'player_survivor', 'player_body', 'player_head', 'player_helmet', 'survivor-skeleton',
     'hand_r', 'player_weapon_socket',
   ],
-  'hands.glb': ['anatomical_hand', 'anatomical-arm', 'view-wrist', 'view-elbow'],
+  'hands.glb': ['anatomical_hand', 'anatomical-arm', 'view-grip', 'view-wrist', 'view-elbow', 'view-shoulder'],
   'butterfly.glb': ['butterfly-knife', 'knife-blade', 'knife-safe-handle', 'knife-blade-pivot', 'knife-bite-pivot'],
   'middle-island.glb': ['middle_island'],
 };

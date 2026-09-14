@@ -7,10 +7,16 @@ jacket. Each player receives an independent skeleton and materials.
 
 The glove material in `art/textures/tactical-glove.png` was generated for this
 project over the original CC0 UV layout, adding pebbled leather, fabric panels,
-reinforced sections and stitching. The first-person glove uses a baked closed grip on an anatomical forearm. A
-separate two-joint skin keeps the wrist on the weapon and the elbow outside the
-camera during attacks, inspection and reloads. Finger joints are not animated
-individually at runtime. The balisong has separate blade/handle pivots, titanium
+reinforced sections and stitching. The first-person glove uses individually posed
+finger joints and an opposing thumb fitted to the butterfly's hilt. The hilt is
+sized to the finger row; its two handles sit together inside the closed grip.
+The complete anatomical arm has wrist, elbow and shoulder skinning joints.
+The glove cuff follows the wrist; a separate grip anchor keeps its fingers fixed
+on the handles. Skin overlaps beneath the cuff to cover the articulated seam.
+Two-bone inverse kinematics preserves the forearm and upper-arm lengths during
+attacks, inspection and reloads. An unreachable pose moves the shoulder instead
+of stretching the forearm. Finger joints are not animated individually at runtime.
+The balisong has separate blade/handle pivots, titanium
 and steel materials, studio reflections, equip flips and inspection animations.
 Left and right click retain their existing quick-cut/heavy-stab behavior.
 
@@ -32,6 +38,11 @@ npm run assets:build
 npm run assets:validate
 ```
 
+Append `-- --hands-only` to the Blender command to rebuild just the hand/arm and
+knife. The builder reports finger-tip positions in the Three.js hand frame and
+fails if the bounded thumb articulation misses its grip target by more than 2 mm
+in the source model. These contact landmarks are also exported as GLB extras.
+
 Editable, packed sources are checked in as `art/survivor.blend`, `art/hands.blend`
 and `art/butterfly.blend`. The builder preserves source UVs and interpolates
 clothing weights from MakeHuman's fitting data. Hidden body faces are removed.
@@ -46,15 +57,18 @@ with `scripts/blender/preview_models.py -- survivor` (or `hands` / `knife`).
 
 ## Budgets and verification
 
-The character has 27,162 triangles (~1.09 MB), the first-person hand about 11,500
-(~303 KB), and the balisong 20,473 (~255 KB). The complete eight-file GLB bundle
+The character has 27,162 triangles (~1.09 MB), the first-person hand/arm 13,688
+(~321 KB), and the balisong 20,473 (~255 KB). The complete eight-file GLB bundle
 plus terrain atlas is approximately 2.3 MB. `assets:validate` checks semantic
 nodes, UVs, per-model triangle limits, compression and a 4 MB total ceiling.
 
-Vitest decodes production geometry and skins to verify the grip, arm anchoring,
+Vitest decodes production geometry and skins to verify hilt/finger proportions,
+opposing thumb contact, fixed limb lengths throughout both attacks,
 independent skeleton instances and knife pivots. Browser tests render the actual
 textures and exercise equip, inspection, both attacks, firearm aiming/reloading,
-slot changes and lobby models. Screenshots are written under `test-results/`.
+slot changes and lobby models. `model-review.spec.ts` additionally renders the
+ready, equip, inspect and attack poses in controlled light, plus a side view of
+the grip. Screenshots are written under `test-results/`.
 
 The visual reference is [CSanywhere](https://csany.vercel.app/game). Its arena
 loaded, but browser mouse capture was blocked, so its combat animations could not

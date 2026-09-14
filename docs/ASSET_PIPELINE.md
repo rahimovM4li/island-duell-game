@@ -16,7 +16,7 @@
 | `environment.glb` | tree, rock, bush, grass, remnants, ruins props | 180 KB | 600 triangles per LOD0 asset |
 | `landmarks.glb` | wreck, watchtower, bunker with LODs/proxies | 300 KB | 8,000 triangles per LOD0 POI |
 | `character.glb` | textured survivor, 53 joints | 1.2 MB | 40,000 triangles |
-| `hands.glb` | anatomical glove and skinned forearm | 350 KB | 16,000 triangles |
+| `hands.glb` | anatomical glove and complete skinned arm | 350 KB | 16,000 triangles |
 | `butterfly.glb` | blade and two animated handles | 300 KB | 22,000 triangles |
 | `middle-island.glb` | complete central combat arena | 350 KB | 15,000 triangles |
 | Atlas + all GLBs | complete initial art payload | **4 MB maximum** | Meshopt-compressed |

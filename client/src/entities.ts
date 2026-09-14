@@ -17,7 +17,7 @@ import { droppedPickupPose } from './pickup-drop-animation';
 import { shouldShowSpectatorLabel } from './spectator-labels';
 import { firstPersonWeapon, reloadPose } from './first-person-weapon';
 import { butterflyKnife, animateKnife, KNIFE_DRAW_SECONDS, KNIFE_INSPECT_SECONDS } from './butterfly-knife';
-import { firstPersonHand, updateHandSleeves } from './first-person-hands';
+import { firstPersonHand, updateHandArms } from './first-person-hands';
 
 const PLAYER_COLORS = PLAYER_SKINS.map((skin) => skin.color);
 const HIT_FLASH_BODY = new THREE.Color(0xffffff);
@@ -487,7 +487,7 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
     ? 0.36 : weapon === 'knife' ? 0.68 : 0.54;
   g.scale.setScalar(scale);
   const baseRotation = weapon === 'knife'
-    ? { x: -0.55, y: -0.35, z: 0.35 }
+    ? { x: 0.8, y: -1.05, z: 0.2 }
     : { x: 0, y: -0.08, z: 0 };
   g.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
   g.userData.viewmodelBaseRotation = baseRotation;
@@ -1632,9 +1632,9 @@ export class Entities {
     this.sprintBlend += ((this.viewSprinting && !this.aiming && this.reloadT < 0 ? 1 : 0) - this.sprintBlend) * (1 - Math.exp(-dt * 12));
     this.stridePhase += this.viewSpeed * dt * 1.9;
     this.viewRoot.position.set(
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? 0.27 : 0.38, 0, this.aimBlend),
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.18 : -0.38, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.76 : -0.72, -0.57, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? 0.23 : 0.38, 0, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.10 : -0.38, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.55 : -0.72, -0.57, this.aimBlend),
     );
     if (this.viewWeapon) {
       const baseRotation = this.viewWeapon.userData.viewmodelBaseRotation as {
@@ -1677,7 +1677,7 @@ export class Entities {
         const stroke = Math.sin(this.swingT * Math.PI);
         this.viewWeapon.rotation.x = (baseRotation?.x ?? 0) - stroke * (heavy ? 0.6 : 0.12);
         this.viewWeapon.rotation.z -= stroke * (heavy ? 0.12 : 0.95);
-        this.viewWeapon.position.z = -stroke * (heavy ? 0.30 : 0.16) + switchDrop * 0.2;
+        this.viewWeapon.position.z = -stroke * (heavy ? 0.10 : 0.065) + switchDrop * 0.2;
         const duration = this.knifeInspect ? KNIFE_INSPECT_SECONDS : KNIFE_DRAW_SECONDS;
         if (this.knifeT >= 0) {
           this.knifeT += dt;
@@ -1686,7 +1686,7 @@ export class Entities {
         const pose = animateKnife(this.viewWeapon, this.knifeT < 0 ? -1 : this.knifeT / duration, this.knifeInspect, this.reducedMotion);
         this.viewWeapon.rotation.z += pose.wrist;
         this.viewWeapon.rotation.y += pose.inspect * 0.7;
-        this.viewWeapon.position.x -= pose.inspect * 0.16 + stroke * (heavy ? 0.20 : 0.28);
+        this.viewWeapon.position.x -= pose.inspect * 0.16 + stroke * (heavy ? 0.06 : 0.10);
         this.viewWeapon.position.y += pose.inspect * 0.10;
       }
       const mechanism = reloadPose(progress);
@@ -1710,7 +1710,7 @@ export class Entities {
       this.viewWeapon.position.y += Math.cos(this.stridePhase * 2) * 0.018 * motion - this.sprintBlend * 0.08;
       this.viewWeapon.rotation.x += this.sprintBlend * 0.32;
       this.viewWeapon.rotation.z -= this.sprintBlend * 0.3;
-      updateHandSleeves(this.viewRoot, this.camera);
+      updateHandArms(this.viewRoot, this.camera);
     }
     for (let i = this.fx.length - 1; i >= 0; i--) {
       const f = this.fx[i];

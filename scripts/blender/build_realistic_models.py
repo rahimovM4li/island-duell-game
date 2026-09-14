@@ -215,20 +215,21 @@ def hands():
     skin=material('arm-skin',image=MH/'skins/young_caucasian_male/young_lightskinned_male_diffuse.png',rough=.73)
     glove_mat=material('tactical-leather',image=GLOVE_TEXTURE,rough=.64)
     glove,_=outfit('clothes','toigo_gloves_short',glove_mat)
-    # Keep the right forearm and hand, preserving their existing UVs and skin weights.
+    # Preserve the full anatomical arm, including the elbow and upper arm.
     elbow=joint(RIG['lowerarm_r']['head']); wrist=joint(RIG['hand_r']['head'])
-    forearm_axis=elbow-wrist
-    def forearm_vertex(index):
-        delta=xyz(BASE[index])-wrist
-        t=delta.dot(forearm_axis)/forearm_axis.length_squared
-        return -.3<t<1.25 and (delta-forearm_axis*t).length<.09
+    shoulder=joint(RIG['upperarm_r']['head']); forearm_axis=elbow-wrist
+    def near_segment(index,start,end,minimum,maximum,radius):
+        delta=xyz(BASE[index])-start; axis=end-start
+        t=delta.dot(axis)/axis.length_squared
+        return minimum<t<maximum and (delta-axis*t).length<radius
     skinhand=mesh('anatomical-arm',list(map(xyz,BASE)),UV,FACES,skin,VERT_WEIGHTS,
-        lambda f,g:g=='body' and all(forearm_vertex(v[0]) for v in f))
-    # Clip at the wrist plane so the skin meets the cuff without ragged triangles.
+        lambda f,g:g=='body' and all(near_segment(v[0],wrist,elbow,-.3,1.15,.095)
+            or near_segment(v[0],elbow,shoulder,-.1,1.04,.10) for v in f))
+    # Keep a short overlap beneath the articulated glove cuff.
     import bmesh
     bm=bmesh.new(); bm.from_mesh(skinhand.data)
     bmesh.ops.bisect_plane(bm,geom=list(bm.verts)+list(bm.edges)+list(bm.faces),
-        plane_co=wrist+forearm_axis.normalized()*.006,plane_no=forearm_axis.normalized(),clear_inner=True)
+        plane_co=wrist-forearm_axis.normalized()*.008,plane_no=forearm_axis.normalized(),clear_inner=True)
     bm.to_mesh(skinhand.data); bm.free()
     # Remove the other glove. This is a real sewn glove mesh, not tube fingers.
     bpy.context.view_layer.objects.active=glove; glove.select_set(True)
@@ -238,18 +239,59 @@ def hands():
     across=(joint(RIG['index_01_r']['head'])-joint(RIG['pinky_01_r']['head'])).normalized()
     normal=along.cross(across).normalized(); across=normal.cross(along).normalized()
     arm=rig('hand-skeleton',[skinhand,glove])
-    for finger in ['index','middle','ring','pinky']:
-        for i,angle in [(1,1.05),(2,1.35),(3,.8)]:
+    for finger,mcp,pip,dip in [('index',1.58,1.25,.40),('middle',1.58,1.25,.40),('ring',1.55,1.32,.45),('pinky',1.50,1.38,.50)]:
+        for i,angle in [(1,mcp),(2,pip),(3,dip)]:
             name=f'{finger}_{i:02d}_r'
             if name in arm.pose.bones: rotate_world(arm,name,across,-angle)
-    rotate_world(arm,'thumb_01_r',normal,-.92)
-    rotate_world(arm,'thumb_02_r',across,-1.1)
-    rotate_world(arm,'thumb_03_r',across,-.5)
+    from mathutils import Quaternion
+    # Fit the opposing thumb to the hilt, with bounded CMC/MCP/IP articulation.
+    basis3=Matrix((tuple(-along),tuple(across),tuple(-normal)))
+    thumb_target=wrist+basis3.inverted()@(Vector((-.045,-.105,.035))-Vector((.12,-.16,.08)))/2.1
+    heads=[joint(RIG[f'thumb_{i:02d}_r']['head']) for i in [1,2,3]]
+    tail=joint(RIG['thumb_03_r']['tail'])
+    thumb_flex=(heads[2]-heads[1]).cross(normal).normalized()
+    def thumb_tip(angles):
+        n,a,b,c=angles
+        q1=Quaternion(along,a)@Quaternion(normal,n)
+        q2=q1@Quaternion(thumb_flex,b); q3=q2@Quaternion(thumb_flex,c)
+        return heads[0]+q1@(heads[1]-heads[0])+q2@(heads[2]-heads[1])+q3@(tail-heads[2])
+    limits=[(-1,1.5),(-.2,1.6),(0,1.0),(0,1.3)]
+    best=None; best_error=float('inf')
+    for spread in [0,.6,1.2]:
+        for opposition in [0,.6,1.2]:
+            angles=[spread,opposition,.5,.4]
+            for step in [.3,.15,.07,.03,.01,.004]:
+                for _ in range(12):
+                    improved=False
+                    for i,(low,high) in enumerate(limits):
+                        for sign in [-1,1]:
+                            proposal=angles.copy(); proposal[i]=min(high,max(low,angles[i]+sign*step))
+                            if (thumb_tip(proposal)-thumb_target).length_squared < (thumb_tip(angles)-thumb_target).length_squared:
+                                angles=proposal; improved=True
+                    if not improved: break
+            error=(thumb_tip(angles)-thumb_target).length_squared
+            if error<best_error: best_error=error; best=angles
+    angles=best
+    n,a,b,c=angles
+    thumb=arm.pose.bones['thumb_01_r']; thumb.rotation_mode='QUATERNION'
+    rest=thumb.bone.matrix_local.to_quaternion()
+    thumb.rotation_quaternion=rest.inverted()@Quaternion(along,a)@Quaternion(normal,n)@rest
+    rotate_world(arm,'thumb_02_r',thumb_flex,b)
+    rotate_world(arm,'thumb_03_r',thumb_flex,c)
+    thumb_error=(thumb_tip(angles)-thumb_target).length
+    assert thumb_error < .002, f'Thumb cannot reach the hilt: {thumb_error:.4f} m'
+    print('THUMB_IK',json.dumps({'angles_rad':angles,'error_m':thumb_error}))
+    bpy.context.view_layer.update()
+    contact_points={}
+    for finger in ['index','middle','ring','pinky','thumb']:
+        b=arm.pose.bones[f'{finger}_03_r']
+        contact_points[finger]=b.matrix@b.bone.matrix_local.inverted()@joint(RIG[b.name]['tail'])
     apply_pose(arm,[skinhand,glove])
     # New hand-local basis: fingers extend -X, finger row lies along Y, back of hand +Z.
     basis=Matrix((tuple(-along),tuple(across),tuple(-normal))).to_4x4()
     scale=Matrix.Scale(2.1,4)
     transform=Matrix.Rotation(math.pi/2,4,'X')@Matrix.Translation((.12,-.16,.08))@scale@basis@Matrix.Translation(-wrist)
+    print('GRIP_CONTACTS',json.dumps({n:list(Matrix.Rotation(-math.pi/2,4,'X')@transform@v) for n,v in contact_points.items()}))
     # Bake the closed glove pose, then bind the forearm to the view rig.
     for ob in [skinhand,glove]:
         bpy.context.view_layer.objects.active=ob
@@ -260,41 +302,57 @@ def hands():
     bpy.data.objects.remove(arm,do_unlink=True)
     root=bpy.data.objects.new('anatomical_hand',None); bpy.context.collection.objects.link(root)
     for ob in [skinhand,glove]: ob.parent=root
-    # A separate two-joint forearm keeps the wrist on the weapon and the elbow
-    # outside the camera throughout equip, inspection, aiming and both attacks.
-    wrist_local=transform@wrist; elbow_local=transform@elbow
+    # The grip anchor holds the fingers on the hilt. Three arm joints preserve
+    # limb lengths and let the cuff follow the wrist without opening a seam.
+    wrist_local=transform@wrist; elbow_local=transform@elbow; shoulder_local=transform@shoulder
     data=bpy.data.armatures.new('view-arm'); arm=bpy.data.objects.new('view-arm',data)
     bpy.context.collection.objects.link(arm); arm.parent=root
     bpy.context.view_layer.objects.active=arm; arm.select_set(True); bpy.ops.object.mode_set(mode='EDIT')
-    for name,point in [('view-wrist',wrist_local),('view-elbow',elbow_local)]:
+    for name,point in [('view-grip',wrist_local),('view-wrist',wrist_local),('view-elbow',elbow_local),('view-shoulder',shoulder_local)]:
         b=data.edit_bones.new(name); b.head=point; b.tail=point+Vector((0,0,.04))
     bpy.ops.object.mode_set(mode='OBJECT'); arm.select_set(False)
     skinhand.vertex_groups.clear()
     wg=skinhand.vertex_groups.new(name='view-wrist'); eg=skinhand.vertex_groups.new(name='view-elbow')
-    direction=elbow_local-wrist_local
+    sg=skinhand.vertex_groups.new(name='view-shoulder')
+    direction=elbow_local-wrist_local; upper=shoulder_local-elbow_local
+    smooth=lambda t: max(0,min(1,t))**2*(3-2*max(0,min(1,t)))
     for v in skinhand.data.vertices:
-        t=max(0,min(1,((v.co-wrist_local).dot(direction)/direction.length_squared-.06)/.59))
-        t=t*t*(3-2*t)
-        wg.add([v.index],1-t,'REPLACE'); eg.add([v.index],t,'REPLACE')
-    mod=skinhand.modifiers.new('Anchored anatomical forearm','ARMATURE'); mod.object=arm
+        t=(v.co-wrist_local).dot(direction)/direction.length_squared
+        u=(v.co-elbow_local).dot(upper)/upper.length_squared
+        shoulder_weight=smooth(u/.28) if t>.75 else 0
+        wrist_weight=(1-smooth(t/.40))*(1-shoulder_weight)
+        elbow_weight=1-shoulder_weight-wrist_weight
+        wg.add([v.index],wrist_weight,'REPLACE'); eg.add([v.index],elbow_weight,'REPLACE')
+        sg.add([v.index],shoulder_weight,'REPLACE')
+    mod=skinhand.modifiers.new('Articulated anatomical arm','ARMATURE'); mod.object=arm
     skinhand.parent=arm
+    glove.vertex_groups.clear()
+    fixed=glove.vertex_groups.new(name='view-grip'); cuff=glove.vertex_groups.new(name='view-wrist')
+    for v in glove.data.vertices:
+        t=(v.co-wrist_local).dot(direction)/direction.length_squared
+        weight=smooth((t+.14)/.16)
+        fixed.add([v.index],1-weight,'REPLACE'); cuff.add([v.index],weight,'REPLACE')
+    mod=glove.modifiers.new('Articulated glove cuff','ARMATURE'); mod.object=arm
+    glove.parent=arm
     root['source']='MakeHuman CC0 / Margaret Toigo gloves'
+    root['grip_tips']={n:list(Matrix.Rotation(-math.pi/2,4,'X')@transform@v) for n,v in contact_points.items()}
     bpy.ops.wm.save_as_mainfile(filepath=str(ROOT/'art/hands.blend'))
     export('hands.glb')
 
 def knife():
     reset(); bpy.ops.import_scene.gltf(filepath=str(SRC/'balisong.glb'))
     source=[o for o in bpy.context.scene.objects if o.type=='MESH']
-    steel=material('knife-brushed-steel',(.22,.32,.4,1),rough=.26,metal=.85)
+    steel=material('knife-brushed-steel',(.5,.57,.61,1),rough=.21,metal=.92)
     carbon=material('knife-carbon-titanium',(.055,.075,.085,1),rough=.34,metal=.65)
     inlay=material('knife-inlay',(.12,.6,.65,1),rough=.25,metal=.5)
     root=bpy.data.objects.new('butterfly-knife',None); bpy.context.collection.objects.link(root)
-    root.scale=(.75,.75,.75)
+    root.scale=(.48,.48,.48)
+    root.location=Vector((-.045,-.012,-.040))
     def pivot(name,parent,x=0):
         o=bpy.data.objects.new(name,None); bpy.context.collection.objects.link(o); o.parent=parent; o.location.x=x; return o
-    safe=pivot('knife-safe-handle',root,-.055)
-    blade=pivot('knife-blade-pivot',root,-.055)
-    bite=pivot('knife-bite-pivot',blade,.11)
+    safe=pivot('knife-safe-handle',root,-.028)
+    blade=pivot('knife-blade-pivot',root,-.028)
+    bite=pivot('knife-bite-pivot',blade,.056)
     import numpy as np
     convert=Matrix.Rotation(math.pi/2,4,'X')
     for ob in source:
@@ -309,7 +367,7 @@ def knife():
             points=[convert@Vector(((v.x-center.x)*.1,-(v.y-center.y)*.1,(v.z-center.z)*.1)) for v in points]
             parent=safe if 'Top' in ob.name else bite; mat=carbon
         else:
-            points=[convert@Vector((v.x*.1+.055,(.45-v.y)*.1,(v.z+.08)*.1)) for v in points]
+            points=[convert@Vector((v.x*.1+.028,(.45-v.y)*.1,(v.z+.08)*.1)) for v in points]
             parent=blade; mat=inlay if '001' in ob.name else steel
         ob.parent=None; ob.matrix_world=Matrix.Identity(4)
         for v,p in zip(ob.data.vertices,points): v.co=p
@@ -324,6 +382,8 @@ def knife():
     bpy.ops.wm.save_as_mainfile(filepath=str(ROOT/'art/butterfly.blend'))
     export('butterfly.glb')
 
-character()
+import sys
+if '--hands-only' not in sys.argv:
+    character()
 hands()
 knife()
