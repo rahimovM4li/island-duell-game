@@ -12,7 +12,7 @@ An existing custom F key binding takes priority over inspection.
 
 The desired feel is a readable, responsive first-person balisong: dark milled
 handles, visible hinges, a cyan/violet/pink/gold blade, an opening flourish and a
-light cut and a stronger forward stab. The knife provides a reliable fallback and an 8% movement
+short forward stab. The knife provides a reliable fallback and an 8% movement
 bonus; firearms retain their ranged role. There are no new melee pickups.
 
 - [CSanywhere](https://csany.vercel.app/) was inspected in the browser. Its loadout
@@ -35,17 +35,16 @@ model or texture. The existing firearm/character GLBs remain in use.
 
 - The draw lasts 0.92 seconds; inspection lasts 1.65 seconds. Both use time-based
   hinge keyframes with smooth interpolation. Reduced motion keeps the hinges still.
-- Both confirmed attacks interrupt cosmetic animation. Left click cuts: 35 base
-  damage, 0.55-second cooldown and 1.8 m configured reach. Right click stabs: 65 base
-  damage, 0.95-second cooldown and 1.45 m reach. Both retain the existing melee
-  contact tolerance and cover checks. Damage remains server-authoritative.
+- A confirmed melee attack interrupts cosmetic animation and thrusts the knife
+  forward. Damage remains server-authoritative: 35 base damage, 0.55-second cooldown,
+  1.8 m configured reach plus the existing melee contact tolerance. Cover blocks hits.
 - Switching slots preserves the combat cooldown. Inspection cannot bypass it.
 - The same butterfly geometry appears on remote players; the elaborate flip is
   local cosmetic feedback. Remote players use the existing melee action animation.
 - Fists, machete and spear definitions, loot entries, procedural alternatives and
   GLB nodes have been removed. The Blender source and asset validation agree with
   the reduced bundle. UVs are retained because the game assigns its atlas at load time.
-- Protocol version 21 adds the secondary knife input and attack presentation. Restart the
+- Protocol version 20 covers the slot layout and new weapon identity. Restart the
   server and reload clients together when updating an existing running instance.
 
 ## Validation
@@ -62,9 +61,6 @@ validation passed (746.5 KiB total asset payload). Six unaffected browser scenar
 passed in the complete run; the gameplay and movement smoke scenarios passed again
 after the final hand-pose and grenade-cooldown fixture adjustments. The ready,
 inspect and stab screenshots were visually checked.
-
-The subsequent [character and hand upgrade](character-hands-upgrade.md) replaces
-the old hand mesh and adds distinct attack poses, anchored sleeves and a depth-separated viewmodel pass.
 
 Known limits: no separately rigged finger animation or randomized knife skins.
 The existing generated melee swish is retained. A later cosmetic pass could add

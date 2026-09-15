@@ -29,8 +29,6 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
       server.once('error', reject);
     });
     await page.goto('http://127.0.0.1:3193');
-    await expect.poll(() => page.evaluate(() => (window as any).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().lobby?.renderedCharacters ?? 0)).toBeGreaterThan(0);
-    await page.screenshot({ path: testInfo.outputPath('survivor-lobby.png') });
     await page.getByRole('radio', { name: /Training/ }).click();
     await page.locator('#practice-bots').selectOption('1');
     await page.getByRole('button', { name: /Training starten/ }).click();
@@ -90,14 +88,6 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.mouse.up();
     expect((await view()).knifeAnimating).toBe(false);
     await page.screenshot({ path: testInfo.outputPath('butterfly-stab.png') });
-    await expect.poll(async () => (await command('state')).readyToFire).toBe(true);
-    await page.keyboard.press('f');
-    await expect.poll(async () => (await view()).knifeInspecting).toBe(true);
-    await page.mouse.down({ button: 'right' });
-    await expect.poll(async () => (await view()).knifeAttack).toBe('secondary');
-    await page.mouse.up({ button: 'right' });
-    expect((await view()).knifeAnimating).toBe(false);
-    await page.screenshot({ path: testInfo.outputPath('butterfly-heavy-stab.png') });
     await page.keyboard.press('4');
     await expect.poll(async () => (await view()).weapon).toBe('grenade');
     await page.keyboard.press('4');
@@ -112,15 +102,6 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect.poll(async () => (await view()).weapon).toBe('rifle');
     await page.keyboard.press('1');
     await expect.poll(async () => (await view()).knifeAnimating).toBe(true);
-    // Let the just-thrown flash finish before reviewing the remote character.
-    await page.waitForTimeout(5000);
-    const preview = await command('preview-model');
-    await page.evaluate((yaw: number) => {
-      const input = (window as any).__ISLAND_DUELL_DIAGNOSTICS__.snapshot().input;
-      document.dispatchEvent(new MouseEvent('mousemove', { movementX: (input.yaw - yaw) / 0.0023, movementY: input.pitch / 0.0023 }));
-    }, preview.yaw);
-    await page.waitForTimeout(1100);
-    await page.screenshot({ path: testInfo.outputPath('survivor-in-game.png') });
     expect(errors).toEqual([]);
   } finally {
     if (server.exitCode === null && server.signalCode === null) {

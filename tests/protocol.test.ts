@@ -31,7 +31,6 @@ describe('isInputMsg', () => {
     expect(isInputMsg(valid)).toBe(true);
     expect(isInputMsg({ ...valid, slot: 2, reload: true, drop: true })).toBe(true);
     expect(isInputMsg({ ...valid, slot: 4, throwCycle: true })).toBe(true);
-    expect(isInputMsg({ ...valid, secondary: true })).toBe(true);
     expect(isInputMsg({ ...valid, fire: true, shotAgeMs: 135 })).toBe(true);
   });
   it('rejects malformed inputs', () => {
@@ -41,7 +40,6 @@ describe('isInputMsg', () => {
     expect(isInputMsg({ ...valid, yaw: NaN })).toBe(false);
     expect(isInputMsg({ ...valid, dt: Infinity })).toBe(false);
     expect(isInputMsg({ ...valid, slot: 5 })).toBe(false);
-    expect(isInputMsg({ ...valid, secondary: 'heavy' })).toBe(false);
     expect(isInputMsg({ ...valid, fire: 1 })).toBe(false);
     expect(isInputMsg({ ...valid, sneak: 'yes' })).toBe(false);
     expect(isInputMsg({ ...valid, prone: 'yes' })).toBe(false);

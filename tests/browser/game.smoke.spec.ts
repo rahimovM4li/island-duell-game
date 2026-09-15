@@ -32,7 +32,7 @@ test('player can enter training from the new 3D lobby and render the match', asy
     const name = new URL(response.url()).pathname.split('/').pop();
     if (name && [
       'weapons.glb', 'props.glb', 'environment.glb', 'landmarks.glb',
-      'character.glb', 'middle-island.glb', 'hands.glb', 'butterfly.glb', 'island-atlas.png',
+      'character.glb', 'middle-island.glb', 'island-atlas.png',
     ].includes(name)) {
       assetResponses.set(name, response.status());
     }
@@ -273,8 +273,6 @@ test('player can enter training from the new 3D lobby and render the match', asy
   expect(movementSamples.network?.maxRemoteExtrapolationMs).toBeLessThanOrEqual(85);
 
   expect(Object.fromEntries(assetResponses)).toEqual({
-    'hands.glb': 200,
-    'butterfly.glb': 200,
     'island-atlas.png': 200,
     'weapons.glb': 200,
     'props.glb': 200,

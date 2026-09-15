@@ -124,12 +124,6 @@ export class TouchControls implements TouchInputSource {
       {
         id: 'touch-aim', label: '⊕', title: 'Zielen', caption: 'Zielen',
         press: () => {
-          if (document.getElementById('hud')?.dataset.weapon === 'knife') {
-            this.input.secondaryPressed = true;
-            this.aimHeld = false;
-            this.aimButton.classList.remove('on');
-            return;
-          }
           this.aimHeld = !this.aimHeld;
           this.aimButton.classList.toggle('on', this.aimHeld);
         },

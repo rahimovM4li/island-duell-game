@@ -10,7 +10,7 @@ import {
   INTERACT_HOLD_SECS, INTERACT_RANGE, ItemType, LOUD_PING_SECONDS, MATCH_MODE_PACE,
   MatchMode, MAX_BANDAGES, MAX_LAG_COMPENSATION_MS,
   MAX_FLASH, MAX_GRENADES, MAX_PLATES, MAX_PLAYERS, MAX_PRACTICE_BOTS, MAX_SMOKE,
-  MELEE_CONE_COS, MIN_PLAYERS, KNIFE_ATTACKS, type KnifeAttack,
+  MELEE_CONE_COS, MIN_PLAYERS,
   MAX_SHIELD, PICKUP_RADIUS, PLAYER_EYE_HEIGHT, PLAYER_MAX_HP,
   PLAYER_PRONE_EYE_HEIGHT, PLAYER_SNEAK_EYE_HEIGHT, RECONNECT_GRACE_MS, SMOKE_DURATION, SMOKE_FUSE,
   SMOKE_RADIUS, SPRINT_SPEED,
@@ -1079,7 +1079,7 @@ export class GameRoom {
       }
       if (action.reload) this.tryReload(p);
       if (p.inv.active === 4) this.handleThrowable(p, action);
-      else if (action.fire || (action.secondary && this.activeWeapon(p).type === 'knife')) this.tryFire(p, events, action.shotAgeMs, action.secondary ? 'secondary' : 'primary');
+      else if (action.fire) this.tryFire(p, events, action.shotAgeMs);
       p.prevFire = action.fire;
     }
 
@@ -1091,7 +1091,7 @@ export class GameRoom {
     if (p.reloadUntil > 0 && inp.sprint && p.move.sprinting) this.cancelReload(p);
     if (!droppedWeaponThisTick) {
       if (p.inv.active === 4) this.handleThrowable(p, inp);
-      else if (inp.fire || (inp.secondary && this.activeWeapon(p).type === 'knife')) this.tryFire(p, events, inp.shotAgeMs, inp.secondary ? 'secondary' : 'primary');
+      else if (inp.fire) this.tryFire(p, events, inp.shotAgeMs);
     }
     p.prevFire = inp.fire;
 
@@ -1197,7 +1197,7 @@ export class GameRoom {
     return { x: -Math.sin(p.yaw) * cp, y: Math.sin(p.pitch), z: -Math.cos(p.yaw) * cp };
   }
 
-  private tryFire(p: MatchPlayer, events: GameEvent[], shotAgeMs?: number, attack: KnifeAttack = 'primary'): void {
+  private tryFire(p: MatchPlayer, events: GameEvent[], shotAgeMs?: number): void {
     if (this.t < p.cooldownUntil || this.t < p.bandageBusyUntil) return;
     const { type, slotState } = this.activeWeapon(p);
     // Holding fire on an empty magazine must let its automatic reload finish.
@@ -1208,9 +1208,9 @@ export class GameRoom {
     const def = WEAPONS[type];
 
     if (def.kind === 'melee') {
-      p.cooldownUntil = this.t + KNIFE_ATTACKS[attack].cooldown;
-      events.push({ type: 'melee', by: p.id, weapon: type, attack });
-      this.meleeAttack(p, type, events, attack);
+      p.cooldownUntil = this.t + def.cooldown;
+      events.push({ type: 'melee', by: p.id, weapon: type });
+      this.meleeAttack(p, type, events);
       return;
     }
 
@@ -1234,8 +1234,8 @@ export class GameRoom {
     }
   }
 
-  private meleeAttack(p: MatchPlayer, weapon: WeaponType, events: GameEvent[], attack: KnifeAttack = 'primary'): void {
-    const def = KNIFE_ATTACKS[attack];
+  private meleeAttack(p: MatchPlayer, weapon: WeaponType, events: GameEvent[]): void {
+    const def = WEAPONS[weapon];
     const dir = this.viewDir(p);
     const eye = this.eyePos(p);
     for (const q of this.players.values()) {

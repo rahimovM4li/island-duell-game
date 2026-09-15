@@ -6,7 +6,7 @@ import type { LightingPreset, Phase } from './timeline';
 import type { PlayerSkinId } from './multiplayer';
 import type { ImpactSurface, Vec3 } from './physics';
 
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 20;
 
 // ---------- lobby ----------
 export interface PlayerProfileMsg {
@@ -156,7 +156,6 @@ export interface InputMsg {
   aim: boolean;
   jump: boolean;
   fire: boolean;         // held
-  secondary?: boolean;   // held knife heavy attack, ignored by firearms
   interact: boolean;     // held: harvest resources / weapon swap
   /** Age of the rendered target when firing, clamped and verified host-side. */
   shotAgeMs?: number;
@@ -276,7 +275,7 @@ export type GameEvent =
   | { type: 'death'; target: string; attacker: string | null; cause: 'weapon' | 'zone' | 'grenade'; weapon?: WeaponType; distance?: number; attackerHp?: number; headshot?: boolean; finalDamage?: number }
   | { type: 'kill'; killer: string | null; victim: string; weapon: WeaponType | 'zone' }
   | { type: 'shot'; by: string; weapon: WeaponType; ox: number; oy: number; oz: number; dx: number; dy: number; dz: number; primary?: boolean; hx?: number; hy?: number; hz?: number; surface?: ImpactSurface; normal?: Vec3 }
-  | { type: 'melee'; by: string; weapon: WeaponType; attack?: 'primary' | 'secondary' }
+  | { type: 'melee'; by: string; weapon: WeaponType }
   | { type: 'explosion'; x: number; y: number; z: number; radius: number }
   | { type: 'pickupSpawn'; pickup: PickupInfo }
   | { type: 'pickupRemove'; id: string; by: string | null; item: PickupInfo['item'] }
@@ -392,7 +391,6 @@ export function isInputMsg(m: unknown): m is InputMsg {
     && isBool(x.sprint) && isBool(x.sneak) && (x.prone === undefined || isBool(x.prone)) && isBool(x.aim)
     && isBool(x.jump) && isBool(x.fire) && isBool(x.interact)
     && (x.shotAgeMs === undefined || (isNum(x.shotAgeMs) && x.shotAgeMs >= 0 && x.shotAgeMs <= 500))
-    && (x.secondary === undefined || isBool(x.secondary))
     && (x.slot === undefined || x.slot === 1 || x.slot === 2 || x.slot === 3 || x.slot === 4)
     && (x.reload === undefined || isBool(x.reload))
     && (x.drop === undefined || isBool(x.drop))

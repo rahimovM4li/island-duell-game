@@ -24,7 +24,6 @@
     "@gltf-transform/cli": "^4.4.1",
     "@playwright/test": "^1.61.1",
     "concurrently": "^9.1.2",
-    "esbuild": "0.28.1",
     "socket.io-client": "^4.8.1",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3",

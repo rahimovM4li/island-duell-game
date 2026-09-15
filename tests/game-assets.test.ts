@@ -157,7 +157,7 @@ describe('helmet GLB assets', () => {
 });
 
 describe('tactical survivor GLB', () => {
-  it('exports the anatomical survivor with articulated limbs and recolourable gear', () => {
+  it('exports the recolourable carrier, articulated limbs and first-person glove', () => {
     const buffer = readFileSync(path.resolve('client/public/assets/character.glb'));
     const jsonLength = buffer.readUInt32LE(12);
     const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLength)) as {
@@ -170,13 +170,16 @@ describe('tactical survivor GLB', () => {
     };
     const nodes = new Set((gltf.nodes ?? []).flatMap((node) => node.name ? [node.name] : []));
     for (const name of [
-      'survivor-skeleton',
-      'hand_r',
-      'hand_l',
-      'index_03_r',
-      'middle_03_l',
+      'player_accent_chest',
+      'player_accent_leg_l',
+      'player_accent_leg_r',
+      'player_accent_wrist_l',
+      'player_accent_wrist_r',
       'player_forearm_l_pivot',
       'player_forearm_r_pivot',
+      'view_hand_root',
+      'view_hand_body',
+      'view_hand_accent',
     ]) {
       expect(nodes).toContain(name);
     }
@@ -189,6 +192,6 @@ describe('tactical survivor GLB', () => {
         );
       }, 0), 0);
     expect(triangles).toBeGreaterThanOrEqual(2_500);
-    expect(triangles).toBeLessThanOrEqual(40_000);
+    expect(triangles).toBeLessThanOrEqual(5_000);
   });
 });

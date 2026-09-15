@@ -76,8 +76,6 @@ export class InputState {
   debugToggled = false;
   firePressed = false;
   fireReleased = false;
-  secondaryPressed = false;
-  secondaryReleased = false;
 
   constructor(private canvas: HTMLElement, private settings: PlayerSettings) {
     document.addEventListener('keydown', (e) => {
@@ -113,20 +111,14 @@ export class InputState {
         if (!this.fireHeld) this.firePressed = true;
         this.fireHeld = true;
       }
-      if (e.button === 2) {
-        if (!this.aimHeld) this.secondaryPressed = true;
-        this.aimHeld = true;
-      }
+      if (e.button === 2) this.aimHeld = true;
     });
     document.addEventListener('mouseup', (e) => {
       if (e.button === 0) {
         if (this.fireHeld) this.fireReleased = true;
         this.fireHeld = false;
       }
-      if (e.button === 2) {
-        if (this.aimHeld) this.secondaryReleased = true;
-        this.aimHeld = false;
-      }
+      if (e.button === 2) this.aimHeld = false;
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     document.addEventListener('wheel', (e) => {
@@ -267,8 +259,6 @@ export class InputState {
 
   /** Reset one-frame edge flags; call at the end of each frame. */
   clearEdges(): void {
-    this.secondaryPressed = false;
-    this.secondaryReleased = false;
     this.slotPressed = null;
     this.inspectPressed = false;
     this.reloadPressed = false;

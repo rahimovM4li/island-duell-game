@@ -55,7 +55,7 @@ erhalten; bei einem Host-Austritt übernimmt ein verbundener Spieler.
 | Strg | Schleichen; mit ausgerüsteter Sniper auf den Bauch legen |
 | Leertaste | Springen |
 | Linksklick | Angreifen / Schießen / Granate werfen |
-| Rechte Maustaste | Butterfly: kräftiger Stich; mit Schusswaffen zielen |
+| Rechte Maustaste | Mit Pistole/Gewehr/Schrotflinte/Scharfschützengewehr zielen |
 | R | Nachladen |
 | 1 / 2 / 3 / 4 oder Mausrad | Butterfly / Schusswaffe / Schusswaffe / Granaten; Mausrad wechselt durch belegte Slots |
 | 4 erneut | Zwischen vorhandenen Splitter-, Rauch- und Blendgranaten wechseln |
@@ -205,8 +205,7 @@ Der editierbare Master liegt unter `art/island-duell-assets.blend`.
 `scripts/blender/build_island_assets.py` erzeugt daraus Atlas, GLBs und das
 gemeinsame Collider-Manifest. `npm run assets:build` weldet und komprimiert die
 Blender-Exporte und prüft Namen, UVs, Dreiecks- sowie Downloadbudgets. Der genaue
-Ablauf steht in `docs/ASSET_PIPELINE.md`. Die neuen anatomischen Figuren, Hände
-und das Butterfly haben eigene Blender-Dateien: [Modelle und Quellen](docs/model-sources.md).
+Ablauf steht in `docs/ASSET_PIPELINE.md`.
 
 ## Bewusste Abweichungen vom PRD
 

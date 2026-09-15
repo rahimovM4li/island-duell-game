@@ -873,56 +873,75 @@ def build_landmarks(collection):
     COLLIDER_MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-def organic_volume(parent, collection, rings, tile, name=None):
-    """Smooth elliptical cross-sections for cloth and anatomy, in Blender Z-up."""
-    rings = sorted(rings, key=lambda ring: ring[2])
-    sides = 16
-    verts = [(x + rx*math.cos(i*math.tau/sides), y + ry*math.sin(i*math.tau/sides), z)
-             for x,y,z,rx,ry in rings for i in range(sides)]
-    faces = [tuple(reversed(range(sides)))]
-    for k in range(len(rings)-1):
-        for i in range(sides):
-            j = (i+1)%sides
-            faces.append((k*sides+i, k*sides+j, (k+1)*sides+j, (k+1)*sides+i))
-    faces.append(tuple(range((len(rings)-1)*sides, len(rings)*sides)))
-    obj = custom_mesh(parent, collection, verts, faces, (0,0,0), tile, name=name)
-    for poly in obj.data.polygons:
-        poly.use_smooth = len(poly.vertices) == 4
-    return obj
-
-
 def build_character(collection):
     r = root(collection, "player_survivor")
     r["forward_axis_blender"] = "+Y"
     r["forward_axis_gltf"] = "-Z"
     r["ground_plane"] = 0.0
 
-    # Anatomical silhouette: rounded ribcage, tapered waist, separate pelvis.
+    # The survivor stays split at the existing procedural animation pivots.
+    # Within each pivot, however, the silhouette now follows the supplied
+    # tactical concept: dark clothing, a recolourable carrier frame, warm
+    # utility accents and chunky protective equipment.
     body_parts = [
-        organic_volume(r, collection, [(0,0,.87,.24,.155), (0,0,1.01,.255,.17),
-            (0,0,1.23,.305,.20), (0,0,1.40,.30,.175), (0,0,1.49,.20,.14)], T["green"]),
-        organic_volume(r, collection, [(0,0,.77,.21,.145), (0,0,.84,.265,.18),
-            (0,0,.96,.24,.16)], T["gun"]),
-        beveled_box(r, collection, (.53,.35,.07), (0,0,.87), T["grip"], bevel=.018),
-    ]
-    finish_mesh(r, body_parts, "player_body")
-    # Fitted balaclava, a readable eye opening, nose bridge and cheek structure.
+        polygon_prism(
+            r, collection,
+            [(-.27,.91), (-.33,1.19), (-.31,1.42), (-.21,1.49),
+             (.21,1.49), (.31,1.42), (.33,1.19), (.27,.91)],
+            .35, (0, 0, 0), T["dark"],
+        ),
+        polygon_prism(
+            r, collection,
+            [(-.24,.78), (-.27,.86), (-.25,.98), (.25,.98),
+             (.27,.86), (.24,.78)],
+            .34, (0, 0, 0), T["gun"],
+        ),
+        beveled_box(r, collection, (.53, .355, .085), (0, .003, .85), T["grip"], bevel=.022),
+    ]; finish_mesh(r, body_parts, "player_body")
+
     head_parts = [
-        cylinder(r, collection, .105, .17, (0,0,1.52), T["grip"], vertices=16),
-        organic_volume(r, collection, [(0,0,1.55,.095,.09), (0,.008,1.60,.145,.12),
-            (0,0,1.72,.18,.16), (0,-.018,1.84,.177,.15), (0,-.027,1.91,.13,.12),
-            (0,-.025,1.94,.04,.035)], T["gun"]),
-        beveled_box(r, collection, (.275,.035,.071), (0,.156,1.765), T["skin"], bevel=.015),
-        beveled_box(r, collection, (.055,.012,.018), (-.072,.178,1.776), T["dark"], bevel=.005),
-        beveled_box(r, collection, (.055,.012,.018), (.072,.178,1.776), T["dark"], bevel=.005),
-        ico(r, collection, .044, (0,.181,1.734), T["gun"], (.7,1.1,1.3), 2),
-        beveled_box(r, collection, (.115,.02,.009), (0,.145,1.64), T["grip"], bevel=.003),
-        ico(r, collection, .04, (-.181,0,1.735), T["gun"], (.5,.8,1.3), 2),
-        ico(r, collection, .04, (.181,0,1.735), T["gun"], (.5,.8,1.3), 2),
+        cylinder(r, collection, .135, .15, (0, 0, 1.53), T["skin"], vertices=9, radius_top=.12),
+        ico(r, collection, .225, (0, .012, 1.72), T["skin"], (.92, .88, 1.10), 2),
+        # Angular jaw, ears and a small nose keep the face readable in the
+        # lobby without increasing texture resolution.
+        beveled_box(r, collection, (.30, .24, .16), (0, .018, 1.61), T["skin"], bevel=.035),
+        ico(r, collection, .072, (-.215, .005, 1.70), T["skin"], (.70, .52, 1.05), 1),
+        ico(r, collection, .072, (.215, .005, 1.70), T["skin"], (.70, .52, 1.05), 1),
+        polygon_prism(
+            r, collection,
+            [(-.035,-.045), (.035,-.045), (.018,.045), (-.018,.045)],
+            .065, (0, .232, 1.68), T["skin"],
+        ),
+        # Eyes and brows are actual low-poly geometry so facial expression is
+        # retained at every atlas mip level.
+        beveled_box(r, collection, (.050, .014, .025), (-.078, .238, 1.745), T["grip"], bevel=.005),
+        beveled_box(r, collection, (.050, .014, .025), (.078, .238, 1.745), T["grip"], bevel=.005),
+        beveled_box(r, collection, (.085, .016, .022), (-.078, .240, 1.795), T["dark"], (0,0,-.08), bevel=.005),
+        beveled_box(r, collection, (.085, .016, .022), (.078, .240, 1.795), T["dark"], (0,0,.08), bevel=.005),
+        beveled_box(r, collection, (.095, .014, .014), (0, .242, 1.615), T["leather"], bevel=.004),
+        # Faceted cap plus irregular tufts creates the spiky brown hairstyle
+        # shown in the reference from front, side and back.
+        ico(r, collection, .242, (0, -.045, 1.86), T["leather"], (1.04, 1.02, .61), 1),
+        polygon_prism(
+            r, collection,
+            [(-.21,1.82), (-.19,1.92), (-.11,1.87), (-.05,1.97),
+             (.02,1.89), (.10,1.96), (.18,1.88), (.21,1.82)],
+            .035, (0, .225, 0), T["leather"],
+        ),
     ]
-    # Seams and a small side-mounted comms earpiece.
-    head_parts += [segment(r, collection, (0,-.155,1.65), (0,-.155,1.85), .005, T["smoke"], 6),
-        cylinder(r, collection, .042, .025, (.20,0,1.75), T["grip"], (0,math.pi/2,0), 12)]
+    for x, y, z, rx, ry in (
+        (-.17, .01, 1.88, -.30, -.18),
+        (-.09, .045, 1.915, -.18, -.08),
+        (0, .055, 1.93, .06, 0),
+        (.09, .035, 1.91, .18, .08),
+        (.17, -.005, 1.87, .32, .18),
+        (-.19, -.06, 1.82, -.35, -.20),
+        (.19, -.07, 1.82, .35, .20),
+    ):
+        head_parts.append(cone(
+            r, collection, .105, .18, (x, y, z), T["leather"],
+            (rx, ry, 0), 5,
+        ))
 
     helmet_parts = [
         ico(r, collection, .272, (0, -.012, 1.86), T["dark"], (1.05, 1.02, .70), 2),
@@ -940,8 +959,8 @@ def build_character(collection):
     head.location.z = 1.54
     helmet.data.transform(Matrix.Translation((0, 0, -1.54)))
     helmet.location.z = 1.54
-    head.scale = (1, 1, 1)
-    helmet.scale = (.82, .82, .82)
+    head.scale = (.88, .88, .88)
+    helmet.scale = (.88, .88, .88)
 
     gear = [
         cylinder(r, collection, .19, .17, (0, 0, 1.48), T["grip"], vertices=10, radius_top=.17),
@@ -967,15 +986,6 @@ def build_character(collection):
             box(r, collection, (.013, .012, .14), (sign*.15, .286, 1.04), T["rust"], (0, .62, sign*.70)),
             box(r, collection, (.013, .012, .14), (sign*.15, .286, 1.04), T["rust"], (0, -.62, -sign*.70)),
         ]
-    # MOLLE webbing, stitching, magazine flaps and radio make equipment read as fabric.
-    for z in (1.17,1.25,1.33):
-        gear.append(beveled_box(r, collection, (.39,.017,.022), (0,.258,z), T["grip"], bevel=.004))
-        for x in (-.14,-.07,0,.07,.14):
-            gear.append(box(r, collection, (.006,.019,.024), (x,.260,z), T["smoke"]))
-    for sign in (-1,1):
-        gear.append(beveled_box(r, collection, (.14,.105,.035), (sign*.15,.235,1.13), T["rope"], bevel=.01))
-    gear += [beveled_box(r, collection, (.08,.07,.17), (-.205,.27,1.30), T["grip"], bevel=.012),
-        cylinder(r, collection, .006,.20, (-.22,.25,1.47), T["gun"], vertices=8)]
     finish_mesh(r, gear, "player_gear")
 
     accent = [
@@ -1018,10 +1028,11 @@ def build_character(collection):
         arm_pivot = limb_pivot(f"player_arm_{side}_pivot", (sign*.375, 0, 1.39))
         arm_pivot.rotation_euler[1] = sign * .055
         upper_arm_parts = [
-            organic_volume(arm_pivot, collection, [(0,0,.055,.07,.07), (0,0,-.035,.115,.115),
-                (sign*.01,.025,-.16,.095,.092), (sign*.015,.055,-.31,.075,.075)], T["green"]),
-            torus(arm_pivot, collection, .078,.012, (sign*.015,.055,-.285), T["gun"], major_segments=12, minor_segments=4),
-            beveled_box(arm_pivot, collection, (.075,.02,.09), (0,.111,-.075), T["gun"], bevel=.013),
+            # Armoured short sleeve over a visible skin section.
+            segment(arm_pivot, collection, (0,0,0), (sign*.012,.025,-.17), .115, T["dark"], 8),
+            segment(arm_pivot, collection, (sign*.012,.025,-.15), (sign*.015,.055,-.31), .088, T["skin"], 8),
+            ico(arm_pivot, collection, .135, (0,0,-.02), T["gun"], (1,.90,.68), 1),
+            beveled_box(arm_pivot, collection, (.15, .125, .08), (0,.075,-.03), T["dark"], bevel=.018),
         ]
         finish_mesh(arm_pivot, upper_arm_parts, f"player_upper_arm_{side}")
         forearm_pivot = bpy.data.objects.new(f"player_forearm_{side}_pivot", None)
@@ -1031,20 +1042,31 @@ def build_character(collection):
         forearm_pivot.empty_display_type = "SPHERE"
         forearm_pivot.empty_display_size = .055
         forearm_parts = [
-            organic_volume(forearm_pivot, collection, [(0,0,0,.076,.078), (.005,.025,-.10,.082,.076),
-                (.015,.06,-.235,.055,.052)], T["green"]),
-            beveled_box(forearm_pivot, collection, (.13,.105,.15), (.02,.085,-.31), T["grip"], bevel=.024),
-            beveled_box(forearm_pivot, collection, (.105,.026,.07), (.02,.147,-.29), T["smoke"], bevel=.012),
+            segment(forearm_pivot, collection, (0,0,0), (sign*.018,.07,-.23), .082, T["skin"], 8),
+            beveled_box(forearm_pivot, collection, (.16,.13,.13), (sign*.02,.085,-.31), T["grip"], bevel=.026),
+            beveled_box(forearm_pivot, collection, (.13,.08,.035), (sign*.02,.155,-.285), T["gun"], bevel=.012),
         ]
-        for i, finger_x in enumerate((-.04,-.005,.03,.065)):
-            a = (finger_x,.08,-.36)
-            b = (finger_x,.12,-.40)
-            c = (finger_x,.16,-.365)
-            forearm_parts += [segment(forearm_pivot, collection, a,b,.019,T["grip"],10),
-                segment(forearm_pivot, collection, b,c,.018,T["grip"],10),
-                ico(forearm_pivot, collection,.020,b,T["gun"], subdivisions=1)]
-        forearm_parts += [segment(forearm_pivot,collection,(-.058,.06,-.28),(-.078,.12,-.33),.026,T["grip"],10),
-            segment(forearm_pivot,collection,(-.078,.12,-.33),(-.03,.16,-.34),.024,T["grip"],10)]
+        for finger_x in (-.052, -.017, .018, .053):
+            forearm_parts += [
+                beveled_box(
+                    forearm_pivot, collection, (.033,.065,.075),
+                    (finger_x,.09,-.385), T["grip"], bevel=.009,
+                ),
+                beveled_box(
+                    forearm_pivot, collection, (.030,.062,.040),
+                    (finger_x,.09,-.435), T["skin"], bevel=.008,
+                ),
+            ]
+        forearm_parts += [
+            beveled_box(
+                forearm_pivot, collection, (.050,.070,.090),
+                (sign*.105,.095,-.335), T["grip"], (0,sign*.12,sign*.35), bevel=.012,
+            ),
+            beveled_box(
+                forearm_pivot, collection, (.045,.060,.045),
+                (sign*.128,.10,-.375), T["skin"], (0,sign*.12,sign*.35), bevel=.010,
+            ),
+        ]
         finish_mesh(forearm_pivot, forearm_parts, f"player_forearm_{side}")
         wrist_accent = cylinder(
             forearm_pivot, collection, .092, .075,
@@ -1054,8 +1076,8 @@ def build_character(collection):
 
         leg_pivot = limb_pivot(f"player_leg_{side}_pivot", (sign*.175, 0, .86))
         leg_parts = [
-            organic_volume(leg_pivot, collection, [(0,0,0,.127,.13),(0,0,-.14,.13,.135),(sign*.012,-.005,-.39,.095,.1)], T["green"]),
-            organic_volume(leg_pivot, collection, [(sign*.012,-.005,-.39,.095,.10),(sign*.02,0,-.53,.103,.105),(sign*.020,.010,-.72,.077,.078)], T["green"]),
+            segment(leg_pivot, collection, (0,0,0), (sign*.012,-.005,-.39), .128, T["dark"], 8),
+            segment(leg_pivot, collection, (sign*.012,-.005,-.39), (sign*.020,.010,-.72), .108, T["dark"], 8),
             # Cargo pocket and thigh holster.
             beveled_box(leg_pivot, collection, (.15,.09,.18), (sign*.125,.025,-.13), T["gun"], bevel=.02),
             box(leg_pivot, collection, (.055,.31,.045), (sign*.145,.005,-.045), T["grip"]),
@@ -1065,9 +1087,6 @@ def build_character(collection):
             beveled_box(leg_pivot, collection, (.19,.17,.16), (sign*.02,-.015,-.69), T["gun"], bevel=.025),
             beveled_box(leg_pivot, collection, (.050,.030,.050), (sign*.02,.185,-.70), T["brass"], bevel=.008),
         ]
-        for y in (.10,.145,.19):
-            leg_parts.append(box(leg_pivot, collection, (.12,.014,.009), (sign*.02,y,-.699), T["smoke"]))
-        leg_parts.append(segment(leg_pivot,collection,(sign*.1,.055,-.05),(sign*.1,.055,-.31),.004,T["smoke"],6))
         finish_mesh(leg_pivot, leg_parts, f"player_leg_{side}")
         leg_accent = [
             beveled_box(leg_pivot, collection, (.20,.10,.18), (sign*.015,.10,-.39), T["player"], bevel=.03),
@@ -1085,7 +1104,35 @@ def build_character(collection):
            ico(r, collection, .25, (0, 0, 1.72), T["skin"], subdivisions=1)]
     lod_mesh = finish_mesh(r, lod, "visual_lod1"); lod_mesh.hide_viewport = True; lod_mesh.hide_render = True
 
-    # First-person hands are authored around weapon-specific grips in first-person-hands.ts.
+    # First-person arm. It shares the same atlas and recolour contract as the
+    # world character but has a purpose-built silhouette and camera-friendly
+    # grip instead of reusing a tiny third-person forearm.
+    view = root(collection, "view_hand_root")
+    view["forward_axis_blender"] = "+Y"
+    view["forward_axis_gltf"] = "-Z"
+    view_parts = [
+        segment(view, collection, (0,-.62,-.11), (0,-.20,-.055), .145, T["dark"], 8),
+        beveled_box(view, collection, (.25,.16,.18), (0,-.15,-.045), T["gun"], bevel=.03),
+        beveled_box(view, collection, (.225,.235,.13), (0,.005,-.01), T["grip"], bevel=.035),
+        beveled_box(view, collection, (.18,.15,.040), (0,.035,.075), T["gun"], bevel=.013),
+        beveled_box(view, collection, (.16,.055,.035), (0,-.055,.095), T["gun"], bevel=.010),
+    ]
+    for finger_x, finger_y in ((-.073,.105), (-.025,.125), (.025,.122), (.073,.105)):
+        view_parts += [
+            beveled_box(view, collection, (.042,.12,.060), (finger_x,finger_y,.005), T["grip"], bevel=.011),
+            beveled_box(view, collection, (.038,.070,.055), (finger_x,finger_y+.082,.005), T["skin"], bevel=.010),
+            beveled_box(view, collection, (.032,.045,.025), (finger_x,finger_y-.015,.052), T["plate"], bevel=.007),
+        ]
+    view_parts += [
+        beveled_box(view, collection, (.065,.12,.070), (-.135,.035,-.005), T["grip"], (0,.18,-.42), bevel=.014),
+        beveled_box(view, collection, (.058,.075,.060), (-.165,.095,-.005), T["skin"], (0,.18,-.42), bevel=.012),
+    ]
+    finish_mesh(view, view_parts, "view_hand_body")
+    view_accent = [
+        cylinder(view, collection, .158, .075, (0,-.31,-.078), T["player"], (math.pi / 2,0,0), 10),
+        beveled_box(view, collection, (.055,.075,.055), (.095,-.31,.075), T["plate"], bevel=.010),
+    ]
+    finish_mesh(view, view_accent, "view_hand_accent")
 
 
 def export_collection(collection: bpy.types.Collection, filename: str) -> None:
@@ -1114,19 +1161,14 @@ def main() -> None:
     PUBLIC.mkdir(parents=True, exist_ok=True)
     ART.mkdir(parents=True, exist_ok=True)
     reset_scene()
-    import sys
-    character_only = "--character-only" in sys.argv
-    atlas = bpy.data.images.load(str(PUBLIC / "island-atlas.png")) if character_only else create_atlas()
+    atlas = create_atlas()
     ATLAS_MATERIAL = create_material(atlas)
-    if character_only:
-        import runpy
-        runpy.run_path(str(Path(__file__).with_name('build_realistic_models.py')), run_name='__main__')
-        return
     packages = {
         "01_WEAPONS": ("weapons.glb", build_weapons),
         "02_PROPS": ("props.glb", build_props),
         "03_ENVIRONMENT": ("environment.glb", build_environment),
         "04_LANDMARKS": ("landmarks.glb", build_landmarks),
+        "05_CHARACTER": ("character.glb", build_character),
     }
     collections = []
     for name, (_, builder) in packages.items():

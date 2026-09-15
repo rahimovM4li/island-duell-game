@@ -30,31 +30,6 @@ beforeAll(async () => { await RAPIER.init(); });
 afterEach(() => { rooms.splice(0).forEach(room => room.dispose()); vi.restoreAllMocks(); });
 
 describe('combat and inventory regressions', () => {
-  it('uses a heavier, shorter right-click stab with one shared attack cooldown', () => {
-    const { room, player } = harness();
-    player.move.pos = { x: 0, y: 0, z: 0 };
-    player.yaw = 0;
-    player.pitch = Math.atan2(-0.7, 1.2);
-    const target = room.freshMatchPlayer('b', 'Bob', false);
-    target.move.pos = { x: 0, y: 0, z: -1.2 };
-    room.players.set(target.id, target);
-    room.t = 10;
-    const events: any[] = [];
-    room.tryFire(player, events, undefined, 'secondary');
-    expect(target.hp).toBe(35);
-    expect(events).toContainEqual({ type: 'melee', by: player.id, weapon: 'knife', attack: 'secondary' });
-    room.t = 10.6;
-    room.tryFire(player, [], undefined, 'primary');
-    expect(target.hp).toBe(35);
-    target.move.pos.z = -1.9;
-    room.t = 11;
-    room.tryFire(player, [], undefined, 'secondary');
-    expect(target.hp).toBe(35);
-    target.hp = 100;
-    room.t = 12;
-    room.tryFire(player, [], undefined, 'primary');
-    expect(target.hp).toBe(65);
-  });
   it('starts with a permanent knife that stabs once per cooldown and respects cover/range', () => {
     const { room, player } = harness();
     expect(player.inv.active).toBe(1);
