@@ -253,7 +253,7 @@ function proceduralWeaponModel(weapon: WeaponType | 'none'): THREE.Group {
 type LitPlayerMaterial = THREE.MeshLambertMaterial | THREE.MeshStandardMaterial;
 
 function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
-  return gameAssets.cloneWeapon(weapon) ?? proceduralWeaponModel(weapon);
+  return firstPersonWeapon(weapon) ?? gameAssets.cloneWeapon(weapon) ?? proceduralWeaponModel(weapon);
 }
 
 function proceduralViewHand(color: number): THREE.Group {
@@ -475,7 +475,7 @@ function spectatorNameLabel(playerName: string): THREE.Sprite {
 
 function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Group {
   const g = new THREE.Group();
-  if (weapon !== 'none') g.add(firstPersonWeapon(weapon) ?? weaponModel(weapon));
+  if (weapon !== 'none') g.add(weaponModel(weapon));
 
   const addHand = (
     x: number, y: number, z: number, mirrored = false, yaw = 0,

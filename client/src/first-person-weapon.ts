@@ -16,7 +16,7 @@ export function reloadPose(progress: number): { magazine: number; bolt: number; 
   };
 }
 
-/** Camera-distance models: beveled steel, rubber, warm furniture and moving mechanisms. */
+/** Detailed models shared by held weapons, world pickups and remote players. */
 export function firstPersonWeapon(type: WeaponType | 'none'): THREE.Group | null {
   if (!['pistol', 'rifle', 'shotgun', 'sniper'].includes(type)) return null;
   const root = new THREE.Group();
