@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { InventoryState } from '@shared/protocol';
 import { nextWeaponSlot } from '../client/src/weapon-navigation';
+import { canSelectSlot } from '@shared/inventory-slots';
 
 function inventory(
   active: 1 | 2 | 3 | 4,
@@ -24,6 +25,19 @@ function inventory(
 }
 
 describe('mouse-wheel weapon switching', () => {
+  it('allows empty magazines but rejects missing weapons and an empty grenade inventory', () => {
+    const inv = inventory(1, false, false);
+    inv.primary = null;
+    expect([1, 2, 3, 4].map(slot => canSelectSlot(inv, slot as 1 | 2 | 3 | 4))).toEqual([true, false, false, false]);
+    inv.secondary = { type: 'rifle', mag: 0 };
+    inv.throwables.smoke = 1;
+    expect(canSelectSlot(inv, 3)).toBe(true);
+    expect(canSelectSlot(inv, 4)).toBe(true);
+    inv.secondary = null;
+    inv.throwables.smoke = 0;
+    expect(nextWeaponSlot(inv, 1)).toBe(1);
+    expect(nextWeaponSlot(inv, -1)).toBe(1);
+  });
   it('cycles down and up through every occupied combat slot', () => {
     expect(nextWeaponSlot(inventory(1), 1)).toBe(2);
     expect(nextWeaponSlot(inventory(2), 1)).toBe(3);

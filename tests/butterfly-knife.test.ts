@@ -6,6 +6,28 @@ import { Entities } from '../client/src/entities';
 import { viewWeaponForInventory } from '../client/src/weapon-switch';
 
 describe('permanent butterfly loadout', () => {
+  it('restarts inspection on every press, including during equip, without interrupting attacks', () => {
+    const entities = new Entities(new THREE.Scene(), new THREE.PerspectiveCamera(), 42);
+    entities.setViewWeapon('knife');
+    entities.update(0.2, 0.2);
+    entities.inspectKnife();
+    entities.update(0, 0.2);
+    expect(entities.viewmodelStats()).toMatchObject({ knifeInspecting: true, knifeBladeAngle: 0 });
+    for (let i = 0; i < 4; i++) {
+      entities.update(0.6, 1 + i);
+      expect(entities.viewmodelStats().knifeBladeAngle).toBeGreaterThan(0.1);
+      entities.inspectKnife();
+      entities.update(0, 1 + i);
+      expect(entities.viewmodelStats()).toMatchObject({ knifeInspecting: true, knifeBladeAngle: 0 });
+    }
+    entities.meleeSwing();
+    entities.inspectKnife();
+    expect(entities.viewmodelStats()).toMatchObject({ knifeAnimating: false, stabbing: true });
+    entities.setViewWeapon('rifle');
+    entities.inspectKnife();
+    expect(entities.viewmodelStats().knifeInspecting).toBe(false);
+    entities.dispose();
+  });
   it('has exactly one melee weapon and resolves all four slots', () => {
     expect(Object.values(WEAPONS).filter(w => w.kind === 'melee').map(w => w.type)).toEqual(['knife']);
     const inv = { primary: { type: 'rifle' as const, mag: 20 }, secondary: { type: 'pistol' as const, mag: 7 }, activeThrow: 'smoke' as const };

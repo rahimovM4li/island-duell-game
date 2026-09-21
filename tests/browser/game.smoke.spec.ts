@@ -154,7 +154,8 @@ test('player can enter training from the new 3D lobby and render the match', asy
       };
     }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().entities?.viewmodel.switchCount ?? 0
   ));
-  await page.keyboard.press('Digit2');
+  for (const key of ['Digit2', 'Digit3']) await page.keyboard.press(key);
+  await page.waitForTimeout(200);
   await expect.poll(async () => page.evaluate(() => (
     (window as Window & {
       __ISLAND_DUELL_DIAGNOSTICS__?: {
@@ -171,8 +172,7 @@ test('player can enter training from the new 3D lobby and render the match', asy
     }).__ISLAND_DUELL_DIAGNOSTICS__?.snapshot().entities?.viewmodel
   ))).toMatchObject({
     weapon: 'knife',
-    switchCount: switchCountBefore + 1,
-    lastSwitchSameWeapon: true,
+    switchCount: switchCountBefore,
   });
 
   const wheelHandledByGame = await page.evaluate(() => {

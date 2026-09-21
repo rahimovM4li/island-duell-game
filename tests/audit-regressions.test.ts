@@ -30,6 +30,35 @@ beforeAll(async () => { await RAPIER.init(); });
 afterEach(() => { rooms.splice(0).forEach(room => room.dispose()); vi.restoreAllMocks(); });
 
 describe('combat and inventory regressions', () => {
+  it('ignores empty slot requests without cancelling a reload or releasing a held frag', () => {
+    const { room, player } = harness();
+    room.phys.setPlayerStance = () => {};
+    room.phys.moveCharacter = () => ({ pos: player.move.pos, grounded: true });
+    player.connected = true;
+    player.inv.primary = { type: 'rifle', mag: 0 };
+    player.inv.secondary = null;
+    player.inv.active = 2;
+    player.inv.throwables = { frag: 0, smoke: 0, flash: 0 };
+    player.inv.ammo.rifle = 20;
+    room.tryReload(player);
+    const deadline = player.reloadUntil;
+    expect(deadline).toBeGreaterThan(0);
+    for (const slot of [3, 4]) {
+      player.inputBuffer.queue = [{ ...neutralServerInput(slot), slot }];
+      room.processPlayerInputs(player, [], 0);
+      expect(player.inv.active).toBe(2);
+      expect(player.reloadUntil).toBe(deadline);
+    }
+    player.inv.primary = null;
+    player.inv.active = 4;
+    player.cookingSince = 0;
+    player.prevFire = true;
+    const release = vi.spyOn(room, 'releaseCookedFrag');
+    player.inputBuffer.queue = [{ ...neutralServerInput(5), slot: 2, fire: true }];
+    room.processPlayerInputs(player, [], 0);
+    expect(player.inv.active).toBe(4);
+    expect(release).not.toHaveBeenCalled();
+  });
   it('starts with a permanent knife that stabs once per cooldown and respects cover/range', () => {
     const { room, player } = harness();
     expect(player.inv.active).toBe(1);

@@ -34,6 +34,7 @@ import { AdaptiveResolution } from './performance';
 import { gameAssets } from './game-assets';
 import { adjustSniperScopeFov, DEFAULT_SNIPER_SCOPE_FOV } from './sniper';
 import { nextWeaponSlot } from './weapon-navigation';
+import { canSelectSlot } from '@shared/inventory-slots';
 import { shouldAnimateWeaponSwitch, viewWeaponForInventory } from './weapon-switch';
 import { classifyHitFeedback } from './combat-feedback';
 import {
@@ -2051,7 +2052,7 @@ function frame(): void {
       // action keys while unlocked belong to menus/dialogs, not the match —
       // e.g. typing with the pause hint open must not switch weapons or heal
       if (input.gameplayActive) {
-        if (input.slotPressed) {
+        if (input.slotPressed && lastInv && canSelectSlot(lastInv, input.slotPressed)) {
           // pressing 4 while the throwable is already up cycles frag → smoke → flash (§F2)
           if (input.slotPressed === 4 && lastInv?.active === 4) inp.throwCycle = true;
           else inp.slot = input.slotPressed;

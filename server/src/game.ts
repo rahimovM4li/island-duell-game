@@ -31,6 +31,7 @@ import {
   DEFAULT_PLAYER_SKIN, isPlayerSkinId, normalizePlayerName, type PlayerSkinId, uniquePlayerName,
 } from '@shared/multiplayer';
 import { decideMatch, scoreRound } from '@shared/scoring';
+import { canSelectSlot } from '@shared/inventory-slots';
 import {
   fogAt, lightingPresetForRound, loudPingActiveAt, phaseAt, timeOfDayAt, zoneAt,
   type LightingPreset,
@@ -1061,7 +1062,7 @@ export class GameRoom {
       if (action.interact && !interactState) interactEdge = true;
       interactState = action.interact;
 
-      if (action.slot && action.slot !== p.inv.active) {
+      if (action.slot && action.slot !== p.inv.active && canSelectSlot(p.inv, action.slot)) {
         // switching away from a cooking frag commits the throw (pin is pulled)
         if (p.cookingSince !== null) this.releaseCookedFrag(p);
         p.inv.active = action.slot;

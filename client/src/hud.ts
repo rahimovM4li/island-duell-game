@@ -11,6 +11,7 @@ import type {
 import type { LandmarkPoi, SpawnPoi } from '@shared/worldgen';
 import type { HitFeedback } from './combat-feedback';
 import type { ConnectionQuality } from './network-smoothing';
+import { canSelectSlot } from '@shared/inventory-slots';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -113,7 +114,7 @@ export class Hud {
 
   setInventory(inv: InventoryState): void {
     $('slot1').querySelector('.ammo')!.textContent = document.body.classList.contains('touch-mode')
-      ? 'Tippen · Flip' : 'F · Inspizieren';
+      ? 'Flip' : 'F · Flip';
     const slots = [
       { el: $('slot2'), w: inv.primary },
       { el: $('slot3'), w: inv.secondary },
@@ -131,12 +132,18 @@ export class Hud {
     const throwCount = inv.throwables[inv.activeThrow];
     $('slot4').querySelector('.slot-icon')!.textContent = THROW_GLYPHS[inv.activeThrow];
     $('slot4').querySelector('.wname')!.textContent = THROW_LABELS[inv.activeThrow];
-    const others = (['frag', 'smoke', 'flash'] as const)
-      .filter((kind) => kind !== inv.activeThrow && inv.throwables[kind] > 0)
-      .map((kind) => `${THROW_GLYPHS[kind]}${inv.throwables[kind]}`)
-      .join(' ');
-    $('slot4').querySelector('.ammo')!.textContent = `×${throwCount}${others ? `  ${others}` : ''}`;
-    for (const i of [1, 2, 3, 4] as const) $(`slot${i}`).classList.toggle('active', inv.active === i);
+    const stock = (['frag', 'smoke', 'flash'] as const)
+      .map(kind => `${THROW_LABELS[kind]} ×${inv.throwables[kind]}`).join(' · ');
+    $('slot4').querySelector('.ammo')!.textContent = `×${throwCount}`;
+    $('slot4').title = `${stock} · Erneut 4: Granatenart wechseln`;
+    for (const i of [1, 2, 3, 4] as const) {
+      const slot = $(`slot${i}`);
+      const available = canSelectSlot(inv, i);
+      slot.classList.toggle('active', inv.active === i);
+      slot.classList.toggle('empty', !available);
+      slot.setAttribute('aria-disabled', String(!available));
+      slot.setAttribute('aria-label', `Slot ${i}: ${i === 4 ? stock : slot.querySelector('.wname')!.textContent}`);
+    }
     $('plates-row').textContent =
       `Schild ${inv.shield}/${MAX_SHIELD} · Platten ${inv.plates}/${MAX_PLATES}${inv.helmet ? ' · 🪖 Helm' : ''}`;
     $('shield-bar').style.transform = `scaleX(${Math.max(0, Math.min(MAX_SHIELD, inv.shield)) / MAX_SHIELD})`;

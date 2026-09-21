@@ -289,6 +289,7 @@ export class TouchControls implements TouchInputSource {
       document.getElementById(id)?.addEventListener('pointerdown', (event) => {
         if (!this.active) return;
         event.preventDefault();
+        if (document.getElementById(id)?.getAttribute('aria-disabled') === 'true') return;
         if (slot === 1 && document.getElementById(id)?.classList.contains('active')) {
           this.input.inspectPressed = true;
         }

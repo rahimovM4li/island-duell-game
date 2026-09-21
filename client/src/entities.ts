@@ -1363,7 +1363,7 @@ export class Entities {
   }
 
   inspectKnife(): void {
-    if (this.viewWeaponType !== 'knife' || this.swingT < 1 || this.knifeT >= 0) return;
+    if (this.viewWeaponType !== 'knife' || this.swingT < 1) return;
     this.knifeInspect = true;
     this.knifeT = 0;
   }

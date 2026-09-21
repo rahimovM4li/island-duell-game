@@ -70,6 +70,15 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.waitForTimeout(350);
     await page.screenshot({ path: testInfo.outputPath('pistol.png') });
     expect((await view()).hands).toHaveLength(2);
+    const slots = await page.locator('#slots .slot').evaluateAll(elements => elements.map(el => {
+      const rect = el.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    }));
+    for (const index of [0, 3]) {
+      expect(slots[index].width).toBeLessThan(slots[1].width * 0.65);
+      expect(slots[index].height).toBeLessThan(slots[1].height);
+    }
+    await page.locator('#slots').screenshot({ path: testInfo.outputPath('inventory-desktop.png') });
     await page.keyboard.press('1');
     await expect.poll(async () => (await view()).weapon).toBe('knife');
     await expect.poll(async () => (await view()).knifeAnimating).toBe(true);
@@ -83,6 +92,11 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect.poll(async () => (await view()).knifeInspecting).toBe(true);
     await page.waitForTimeout(600);
     await page.screenshot({ path: testInfo.outputPath('butterfly-inspect.png') });
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('f');
+      await expect.poll(async () => (await view()).knifeBladeAngle).toBeLessThan(0.5);
+      await page.waitForTimeout(400);
+    }
     await page.mouse.down();
     await expect.poll(async () => (await view()).stabbing).toBe(true);
     await page.mouse.up();
@@ -102,6 +116,13 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect.poll(async () => (await view()).weapon).toBe('rifle');
     await page.keyboard.press('1');
     await expect.poll(async () => (await view()).knifeAnimating).toBe(true);
+    await command('empty-slots');
+    for (const id of ['slot2', 'slot3', 'slot4']) await expect(page.locator(`#${id}`)).toHaveAttribute('aria-disabled', 'true');
+    const switches = (await view()).switchCount;
+    for (const key of ['2', '3', '4']) await page.keyboard.press(key);
+    await page.waitForTimeout(200);
+    expect((await command('state')).active).toBe(1);
+    expect((await view()).switchCount).toBe(switches);
     expect(errors).toEqual([]);
   } finally {
     if (server.exitCode === null && server.signalCode === null) {

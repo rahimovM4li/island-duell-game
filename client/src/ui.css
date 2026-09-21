@@ -640,7 +640,7 @@ button.skin-swatch {
 #craft-recipes kbd { color: var(--accent); font: inherit; font-weight: 800; }
 #craft-recipes em { display: block; margin-top: 2px; color: inherit; font-style: normal; opacity: 0.82; }
 
-#slots { gap: 6px; }
+#slots { gap: 6px; align-items: flex-end; }
 .slot {
   position: relative;
   width: 108px;
@@ -671,6 +671,11 @@ button.skin-swatch {
 .slot .slot-icon { color: var(--accent); font-size: 17px; font-weight: 850; line-height: 1; margin-bottom: 7px; }
 .slot .wname { margin: 0; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .slot .ammo { margin-top: 2px; color: var(--muted); }
+#slots .slot.utility-slot { width: 64px; min-height: 0; height: 60px; padding: 9px 7px 6px; }
+#slots .utility-slot .slot-icon { margin-bottom: 9px; font-size: 19px; }
+#slots .utility-slot .wname { display: none; }
+#slots .utility-slot .ammo { font-size: 11px; white-space: nowrap; }
+#slots .slot.empty { opacity: 0.5; cursor: default; }
 #consumables { bottom: 102px; padding: 7px 10px; color: #d7e3e8; background: var(--surface); border-radius: 8px; }
 
 #killfeed { width: 330px; }
@@ -920,6 +925,8 @@ body.touch-mode #slots {
   left: 50%; right: auto; bottom: 6px; transform: translateX(-50%);
 }
 body.touch-mode #slots .slot { width: 64px; padding: 4px 5px 4px; font-size: 10px; }
+body.touch-mode #slots .slot.utility-slot { width: 48px; height: 56px; padding: 6px 5px; }
+body.touch-mode #slots .utility-slot .key { top: 4px; right: 4px; min-width: 14px; height: 14px; }
 body.touch-mode #slots .slot .wname { font-size: 10px; margin: 1px 0; }
 body.touch-mode #slots .slot .key { font-size: 8px; }
 body.touch-mode #consumables {

@@ -24,6 +24,12 @@ process.on('message', (message: { id: number; action: string }) => {
       room.pushInventory(player);
       yaw = Math.atan2(x - wreck.x, z - wreck.z);
     }
+    if (message.action === 'empty-slots') {
+      player.inv.primary = player.inv.secondary = null;
+      player.inv.throwables = { frag: 0, smoke: 0, flash: 0 };
+      player.inv.active = 1;
+      room.pushInventory(player);
+    }
     process.send?.({ id: message.id, state: { ready: !!player, yaw, mag: player?.inv.primary?.mag, reloading: player?.reloadUntil > 0, active: player?.inv.active, throwables: player?.inv.throwables, readyToFire: !!player && room.t >= player.cooldownUntil } });
   } catch (error) { process.send?.({ id: message.id, error: String(error) }); }
 });
