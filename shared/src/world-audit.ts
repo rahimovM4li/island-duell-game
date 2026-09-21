@@ -167,7 +167,8 @@ export function auditWorld(gen: WorldGen): WorldAuditReport {
   const cylinders: AuditCylinder[] = [];
 
   for (const part of gen.centralStructures) {
-    if (part.shape === 'box') boxes.push(centralBox(part, middleTerrainY));
+    if (part.shape === 'box') boxes.push(centralBox(part,
+      part.name.startsWith('Combat_') ? sampleHeight(gen.params, part.x, part.z) : middleTerrainY));
     else cylinders.push({
       name: part.name, owner: 'middle', x: part.x, y: part.y, z: part.z,
       radius: part.radius, h: part.h,
@@ -176,7 +177,11 @@ export function auditWorld(gen: WorldGen): WorldAuditReport {
   for (const poi of gen.pois) {
     const terrainY = sampleHeight(gen.params, poi.x, poi.z);
     for (const part of poi.structures) {
-      if (part.collider) boxes.push(poiBox(poi, part, terrainY));
+      if (part.collider) {
+        const box = poiBox(poi, part, terrainY);
+        if (part.name.startsWith('combat-cover')) box.terrainY = sampleHeight(gen.params, part.x, part.z);
+        boxes.push(box);
+      }
     }
   }
 
@@ -262,6 +267,7 @@ export function auditWorld(gen: WorldGen): WorldAuditReport {
   const namedPassages: WorldAuditReport['namedPassages'] = [];
   const passageSpecs = [
     ['bunker', 'Bunker-Eingang', 'bunker_left', 'bunker_right'],
+    ['bunker', 'Bunker-Hintereingang', 'bunker_back_left', 'bunker_back_right'],
     ['watchtower', 'Turm-Bodenöffnung', 'tower_deck_left', 'tower_deck_right'],
   ] as const;
   for (const [poiId, name, leftName, rightName] of passageSpecs) {

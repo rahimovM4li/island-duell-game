@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { islandMaterial } from './art-direction';
 
 export const KNIFE_DRAW_SECONDS = 0.92;
 export const KNIFE_INSPECT_SECONDS = 1.65;
@@ -7,9 +8,9 @@ export const KNIFE_INSPECT_SECONDS = 1.65;
 export function butterflyKnife(): THREE.Group {
   const root = new THREE.Group();
   root.name = 'butterfly-knife';
-  const titanium = new THREE.MeshStandardMaterial({ color: 0x42515e, metalness: 0.72, roughness: 0.28, emissive: 0x182733, emissiveIntensity: 0.25 });
+  const titanium = islandMaterial('dark');
   const steel = new THREE.MeshStandardMaterial({ color: 0xc4dbe3, metalness: 0.8, roughness: 0.2 });
-  const accent = new THREE.MeshStandardMaterial({ color: 0x6ee2cf, metalness: 0.55, roughness: 0.26 });
+  const accent = islandMaterial('brass');
   const bladeMaterial = new THREE.MeshPhysicalMaterial({ vertexColors: true, metalness: 0.42, roughness: 0.25, clearcoat: 0.65, clearcoatRoughness: 0.18, iridescence: 0.35, iridescenceIOR: 1.35, emissive: 0x273443, emissiveIntensity: 0.5 });
 
   const mesh = (parent: THREE.Object3D, geometry: THREE.BufferGeometry, material: THREE.Material, name: string): THREE.Mesh => {

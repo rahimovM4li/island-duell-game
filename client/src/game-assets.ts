@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import type { WeaponType } from '@shared/constants';
 import type { PoiKind } from '@shared/worldgen';
+import { survivorKit } from './survivor-kit';
 
 const WEAPON_NAMES = [
   'pistol', 'rifle', 'shotgun', 'sniper',
@@ -126,8 +127,8 @@ class GameAssetLibrary {
         name: 'island-atlas-material',
         map: texture,
         color: 0xffffff,
-        roughness: 0.78,
-        metalness: 0.12,
+        roughness: 0.92,
+        metalness: 0,
         flatShading: true,
       });
       this.prepareTemplates(weaponGltf.scene, baseMaterial);
@@ -307,10 +308,16 @@ class GameAssetLibrary {
       const mesh = object as THREE.Mesh;
       if (!mesh.isMesh) return;
       const material = this.instanceMaterial();
+      // Cloth and skin stay matte; only hard equipment gets a restrained sheen.
+      if (mesh.name === 'player_gear' || mesh.name === 'player_helmet') {
+        material.roughness = 0.65;
+        material.metalness = 0.12;
+      }
       if (mesh.name.startsWith('player_accent')) material.color.setHex(color);
       mesh.material = material;
     });
     helmet.visible = false;
+    group.add(survivorKit(color));
     group.userData.compactAsset = true;
     return {
       group, body, head, helmet, weaponSocket,

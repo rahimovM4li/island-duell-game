@@ -18,6 +18,21 @@ const base = {
 };
 
 describe('character animation state machine', () => {
+  it('preserves the visible pose when a stance transition is interrupted repeatedly', () => {
+    const machine = new CharacterAnimationStateMachine();
+    machine.update({ ...base, speed: 6 }, 0.5);
+    let frame = machine.update({ ...base, prone: true }, 0.09);
+    for (const intent of [{ ...base, sneaking: true }, { ...base, speed: 9, sprinting: true }, base]) {
+      const interrupted = machine.update(intent, 0);
+      expect(interrupted.pose).toEqual(frame.pose);
+      frame = machine.update(intent, 0.04);
+    }
+    machine.reset();
+    const reset = machine.update(base, 0).pose;
+    const idle = sampleLocomotionPose('idle', 0, 0);
+    for (const key of Object.keys(idle) as (keyof typeof idle)[]) expect(reset[key]).toBeCloseTo(idle[key], 10);
+  });
+
   it('uses stance and airborne priorities consistently', () => {
     expect(selectLocomotionState(base)).toBe('idle');
     expect(selectLocomotionState({ ...base, speed: 3 })).toBe('walk');

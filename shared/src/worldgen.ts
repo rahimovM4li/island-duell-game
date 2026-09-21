@@ -13,6 +13,7 @@ import {
 import landmarkColliderManifest from './landmark-colliders.json';
 import { WRECK_PARTS } from './wreck';
 import middleIslandManifest from './middle-island.json';
+import { BUNKER_PARTS, buildCombatLayout, reserveCombatRoutes, type CombatRoute } from './combat-layout';
 
 export type CrateTier = 'common' | 'good' | 'top';
 export type VegKind = 'tree' | 'rock' | 'bush';
@@ -178,7 +179,9 @@ function landmarkStructures(
 ): PoiStructure[] {
   const material: PoiStructure['material'] = id === 'wreck' || id === 'watchtower' ? 'wood' : 'stone';
   const c = Math.cos(rootYaw), s = Math.sin(rootYaw);
-  return (id === 'wreck' ? WRECK_PARTS : LANDMARK_COLLIDERS[id].colliders).map((collider) => {
+  const parts: LocalBoxCollider[] = id === 'wreck' ? WRECK_PARTS
+    : id === 'bunker' ? BUNKER_PARTS : LANDMARK_COLLIDERS[id].colliders;
+  return parts.map((collider) => {
     const [lx, cy, lz] = collider.center;
     const [w, h, d] = collider.size;
     return {
@@ -204,6 +207,7 @@ export interface WorldGen {
   plateau: { x: number; z: number };
   pois: LandmarkPoi[];
   centralStructures: CentralStructure[];
+  combatRoutes: CombatRoute[];
   decorations: WorldDecoration[];
   navigationLights: PlacementPoint[];
   vegetation: Veg[];
@@ -332,12 +336,14 @@ export function generateWorld(seed: number, n: number): WorldGen {
   // ---- authored middle island: visual GLB and these simple deterministic
   // gameplay proxies share the same Blender coordinate source.
   const centralStructures = middleIslandStructures();
+  const combatRoutes = buildCombatLayout(params, pois, centralStructures);
 
   // ---- fixed 12 POI crates (§3): risk-coupled loot (§5.2)
   // ---- one shared occupancy map for structures, loot, props and vegetation.
   // Visual meshes remain independent, but every generated ground footprint is
   // reserved here before later systems may place another object.
   const placement = new PlacementMap();
+  reserveCombatRoutes(placement, combatRoutes);
   for (const structure of centralStructures) {
     if (structure.shape === 'cylinder') {
       placement.reserveCircle(
@@ -360,7 +366,7 @@ export function generateWorld(seed: number, n: number): WorldGen {
       const lowestY = centerY
         - Math.abs(Math.cos(pitch)) * part.h / 2
         - Math.abs(Math.sin(pitch)) * part.d / 2;
-      if (lowestY >= 1.25) return;
+      if (lowestY >= 1.25 && !part.name.startsWith('combat-cover')) return;
       placement.reserveBox(
         part.x, part.z, part.w, part.d, part.rotY,
         `${poi.id}-structure-${index}`,
@@ -611,7 +617,7 @@ export function generateWorld(seed: number, n: number): WorldGen {
   addVeg('bush', 190, 0, 0.8, 1.45);
 
   return {
-    seed, n, params, spawns, plateau, pois, centralStructures, decorations, navigationLights,
+    seed, n, params, spawns, plateau, pois, centralStructures, combatRoutes, decorations, navigationLights,
     vegetation, crates, spawnFloorItems, carePackagePos,
   };
 }

@@ -187,24 +187,27 @@ export class CharacterAnimationStateMachine {
   private current: LocomotionState = 'idle';
   private previous: LocomotionState = 'idle';
   private stateTime = 0;
-  private previousTime = 0;
   private transition = 1;
   private duration = 0;
+  private visiblePose: CharacterPose = { ...ZERO_POSE };
+  private transitionStart: CharacterPose = { ...ZERO_POSE };
 
   reset(state: LocomotionState = 'idle'): void {
     this.current = state;
     this.previous = state;
     this.stateTime = 0;
-    this.previousTime = 0;
     this.transition = 1;
     this.duration = 0;
+    this.visiblePose = sampleLocomotionPose(state, 0, 0);
+    this.transitionStart = { ...this.visiblePose };
   }
 
   update(intent: CharacterAnimationIntent, dt: number): CharacterAnimationFrame {
     const next = selectLocomotionState(intent);
     if (next !== this.current) {
       this.previous = this.current;
-      this.previousTime = this.stateTime;
+      // Continue from what is actually on screen, including an unfinished blend.
+      this.transitionStart = { ...this.visiblePose };
       this.current = next;
       this.stateTime = 0;
       this.transition = 0;
@@ -219,20 +222,20 @@ export class CharacterAnimationStateMachine {
       return reference ? Math.max(0.2, intent.speed / reference) : 1;
     };
     this.stateTime += safeDt * cadence(this.current);
-    this.previousTime += safeDt * cadence(this.previous);
     this.transition = this.duration <= 0
       ? 1
       : Math.min(1, this.transition + safeDt / this.duration);
     const eased = this.transition * this.transition * (3 - 2 * this.transition);
+    this.visiblePose = mixPose(
+      this.transitionStart,
+      sampleLocomotionPose(this.current, this.stateTime, intent.speed),
+      eased,
+    );
     return {
       locomotion: this.current,
       previous: this.previous,
       transition: eased,
-      pose: mixPose(
-        sampleLocomotionPose(this.previous, this.previousTime, intent.speed),
-        sampleLocomotionPose(this.current, this.stateTime, intent.speed),
-        eased,
-      ),
+      pose: this.visiblePose,
     };
   }
 }

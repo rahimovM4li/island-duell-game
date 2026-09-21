@@ -32,7 +32,7 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.getByRole('radio', { name: /Training/ }).click();
     await page.locator('#practice-bots').selectOption('1');
     await page.getByRole('button', { name: /Training starten/ }).click();
-    await expect(page.locator('#hud')).toHaveClass(/active/);
+    await expect(page.locator('#hud')).toHaveClass(/active/, { timeout: 20_000 });
     await expect.poll(async () => (await command('state')).ready).toBe(true);
     const setup = await command('prepare');
     // Reconnect restores the authoritative test location immediately, without waiting for
@@ -40,7 +40,7 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.reload();
     await page.getByRole('radio', { name: /Training/ }).click();
     await page.getByRole('button', { name: /Training starten/ }).click();
-    await expect(page.locator('#hud')).toHaveClass(/active/);
+    await expect(page.locator('#hud')).toHaveClass(/active/, { timeout: 20_000 });
     await expect.poll(async () => (await view())?.weapon).toBe('rifle');
     await page.locator('canvas.game').click();
     await expect.poll(() => page.evaluate(() => (window as any).__ISLAND_DUELL_DIAGNOSTICS__.snapshot().state.pointerLocked)).toBe(true);

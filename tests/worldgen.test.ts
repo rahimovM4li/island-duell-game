@@ -206,7 +206,7 @@ describe('authored middle island', () => {
   const gen = generateWorld(SEED, 3);
 
   it('loads Blender-authored primitive colliders and two walkable ramps', () => {
-    expect(gen.centralStructures).toHaveLength(99);
+    expect(gen.centralStructures.filter(part => !part.name.startsWith('Combat_'))).toHaveLength(99);
     expect(gen.centralStructures.filter((part) => part.shape === 'cylinder')).toHaveLength(3);
     expect(gen.centralStructures.filter((part) =>
       part.shape === 'box' && part.walkSurface)).toHaveLength(2);

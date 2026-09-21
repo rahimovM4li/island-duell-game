@@ -8,6 +8,26 @@ process.on('message', (message: { id: number; action: string }) => {
     const room = (server.rooms as any).rooms.get(server.rooms.roomIds()[0]);
     const player = room && [...room.players.values()].find((p: any) => !p.isBot) as any;
     let yaw: number | undefined;
+    if (message.action.startsWith('visit-')) {
+      room.tickBots = () => {};
+      const place = message.action.slice(6);
+      const poi = room.gen.pois.find((p: any) => p.id === (place.startsWith('bunker') ? 'bunker' : 'watchtower'));
+      const rear = place === 'bunker-rear';
+      const lx = rear ? 0 : 8, lz = rear ? -5.5 : 15;
+      const x = place === 'ruins' ? 0 : poi.x + Math.cos(poi.rootYaw) * lx + Math.sin(poi.rootYaw) * lz;
+      const z = place === 'ruins' ? 31 : poi.z - Math.sin(poi.rootYaw) * lx + Math.cos(poi.rootYaw) * lz;
+      player.move = freshMoveState({ x, y: sampleHeight(room.gen.params, x, z) + 0.25, z });
+      room.phys.setPlayerPos(player.id, player.move.pos);
+      player.inv.primary = { type: 'rifle', mag: 20 }; player.inv.active = 2;
+      room.pushInventory(player);
+      yaw = place === 'ruins' ? 0 : Math.atan2(x - poi.x, z - poi.z);
+      for (const bot of room.players.values() as Iterable<any>) if (bot.isBot) {
+        const bx = poi.x + Math.cos(poi.rootYaw) * -2, bz = poi.z - Math.sin(poi.rootYaw) * -2;
+        bot.move = freshMoveState({ x: bx, y: sampleHeight(room.gen.params, bx, bz) + 0.1, z: bz });
+        room.phys.setPlayerPos(bot.id, bot.move.pos);
+        bot.yaw = poi.rootYaw;
+      }
+    }
     if (message.action === 'prepare') {
       room.tickBots = () => {};
       const wreck = room.gen.pois.find((p: any) => p.id === 'wreck');

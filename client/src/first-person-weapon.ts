@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { WeaponType } from '@shared/constants';
+import { islandMaterial } from './art-direction';
 
 const smooth = (a: number, b: number, t: number): number => {
   const k = THREE.MathUtils.clamp((t - a) / (b - a), 0, 1);
@@ -21,11 +22,11 @@ export function firstPersonWeapon(type: WeaponType | 'none'): THREE.Group | null
   if (!['pistol', 'rifle', 'shotgun', 'sniper'].includes(type)) return null;
   const root = new THREE.Group();
   root.name = `view-${type}`;
-  const steel = new THREE.MeshStandardMaterial({ color: 0x697d87, metalness: 0.42, roughness: 0.34, emissive: 0x263844, emissiveIntensity: 0.22 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x34434b, metalness: 0.25, roughness: 0.5, emissive: 0x18212a, emissiveIntensity: 0.2 });
-  const rubber = new THREE.MeshStandardMaterial({ color: 0x26312e, roughness: 0.94 });
-  const wood = new THREE.MeshStandardMaterial({ color: 0x885634, roughness: 0.7 });
-  const brass = new THREE.MeshStandardMaterial({ color: 0xcaa264, metalness: 0.7, roughness: 0.4 });
+  const steel = islandMaterial('steel');
+  const dark = islandMaterial('dark');
+  const rubber = islandMaterial('rubber');
+  const wood = islandMaterial('wood');
+  const brass = islandMaterial('brass');
   const glass = new THREE.MeshStandardMaterial({ color: 0x76c8c1, metalness: 0.35, roughness: 0.15, emissive: 0x173b35, emissiveIntensity: 0.3 });
   const box = (name: string, size: number[], pos: number[], mat: THREE.Material, parent: THREE.Object3D = root): THREE.Mesh => {
     const mesh = new THREE.Mesh(new RoundedBoxGeometry(size[0], size[1], size[2], 2, Math.min(...size) * 0.13), mat);

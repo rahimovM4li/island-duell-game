@@ -3,6 +3,9 @@
 // Terrain is meshed in 8×8 chunks of 32 m (§5); vegetation is instanced.
 import * as THREE from 'three';
 import { buildWreck } from './wreck-model';
+import { buildCombatScenery } from './combat-scenery';
+import { routeDistance } from '@shared/combat-layout';
+import { ISLAND_STYLE } from './art-direction';
 import {
   CHUNK_SIZE, CHUNKS_PER_SIDE, ISLAND_LAND_RADIUS, TERRAIN_CELL, WORLD_HALF,
 } from '@shared/constants';
@@ -22,7 +25,7 @@ const LIGHTING_STYLE: Record<LightingPreset, {
   sky: number; fog: number; sun: number; water: number;
   sunIntensity: number; hemiIntensity: number; elevation: number; azimuth: number;
 }> = {
-  day: { sky: 0x87b8dc, fog: 0xa8c8dc, sun: 0xfff2d8, water: 0x2a6d9e, sunIntensity: 1.52, hemiIntensity: 0.92, elevation: 1.25, azimuth: 0.55 },
+  day: { sky: 0x9bbfce, fog: 0xb6c8c5, sun: 0xffebce, water: 0x397e8c, sunIntensity: 1.35, hemiIntensity: 1.15, elevation: 1.05, azimuth: 0.55 },
   dawn: { sky: 0xd3a18a, fog: 0xd8b39d, sun: 0xffbd72, water: 0x496e91, sunIntensity: 1.08, hemiIntensity: 0.72, elevation: 0.32, azimuth: -0.75 },
   sunset: { sky: 0xa15f6c, fog: 0xb77b79, sun: 0xff854c, water: 0x3c5276, sunIntensity: 0.88, hemiIntensity: 0.55, elevation: 0.2, azimuth: 0.95 },
   night: { sky: 0x0a1020, fog: 0x0c1424, sun: 0x9db8e8, water: 0x142d4b, sunIntensity: 0.16, hemiIntensity: 0.2, elevation: 0.22, azimuth: 2.1 },
@@ -53,10 +56,10 @@ function disposeObject(root: THREE.Object3D): void {
 function terrainColor(h: number, steep: number): THREE.Color {
   // sand → grass → rock by height, rockier when steep
   const c = new THREE.Color();
-  if (h < 1.4) c.setHex(0xd8c185);            // beach sand
-  else if (h < 2.2) c.lerpColors(new THREE.Color(0xd8c185), new THREE.Color(0x5d8a44), (h - 1.4) / 0.8);
-  else if (h < 9) c.setHex(0x5d8a44);          // grass
-  else c.lerpColors(new THREE.Color(0x5d8a44), new THREE.Color(0x8a8578), Math.min(1, (h - 9) / 5));
+  if (h < 1.4) c.setHex(ISLAND_STYLE.sand);
+  else if (h < 2.2) c.lerpColors(new THREE.Color(ISLAND_STYLE.sand), new THREE.Color(ISLAND_STYLE.grass), (h - 1.4) / 0.8);
+  else if (h < 9) c.setHex(ISLAND_STYLE.grass);
+  else c.lerpColors(new THREE.Color(ISLAND_STYLE.grass), new THREE.Color(ISLAND_STYLE.stone), Math.min(1, (h - 9) / 5));
   if (steep > 0.55) c.lerp(new THREE.Color(0x7d7568), Math.min(1, (steep - 0.55) * 2));
   return c;
 }
@@ -137,6 +140,7 @@ export class World {
     }
     this.buildRuins();
     this.buildLandmarks();
+    this.scene.add(buildCombatScenery(gen));
     this.buildNightTorches();
     this.buildSpawnMarkers();
     this.zoneMesh = this.buildZoneCylinder(0x63d0ff, 0.16);
@@ -168,6 +172,9 @@ export class World {
             const hz = sampleHeight(p, x, z + 1) - sampleHeight(p, x, z - 1);
             const steep = Math.min(1, Math.hypot(hx, hz) / 2);
             const c = terrainColor(h, steep);
+            const pathDistance = Math.min(...this.gen.combatRoutes.map(route => routeDistance(route, x, z)));
+            const pathBlend = 1 - THREE.MathUtils.smoothstep(pathDistance, 0.5, 2.1);
+            c.lerp(new THREE.Color(ISLAND_STYLE.trail), pathBlend * 0.7);
             col[i3] = c.r; col[i3 + 1] = c.g; col[i3 + 2] = c.b;
           }
         }
@@ -441,6 +448,7 @@ export class World {
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       if (this.gen.spawns.some((sp) => Math.hypot(x - sp.x, z - sp.z) < 3.5)) continue;
+      if (this.gen.combatRoutes.some(route => routeDistance(route, x, z) < route.width / 2 + 0.5)) continue;
       const y = sampleHeight(this.gen.params, x, z);
       if (y < 0.75) continue;
       grassPositions.push({ x, y, z, scale: 0.72 + grassRng() * 0.48, rot: grassRng() * Math.PI * 2 });
@@ -533,6 +541,7 @@ export class World {
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       if (this.gen.spawns.some((sp) => Math.hypot(x - sp.x, z - sp.z) < 3.5)) continue;
+      if (this.gen.combatRoutes.some(route => routeDistance(route, x, z) < route.width / 2 + 0.5)) continue;
       const y = sampleHeight(this.gen.params, x, z);
       if (y < 0.75) continue;
       grassPositions.push({ x, y, z, scale: 0.72 + grassRng() * 0.48, rot: grassRng() * Math.PI * 2 });
@@ -576,6 +585,7 @@ export class World {
       const fallback = new THREE.Group();
       fallback.name = 'middle-island-fallback';
       for (const structure of this.gen.centralStructures) {
+        if (structure.name.startsWith('Combat_')) continue;
         const material = structure.name.startsWith('Nature_') ? nature
           : structure.h < 0.9 ? low : stone;
         const mesh = structure.shape === 'cylinder'
@@ -622,6 +632,7 @@ export class World {
       ? new THREE.MeshLambertMaterial({ color: 0x8a5a3a, flatShading: true })
       : null;
     for (const poi of this.gen.pois) {
+      if (poi.id === 'bunker') continue; // Rendered from the shared two-entry layout.
       const barrels = this.gen.decorations.filter((entry) =>
         entry.kind === 'barrel' && entry.owner === poi.id);
       const compactModel = compactModels.get(poi.id);
@@ -654,8 +665,9 @@ export class World {
       const group = new THREE.Group();
       group.name = `poi-${poi.id}`;
       for (const s of poi.structures) {
+        if (s.name.startsWith('combat-cover')) continue;
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(s.w, s.h, s.d), materials[s.material]);
-        const baseY = sampleHeight(this.gen.params, s.x, s.z);
+        const baseY = sampleHeight(this.gen.params, poi.x, poi.z);
         mesh.position.set(s.x, baseY + (s.yOffset ?? 0) + s.h / 2, s.z);
         mesh.rotation.x = s.rotX ?? 0;
         mesh.rotation.y = s.rotY;
@@ -701,14 +713,6 @@ export class World {
         );
         signal.position.set(poi.x, sampleHeight(this.gen.params, poi.x, poi.z) + 8.25, poi.z);
         group.add(signal);
-      } else if (poi.id === 'bunker') {
-        const sign = new THREE.Mesh(
-          new THREE.BoxGeometry(2.7, 0.65, 0.16),
-          new THREE.MeshLambertMaterial({ color: 0xb2543f }),
-        );
-        sign.position.set(poi.x, sampleHeight(this.gen.params, poi.x, poi.z) + 2.1, poi.z);
-        sign.rotation.y = poi.structures[0].rotY;
-        group.add(sign);
       }
       this.scene.add(group);
     }

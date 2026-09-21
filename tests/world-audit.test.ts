@@ -9,7 +9,7 @@ describe('world collider and navigation audit', () => {
     for (const seed of [1, 7, 42, 123456789]) {
       const report = auditWorld(generateWorld(seed, 5));
       expect(report.namedPassages.map((entry) => entry.name))
-        .toEqual(['Bunker-Eingang', 'Turm-Bodenöffnung']);
+        .toEqual(['Bunker-Eingang', 'Bunker-Hintereingang', 'Turm-Bodenöffnung']);
       expect(report.namedPassages.every((entry) => entry.width > PLAYER_RADIUS * 2)).toBe(true);
       expect(report.errors).toBe(0);
     }
