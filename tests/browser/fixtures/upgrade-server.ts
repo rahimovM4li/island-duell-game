@@ -11,9 +11,10 @@ process.on('message', (message: { id: number; action: string }) => {
     if (message.action.startsWith('visit-')) {
       room.tickBots = () => {};
       const place = message.action.slice(6);
-      const poi = room.gen.pois.find((p: any) => p.id === (place.startsWith('bunker') ? 'bunker' : 'watchtower'));
+      const poi = room.gen.pois.find((p: any) => p.id === (place.startsWith('bunker') ? 'bunker' : place === 'wreck' ? 'wreck' : 'watchtower'));
       const rear = place === 'bunker-rear';
-      const lx = rear ? 0 : 8, lz = rear ? -5.5 : 15;
+      const towerRear = place === 'watchtower-rear';
+      const lx = rear || towerRear ? 0 : 8, lz = rear ? -5.5 : towerRear ? -13.2 : 15;
       const x = place === 'ruins' ? 0 : poi.x + Math.cos(poi.rootYaw) * lx + Math.sin(poi.rootYaw) * lz;
       const z = place === 'ruins' ? 31 : poi.z - Math.sin(poi.rootYaw) * lx + Math.cos(poi.rootYaw) * lz;
       player.move = freshMoveState({ x, y: sampleHeight(room.gen.params, x, z) + 0.25, z });

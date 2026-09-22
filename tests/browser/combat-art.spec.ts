@@ -3,7 +3,7 @@ import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 test('combat spaces render and the rear bunker entrance works through real input', async ({ page }, testInfo) => {
-  test.setTimeout(100_000);
+  test.setTimeout(150_000);
   const server = fork(fileURLToPath(new URL('./fixtures/upgrade-server.ts', import.meta.url)), [], {
     execArgv: ['--import', 'tsx'], windowsHide: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
@@ -36,7 +36,7 @@ test('combat spaces render and the rear bunker entrance works through real input
       server.once('message', () => { clearTimeout(timer); resolve(); }); server.once('error', reject);
     });
     await page.goto('http://127.0.0.1:3193'); await join();
-    for (const place of ['bunker', 'watchtower', 'ruins', 'bunker-rear']) {
+    for (const place of ['bunker', 'watchtower', 'ruins', 'wreck', 'bunker-rear', 'watchtower-rear']) {
       const setup = await command(`visit-${place}`);
       await page.reload(); await join();
       await page.locator('canvas.game').click();
@@ -51,6 +51,7 @@ test('combat spaces render and the rear bunker entrance works through real input
       await page.waitForTimeout(600);
       const before = await snapshot();
       expect(before.renderer.triangles).toBeGreaterThan(1000);
+      await testInfo.attach(`${place}-renderer.json`, { body: JSON.stringify(before.renderer), contentType: 'application/json' });
       await page.screenshot({ path: testInfo.outputPath(`${place}.png`) });
       if (place === 'bunker-rear') {
         await page.keyboard.down('w'); await page.waitForTimeout(1000); await page.keyboard.up('w');
@@ -58,6 +59,13 @@ test('combat spaces render and the rear bunker entrance works through real input
         const distance = Math.hypot(after.player.position.x - before.player.position.x, after.player.position.z - before.player.position.z);
         expect(distance).toBeGreaterThan(3);
         await page.screenshot({ path: testInfo.outputPath('bunker-through-door.png') });
+      }
+      if (place === 'watchtower-rear') {
+        await page.keyboard.down('w');
+        try {
+          await expect.poll(async () => (await snapshot()).player.position.y - before.player.position.y, { timeout: 8000, intervals: [100] }).toBeGreaterThan(5.2);
+        } finally { await page.keyboard.up('w'); }
+        await page.screenshot({ path: testInfo.outputPath('watchtower-second-stair.png') });
       }
       await page.keyboard.press('Escape');
     }

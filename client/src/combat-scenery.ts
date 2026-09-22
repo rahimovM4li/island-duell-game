@@ -56,7 +56,7 @@ export function buildCombatScenery(gen: WorldGen): THREE.Group {
     if (poi.id !== 'bunker') continue;
     const bunker = new THREE.Group(); bunker.name = 'poi-bunker';
     // Shared world-space solids replace the old closed-back GLB.
-    for (const p of poi.structures.filter(p => !p.name.startsWith('combat-cover'))) {
+    for (const p of poi.structures.filter(p => !p.name.startsWith('combat-cover') && !p.name.startsWith('poi-upgrade-'))) {
       const mesh = box(bunker, p.name, p.w, p.h, p.d, p.x, base + (p.yOffset ?? 0) + p.h / 2, p.z, stone);
       mesh.rotation.y = p.rotY;
     }

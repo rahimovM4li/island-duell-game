@@ -7,6 +7,8 @@ import { routeDistance } from '@shared/combat-layout';
 import { GamePhysics } from '@shared/physics';
 import { freshMoveState, stepMovement } from '@shared/movement';
 import { buildCombatScenery } from '../client/src/combat-scenery';
+import { buildPoiScenery } from '../client/src/poi-scenery';
+import { poiPoint } from '@shared/poi-upgrades';
 
 describe('authored combat approaches', () => {
   beforeAll(async () => { await RAPIER.init(); });
@@ -67,5 +69,51 @@ describe('authored combat approaches', () => {
       const size = mesh.geometry.boundingBox!.getSize(new THREE.Vector3());
       expect(size.x).toBeCloseTo(part.w, 5); expect(size.y).toBeCloseTo(part.h, 5); expect(size.z).toBeCloseTo(part.d, 5);
     }
+  });
+
+  it('walks up and down the second tower stair without jumping across seeds', () => {
+    for (const seed of [1, 2, 7, 24, 42, 99, 170, 330, 484, 496, 123456789]) {
+      const gen = generateWorld(seed, 3), phys = new GamePhysics(RAPIER, gen);
+      try {
+        const poi = gen.pois.find(p => p.id === 'watchtower')!;
+        const base = sampleHeight(gen.params, poi.x, poi.z);
+        const start = poiPoint(poi, 0, -19), top = poiPoint(poi, 0, -1.8);
+        const st = freshMoveState({ ...start, y: sampleHeight(gen.params, start.x, start.z) + 0.15 });
+        phys.addPlayer('walker', st.pos);
+        for (const end of [top, start]) {
+          let steps = 0;
+          while (Math.hypot(end.x - st.pos.x, end.z - st.pos.z) > 0.25 && steps++ < 240) {
+            stepMovement(phys, 'walker', st, {
+              seq: steps, dt: 1 / 30, mx: 0, mz: 1, yaw: Math.atan2(st.pos.x - end.x, st.pos.z - end.z), pitch: 0,
+              sprint: false, sneak: false, aim: false, jump: false, fire: false, interact: false,
+            }, 'pistol');
+            phys.step();
+          }
+          expect(Math.hypot(end.x - st.pos.x, end.z - st.pos.z), `stair seed ${seed}: ${JSON.stringify(st.pos)}`).toBeLessThan(0.3);
+          const expectedHeight = end === top ? base + 5.5 : sampleHeight(gen.params, st.pos.x, st.pos.z);
+          expect(st.pos.y, `stair height seed ${seed}`).toBeCloseTo(expectedHeight, 0);
+        }
+      } finally { phys.dispose(); }
+    }
+  });
+
+  it('matches upgraded POI solids to physics dimensions and keeps details batched', () => {
+    const gen = generateWorld(42, 3), model = buildPoiScenery(gen);
+    model.updateMatrixWorld(true);
+    for (const poi of gen.pois) for (const part of poi.structures.filter(p => p.name.startsWith('poi-upgrade-'))) {
+      const mesh = model.getObjectByName(`${poi.id}/${part.name}`) as THREE.Mesh;
+      expect(mesh, part.name).toBeDefined();
+      const center = mesh.getWorldPosition(new THREE.Vector3());
+      expect(center.x).toBeCloseTo(part.x, 5); expect(center.z).toBeCloseTo(part.z, 5);
+      expect(center.y).toBeCloseTo(sampleHeight(gen.params, poi.x, poi.z) + (part.yOffset ?? 0) + part.h / 2, 5);
+      mesh.geometry.computeBoundingBox();
+      const size = mesh.geometry.boundingBox!.getSize(new THREE.Vector3());
+      expect(size.x).toBeCloseTo(part.w, 5); expect(size.y).toBeCloseTo(part.h, 5); expect(size.z).toBeCloseTo(part.d, 5);
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(part.rotX ?? 0, part.rotY, 0, 'YXZ'));
+      expect(mesh.getWorldQuaternion(new THREE.Quaternion()).angleTo(q)).toBeLessThan(0.00001);
+    }
+    let meshes = 0;
+    model.traverse(object => { if (object instanceof THREE.Mesh) meshes++; });
+    expect(meshes).toBeLessThan(40);
   });
 });

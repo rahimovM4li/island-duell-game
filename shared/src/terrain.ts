@@ -118,7 +118,7 @@ export function sampleHeight(p: TerrainParams, x: number, z: number): number {
   // Extra two metres around the authored geometry keep a 2 m heightfield cell
   // from straddling the flat pad and creating an invisible step at the stairs.
   // A longer graded apron makes both ground flanks reachable without jumping.
-  const towerBlend = 1 - smoothstep(11, 32, towerDistance);
+  const towerBlend = 1 - smoothstep(14, 32, towerDistance);
   h = lerp(h, naturalHeight(p, tower.x, tower.z), towerBlend);
 
   const bunker = bunkerCenter(p);

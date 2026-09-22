@@ -4,7 +4,9 @@
 import * as THREE from 'three';
 import { buildWreck } from './wreck-model';
 import { buildCombatScenery } from './combat-scenery';
+import { buildPoiScenery } from './poi-scenery';
 import { routeDistance } from '@shared/combat-layout';
+import { PlacementMap } from '@shared/placement';
 import { ISLAND_STYLE } from './art-direction';
 import {
   CHUNK_SIZE, CHUNKS_PER_SIDE, ISLAND_LAND_RADIUS, TERRAIN_CELL, WORLD_HALF,
@@ -141,6 +143,7 @@ export class World {
     this.buildRuins();
     this.buildLandmarks();
     this.scene.add(buildCombatScenery(gen));
+    this.scene.add(buildPoiScenery(gen));
     this.buildNightTorches();
     this.buildSpawnMarkers();
     this.zoneMesh = this.buildZoneCylinder(0x63d0ff, 0.16);
@@ -304,7 +307,20 @@ export class World {
 
   // ---------- vegetation: instanced trunks/foliage/rocks/bushes ----------
   private buildVegetation(): void {
-    if (this.buildCompactVegetation()) return;
+    // Keep both art paths free of grass piercing floors, cover and loot crates.
+    const grassClearance = new PlacementMap();
+    for (const part of this.gen.centralStructures) {
+      if (part.shape === 'cylinder') grassClearance.reserveCircle(part.x, part.z, part.radius);
+      else grassClearance.reserveBox(part.x, part.z, part.w,
+        part.d * Math.abs(Math.cos(part.rotX)) + part.h * Math.abs(Math.sin(part.rotX)), part.rotY);
+    }
+    for (const poi of this.gen.pois) for (const part of poi.structures) if (part.collider) {
+      const pitch = part.rotX ?? 0;
+      grassClearance.reserveBox(part.x, part.z, part.w,
+        part.d * Math.abs(Math.cos(pitch)) + part.h * Math.abs(Math.sin(pitch)), part.rotY);
+    }
+    for (const crate of this.gen.crates) grassClearance.reserveCircle(crate.x, crate.z, 0.8);
+    if (this.buildCompactVegetation(grassClearance)) return;
     const trees = this.gen.vegetation.filter((v) => v.kind === 'tree');
     const rocks = this.gen.vegetation.filter((v) => v.kind === 'rock');
     const bushes = this.gen.vegetation.filter((v) => v.kind === 'bush');
@@ -449,6 +465,7 @@ export class World {
       const z = Math.sin(angle) * radius;
       if (this.gen.spawns.some((sp) => Math.hypot(x - sp.x, z - sp.z) < 3.5)) continue;
       if (this.gen.combatRoutes.some(route => routeDistance(route, x, z) < route.width / 2 + 0.5)) continue;
+      if (!grassClearance.canPlaceCircle(x, z, 0.5)) continue;
       const y = sampleHeight(this.gen.params, x, z);
       if (y < 0.75) continue;
       grassPositions.push({ x, y, z, scale: 0.72 + grassRng() * 0.48, rot: grassRng() * Math.PI * 2 });
@@ -478,7 +495,7 @@ export class World {
   }
 
   /** Blender-authored atlas meshes batch each silhouette variant into one draw call. */
-  private buildCompactVegetation(): boolean {
+  private buildCompactVegetation(grassClearance: PlacementMap): boolean {
     const trees = this.gen.vegetation.filter((v) => v.kind === 'tree');
     const rocks = this.gen.vegetation.filter((v) => v.kind === 'rock');
     const bushes = this.gen.vegetation.filter((v) => v.kind === 'bush');
@@ -542,6 +559,7 @@ export class World {
       const z = Math.sin(angle) * radius;
       if (this.gen.spawns.some((sp) => Math.hypot(x - sp.x, z - sp.z) < 3.5)) continue;
       if (this.gen.combatRoutes.some(route => routeDistance(route, x, z) < route.width / 2 + 0.5)) continue;
+      if (!grassClearance.canPlaceCircle(x, z, 0.5)) continue;
       const y = sampleHeight(this.gen.params, x, z);
       if (y < 0.75) continue;
       grassPositions.push({ x, y, z, scale: 0.72 + grassRng() * 0.48, rot: grassRng() * Math.PI * 2 });
@@ -585,7 +603,7 @@ export class World {
       const fallback = new THREE.Group();
       fallback.name = 'middle-island-fallback';
       for (const structure of this.gen.centralStructures) {
-        if (structure.name.startsWith('Combat_')) continue;
+        if (/^(Combat_|Poi_)/.test(structure.name)) continue;
         const material = structure.name.startsWith('Nature_') ? nature
           : structure.h < 0.9 ? low : stone;
         const mesh = structure.shape === 'cylinder'
@@ -665,7 +683,7 @@ export class World {
       const group = new THREE.Group();
       group.name = `poi-${poi.id}`;
       for (const s of poi.structures) {
-        if (s.name.startsWith('combat-cover')) continue;
+        if (/^(combat-cover|poi-upgrade-)/.test(s.name)) continue;
         const mesh = new THREE.Mesh(new THREE.BoxGeometry(s.w, s.h, s.d), materials[s.material]);
         const baseY = sampleHeight(this.gen.params, poi.x, poi.z);
         mesh.position.set(s.x, baseY + (s.yOffset ?? 0) + s.h / 2, s.z);

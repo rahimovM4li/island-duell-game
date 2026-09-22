@@ -14,6 +14,7 @@ import landmarkColliderManifest from './landmark-colliders.json';
 import { WRECK_PARTS } from './wreck';
 import middleIslandManifest from './middle-island.json';
 import { BUNKER_PARTS, buildCombatLayout, reserveCombatRoutes, type CombatRoute } from './combat-layout';
+import { upgradePois } from './poi-upgrades';
 
 export type CrateTier = 'common' | 'good' | 'top';
 export type VegKind = 'tree' | 'rock' | 'bush';
@@ -337,6 +338,7 @@ export function generateWorld(seed: number, n: number): WorldGen {
   // gameplay proxies share the same Blender coordinate source.
   const centralStructures = middleIslandStructures();
   const combatRoutes = buildCombatLayout(params, pois, centralStructures);
+  upgradePois(params, pois, centralStructures, combatRoutes);
 
   // ---- fixed 12 POI crates (§3): risk-coupled loot (§5.2)
   // ---- one shared occupancy map for structures, loot, props and vegetation.
