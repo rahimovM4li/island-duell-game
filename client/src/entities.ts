@@ -1,7 +1,6 @@
 // Dynamic scene objects: remote players (interpolated in main.ts), pickups,
 // projectiles, care package, tracer/explosion FX and the first-person viewmodel.
 import * as THREE from 'three';
-import { viewHandModel } from './view-hand';
 import { WEAPONS, type WeaponType } from '@shared/constants';
 import { PLAYER_SKINS } from '@shared/multiplayer';
 import type { PickupInfo, SmokeSnap, SnapProjectile } from '@shared/protocol';
@@ -255,6 +254,29 @@ type LitPlayerMaterial = THREE.MeshLambertMaterial | THREE.MeshStandardMaterial;
 
 function weaponModel(weapon: WeaponType | 'none'): THREE.Group {
   return firstPersonWeapon(weapon) ?? gameAssets.cloneWeapon(weapon) ?? proceduralWeaponModel(weapon);
+}
+
+function proceduralViewHand(color: number): THREE.Group {
+  const g = new THREE.Group();
+  const glove = 0x171d22;
+  const armour = 0x30383f;
+  const skin = 0xd8a878;
+  addCylinder(g, 0.14, 0.48, [0, -0.07, 0.34], 0x20272e, [Math.PI / 2, 0, 0], 8);
+  addBox(g, [0.25, 0.17, 0.17], [0, -0.05, 0.08], armour);
+  addBox(g, [0.22, 0.13, 0.23], [0, -0.01, -0.06], glove);
+  addBox(g, [0.18, 0.04, 0.14], [0, 0.07, -0.06], armour);
+  addCylinder(g, 0.155, 0.075, [0, -0.075, 0.23], color, [Math.PI / 2, 0, 0], 10);
+  for (const x of [-0.073, -0.025, 0.025, 0.073]) {
+    addBox(g, [0.04, 0.06, 0.12], [x, 0, -0.18], glove);
+    addBox(g, [0.036, 0.055, 0.07], [x, 0, -0.275], skin);
+  }
+  addBox(g, [0.065, 0.07, 0.12], [-0.135, -0.01, -0.11], glove, [0, 0.35, -0.42]);
+  addBox(g, [0.055, 0.06, 0.07], [-0.17, -0.01, -0.19], skin, [0, 0.35, -0.42]);
+  return g;
+}
+
+function viewHandModel(color: number): THREE.Group {
+  return gameAssets.cloneViewHand(color)?.group ?? proceduralViewHand(color);
 }
 
 function crateModel(color: number, care = false): THREE.Group {
