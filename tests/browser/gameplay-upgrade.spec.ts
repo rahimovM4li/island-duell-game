@@ -35,8 +35,7 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect(page.locator('#hud')).toHaveClass(/active/, { timeout: 20_000 });
     await expect.poll(async () => (await command('state')).ready).toBe(true);
     const setup = await command('prepare');
-    // Reconnect restores the authoritative test location immediately, without waiting for
-    // the normal small-error camera correction to travel across the entire island.
+    // Reconnect also verifies the loaded hand assets survive an inventory restore.
     await page.reload();
     await page.getByRole('radio', { name: /Training/ }).click();
     await page.getByRole('button', { name: /Training starten/ }).click();
@@ -44,13 +43,14 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect.poll(async () => (await view())?.weapon).toBe('rifle');
     await page.locator('canvas.game').click();
     await expect.poll(() => page.evaluate(() => (window as any).__ISLAND_DUELL_DIAGNOSTICS__.snapshot().state.pointerLocked)).toBe(true);
-    // Feed mouse movement through the normal input listener to face the authored POI.
+    // Feed mouse movement through the normal input listener to face the island.
     await page.evaluate((yaw: number) => {
       const input = (window as any).__ISLAND_DUELL_DIAGNOSTICS__.snapshot().input;
       document.dispatchEvent(new MouseEvent('mousemove', { movementX: (input.yaw - yaw) / 0.0023, movementY: (input.pitch + 0.04) / 0.0023 }));
     }, setup.yaw);
     await page.waitForTimeout(1000);
     await page.screenshot({ path: testInfo.outputPath('wreck-rifle.png') });
+    expect((await view()).hands.map((hand: any) => hand.anatomical)).toEqual([true, true]);
     const before = (await command('state')).mag;
     await page.mouse.down();
     await page.waitForTimeout(180);
@@ -70,6 +70,7 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.waitForTimeout(350);
     await page.screenshot({ path: testInfo.outputPath('pistol.png') });
     expect((await view()).hands).toHaveLength(2);
+    expect((await view()).hands.every((hand: any) => hand.anatomical)).toBe(true);
     const slots = await page.locator('#slots .slot').evaluateAll(elements => elements.map(el => {
       const rect = el.getBoundingClientRect();
       return { width: rect.width, height: rect.height };
@@ -86,6 +87,7 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect.poll(async () => (await view()).knifeAnimating).toBe(false);
     await page.screenshot({ path: testInfo.outputPath('butterfly-ready.png') });
     expect((await view()).hands).toHaveLength(1);
+    expect((await view()).hands[0].anatomical).toBe(true);
     await page.keyboard.press('q');
     expect((await command('state')).active).toBe(1);
     await page.keyboard.press('f');
@@ -104,6 +106,8 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.screenshot({ path: testInfo.outputPath('butterfly-stab.png') });
     await page.keyboard.press('4');
     await expect.poll(async () => (await view()).weapon).toBe('grenade');
+    await page.waitForTimeout(350);
+    await page.screenshot({ path: testInfo.outputPath('grenade-grip.png') });
     await page.keyboard.press('4');
     await expect.poll(async () => (await view()).weapon).toBe('smoke');
     await page.keyboard.press('4');

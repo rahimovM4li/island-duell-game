@@ -476,31 +476,78 @@ function spectatorNameLabel(playerName: string): THREE.Sprite {
 function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Group {
   const g = new THREE.Group();
   if (weapon !== 'none') g.add(weaponModel(weapon));
+  const throwable = weapon === 'grenade' || weapon === 'smoke' || weapon === 'flash';
 
-  const addHand = (
-    x: number, y: number, z: number, mirrored = false, yaw = 0,
-  ): THREE.Group => {
-    const hand = viewHandModel(skinColor);
-    hand.name = mirrored ? 'support-hand' : 'trigger-hand';
-    hand.position.set(x, y, z);
-    hand.rotation.y = yaw;
-    if (mirrored) hand.scale.x = -1;
-    g.add(hand);
-    return hand;
-  };
-
-  if (weapon === 'knife') {
-    const right = addHand(-0.04, -0.18, 0.025, false, 0.08);
-    // Keep the sleeve trailing below the camera while the blade points upward.
-    right.rotation.x = 1.0;
-    right.rotation.z = -0.25;
-  } else if (weapon !== 'none') {
-    addHand(0.02, -0.08, 0.035);
+  // Authored anatomical poses use +X toward the thumb, +Y along the fingers,
+  // +Z into the palm. Attach their grip centres to the weapon, not the camera.
+  const primary = weapon === 'none' ? null
+    : gameAssets.cloneViewHand(skinColor, weapon === 'knife' ? 'knife' : throwable ? 'support' : 'trigger')?.group;
+  if (primary?.userData.anatomicalHand) {
+    primary.name = 'trigger-hand';
+    primary.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+      new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0),
+    ));
+    const palmOffset = new THREE.Vector3(-0.162, 0, -0.324);
+    if (weapon === 'knife') {
+      const turn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.9);
+      primary.quaternion.premultiply(turn);
+      palmOffset.applyQuaternion(turn);
+    }
+    primary.position.set(
+      weapon === 'knife' ? -0.058 : 0,
+      weapon === 'knife' ? -0.26 : throwable ? 0 : -0.21,
+      weapon === 'knife' ? 0 : 0.04,
+    ).sub(palmOffset);
+    g.add(primary);
     if (weapon === 'pistol' || weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper') {
-      const supportZ = weapon === 'pistol' ? 0.01 : weapon === 'sniper' ? -0.70 : -0.55;
-      const support = addHand(-0.13, -0.035, supportZ, true, -0.12);
-      support.rotation.z = -0.18;
+      const support = gameAssets.cloneViewHand(skinColor, 'support')!.group;
+      support.name = 'support-hand';
+      support.scale.x = -1;
+      if (weapon === 'pistol') {
+        support.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+          new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, 0, -1), new THREE.Vector3(1, 0, 0),
+        ));
+        // Mirroring preserves the index finger above the pinky; the left palm
+        // faces inward and cups the firing hand from the opposite side.
+        support.position.set(-0.245, -0.235, 0.39);
+      } else {
+        support.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+          new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0),
+        ));
+        support.position.set(-0.324, -0.192, weapon === 'sniper' ? -0.70 : -0.55);
+      }
       support.userData.restPosition = support.position.clone();
+      support.userData.restQuaternion = support.quaternion.clone();
+      g.add(support);
+    }
+  } else {
+    if (primary) disposeObject(primary);
+
+    const addHand = (
+      x: number, y: number, z: number, mirrored = false, yaw = 0,
+    ): THREE.Group => {
+      const hand = viewHandModel(skinColor);
+      hand.name = mirrored ? 'support-hand' : 'trigger-hand';
+      hand.position.set(x, y, z);
+      hand.rotation.y = yaw;
+      if (mirrored) hand.scale.x = -1;
+      g.add(hand);
+      return hand;
+    };
+
+    if (weapon === 'knife') {
+      const right = addHand(-0.04, -0.18, 0.025, false, 0.08);
+      // Keep the sleeve trailing below the camera while the blade points upward.
+      right.rotation.x = 1.0;
+      right.rotation.z = -0.25;
+    } else if (weapon !== 'none') {
+      addHand(0.02, -0.08, 0.035);
+      if (weapon === 'pistol' || weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper') {
+        const supportZ = weapon === 'pistol' ? 0.01 : weapon === 'sniper' ? -0.70 : -0.55;
+        const support = addHand(-0.13, -0.035, supportZ, true, -0.12);
+        support.rotation.z = -0.18;
+        support.userData.restPosition = support.position.clone();
+      }
     }
   }
 
@@ -1617,7 +1664,7 @@ export class Entities {
     this.stridePhase += this.viewSpeed * dt * 1.9;
     this.viewRoot.position.set(
       THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? 0.33 : 0.38, 0, this.aimBlend),
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.22 : -0.38, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
+      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.22 : -0.28, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
       THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.82 : -0.72, -0.57, this.aimBlend),
     );
     if (this.viewWeapon) {
@@ -1681,7 +1728,11 @@ export class Entities {
         support.position.copy(rest);
         support.position.z += mechanism.reach * (this.viewWeaponType === 'pistol' ? 0 : 0.33);
         support.position.y -= mechanism.reach * 0.16 + mechanism.magazine * 0.4;
-        support.rotation.x = mechanism.bolt * -0.45;
+        const restQuaternion = support.userData.restQuaternion as THREE.Quaternion | undefined;
+        if (restQuaternion) {
+          support.quaternion.copy(restQuaternion);
+          support.rotateX(mechanism.bolt * -0.45);
+        } else support.rotation.x = mechanism.bolt * -0.45;
       }
       const motion = this.reducedMotion ? 0 : (1 - this.aimBlend) * (this.viewGrounded ? Math.min(1, this.viewSpeed / 6) : 0);
       this.viewWeapon.position.x += Math.sin(this.stridePhase) * 0.028 * motion;
@@ -1729,6 +1780,7 @@ export class Entities {
     magazineOffset: number;
     boltOffset: number;
     hands: Array<{
+      anatomical: boolean;
       ndcMin: { x: number; y: number; z: number };
       ndcMax: { x: number; y: number; z: number };
     }>;
@@ -1736,6 +1788,7 @@ export class Entities {
     this.camera.updateMatrixWorld(true);
     this.viewRoot.updateMatrixWorld(true);
     const hands: Array<{
+      anatomical: boolean;
       ndcMin: { x: number; y: number; z: number };
       ndcMax: { x: number; y: number; z: number };
     }> = [];
@@ -1754,6 +1807,7 @@ export class Entities {
         }
       }
       hands.push({
+        anatomical: object.userData.anatomicalHand === true,
         ndcMin: { x: ndcMin.x, y: ndcMin.y, z: ndcMin.z },
         ndcMax: { x: ndcMax.x, y: ndcMax.y, z: ndcMax.z },
       });

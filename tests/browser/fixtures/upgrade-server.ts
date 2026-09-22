@@ -31,11 +31,9 @@ process.on('message', (message: { id: number; action: string }) => {
     }
     if (message.action === 'prepare') {
       room.tickBots = () => {};
-      const wreck = room.gen.pois.find((p: any) => p.id === 'wreck');
-      const x = wreck.x - Math.cos(wreck.rootYaw) * 11 + Math.sin(wreck.rootYaw) * 6;
-      const z = wreck.z + Math.sin(wreck.rootYaw) * 11 + Math.cos(wreck.rootYaw) * 6;
-      player.move = freshMoveState({ x, y: sampleHeight(room.gen.params, x, z) + 0.1, z });
-      room.phys.setPlayerPos(player.id, player.move.pos);
+      // Keep the normal validated spawn; a synthetic beach teleport can put
+      // the camera below the terrain and obscure the viewmodel with water fog.
+      const { x, z } = player.move.pos;
       player.inv.primary = { type: 'rifle', mag: 20 };
       player.inv.secondary = { type: 'pistol', mag: 7 };
       player.inv.active = 2;
@@ -43,7 +41,7 @@ process.on('message', (message: { id: number; action: string }) => {
       player.inv.ammo.pistol = 48;
       player.inv.throwables = { frag: 1, smoke: 1, flash: 1 };
       room.pushInventory(player);
-      yaw = Math.atan2(x - wreck.x, z - wreck.z);
+      yaw = Math.atan2(x, z);
     }
     if (message.action === 'empty-slots') {
       player.inv.primary = player.inv.secondary = null;

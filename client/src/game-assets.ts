@@ -20,7 +20,7 @@ const ENVIRONMENT_NAMES = [
   'bush', 'grass', 'stump', 'rock_chips', 'rubble', 'barrel',
   'brazier', 'torch', 'spawn_marker', 'ruin_wall', 'ruin_cap',
 ] as const;
-const ASSET_REVISION = '2026-09-11-butterfly-loadout';
+const ASSET_REVISION = '2026-09-22-anatomical-hands';
 
 type AssetWeapon = (typeof WEAPON_NAMES)[number];
 type AssetLandmark = (typeof LANDMARK_NAMES)[number];
@@ -44,6 +44,7 @@ export interface CharacterAsset {
 export interface ViewHandAsset {
   group: THREE.Group;
 }
+export type ViewHandPose = 'knife' | 'trigger' | 'support';
 
 function publicAsset(path: string): string {
   const url = new URL(`assets/${path}`, document.baseURI);
@@ -87,6 +88,7 @@ class GameAssetLibrary {
   private environment = new Map<AssetEnvironment, THREE.Object3D>();
   private character: THREE.Object3D | null = null;
   private viewHand: THREE.Object3D | null = null;
+  private viewHands = new Map<ViewHandPose, THREE.Object3D>();
   private middleIsland: THREE.Object3D | null = null;
   private atlasMaterial: THREE.MeshStandardMaterial | null = null;
 
@@ -113,7 +115,7 @@ class GameAssetLibrary {
       const loader = new GLTFLoader();
       loader.setMeshoptDecoder(MeshoptDecoder);
       const [
-        weaponGltf, propGltf, environmentGltf, landmarkGltf, characterGltf, middleIslandGltf,
+        weaponGltf, propGltf, environmentGltf, landmarkGltf, characterGltf, middleIslandGltf, handsGltf,
       ] = await Promise.all([
         loader.loadAsync(publicAsset('weapons.glb')),
         loader.loadAsync(publicAsset('props.glb')),
@@ -121,6 +123,7 @@ class GameAssetLibrary {
         loader.loadAsync(publicAsset('landmarks.glb')),
         loader.loadAsync(publicAsset('character.glb')),
         loader.loadAsync(publicAsset('middle-island.glb')),
+        loader.loadAsync(publicAsset('view-hands.glb')),
       ]);
 
       const baseMaterial = new THREE.MeshStandardMaterial({
@@ -137,6 +140,8 @@ class GameAssetLibrary {
       this.prepareTemplates(landmarkGltf.scene, baseMaterial);
       this.prepareTemplates(characterGltf.scene, baseMaterial);
       this.prepareStandaloneTemplate(middleIslandGltf.scene);
+      this.prepareStandaloneTemplate(handsGltf.scene);
+      this.viewHands = collectTemplates(handsGltf.scene, ['knife', 'trigger', 'support'] as const, 'hand');
       this.weapons = collectTemplates(weaponGltf.scene, WEAPON_NAMES, 'weapon');
       this.props = collectTemplates(propGltf.scene, PROP_NAMES, 'prop');
       this.environment = collectTemplates(environmentGltf.scene, ENVIRONMENT_NAMES, 'env');
@@ -158,6 +163,7 @@ class GameAssetLibrary {
       this.landmarks.clear();
       this.character = null;
       this.viewHand = null;
+      this.viewHands.clear();
       this.middleIsland = null;
       console.warn('Compact game assets unavailable; using procedural fallback.', error);
       return false;
@@ -325,7 +331,29 @@ class GameAssetLibrary {
     };
   }
 
-  cloneViewHand(color: number): ViewHandAsset | null {
+  cloneViewHand(color: number, pose?: ViewHandPose): ViewHandAsset | null {
+    const posed = pose ? this.viewHands.get(pose) : undefined;
+    if (posed) {
+      const group = new THREE.Group();
+      group.add(posed.clone(true));
+      group.userData.compactAsset = true;
+      group.userData.anatomicalHand = true;
+      group.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const copies = materials.map((material) => {
+          const copy = material.clone();
+          copy.userData.assetShared = false;
+          return copy;
+        });
+        mesh.material = Array.isArray(mesh.material) ? copies : copies[0];
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+      });
+      return { group };
+    }
+    if (pose) return null;
     if (!this.viewHand || !this.atlasMaterial) return null;
     const group = this.viewHand.clone(true) as THREE.Group;
     group.traverse((object) => {

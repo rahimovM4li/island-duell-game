@@ -7,7 +7,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const assetDir = join(root, 'client', 'public', 'assets');
 const files = [
   'weapons.glb', 'props.glb', 'environment.glb', 'landmarks.glb', 'character.glb',
-  'middle-island.glb',
+  'middle-island.glb', 'view-hands.glb',
 ];
 const requiredRoots = {
   'weapons.glb': ['weapon_pistol', 'weapon_rifle', 'weapon_shotgun', 'weapon_sniper', 'weapon_grenade', 'weapon_smoke', 'weapon_flash'],
@@ -20,6 +20,7 @@ const requiredRoots = {
     'view_hand_accent',
   ],
   'middle-island.glb': ['middle_island'],
+  'view-hands.glb': ['hand_knife', 'hand_trigger', 'hand_support'],
 };
 const triangleBudgets = {
   'weapons.glb': 20_000,
@@ -28,6 +29,7 @@ const triangleBudgets = {
   'landmarks.glb': 25_000,
   'character.glb': 5_000,
   'middle-island.glb': 15_000,
+  'view-hands.glb': 15_000,
 };
 
 function glbJson(buffer) {
@@ -49,6 +51,9 @@ async function validate() {
     const path = join(assetDir, file);
     const buffer = await readFile(path);
     const json = glbJson(buffer);
+    if (file === 'view-hands.glb' && buffer.byteLength > 250_000) {
+      throw new Error('view-hands.glb exceeds its 250 KB budget');
+    }
     const names = new Set((json.nodes ?? []).map((node) => node.name));
     const missing = requiredRoots[file].filter((name) => !names.has(name));
     if (missing.length) throw new Error(`${file}: missing nodes ${missing.join(', ')}`);
@@ -91,6 +96,15 @@ if (!process.argv.includes('--validate-only')) {
     await rm(raw, { force: true });
     await rm(welded, { force: true });
     await rename(output, raw);
+    if (file === 'view-hands.glb') {
+      // Retain authored pose roots and UVs; compress the skin texture as WebP.
+      execFileSync(process.execPath, [cli, 'optimize', raw, output,
+        '--compress', 'meshopt', '--flatten', 'false', '--join', 'false',
+        '--simplify', 'false', '--palette', 'false', '--prune-attributes', 'false',
+        '--texture-compress', 'webp', '--texture-size', '512'], { cwd: root, stdio: 'inherit' });
+      await rm(raw, { force: true });
+      continue;
+    }
     execFileSync(process.execPath, [cli, 'weld', raw, welded], { cwd: root, stdio: 'inherit' });
     execFileSync(process.execPath, [cli, 'meshopt', welded, output, '--level', 'high'], { cwd: root, stdio: 'inherit' });
     await rm(raw, { force: true });
