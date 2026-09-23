@@ -32,9 +32,14 @@ The builder removes source constraints, poses the finger chains, preserves the
 anatomical mesh and skin UVs, and bakes static knife, trigger and support poses.
 The gameplay animation moves these posed meshes with their weapon attachment;
 there is no runtime skeletal animation or finger IK. The source rig stays intact.
-The forearms are adapted for the first-person camera, with the elbows below frame.
+The elbow and upper-arm poses follow the source rig's skin weights, preserving
+forearm length and shape while routing the upper arms below the camera. Exported
+grip sockets place each weapon handle inside the curled fingers. The knife mesh
+also contains a `release` shape key: the lower fingers open during a butterfly
+flip and close around the handles when the animation ends.
 Canonical exported axes are +X towards the thumb, +Y towards the fingertips and
-+Z into the palm. Weapon-space grip anchors live in `client/src/entities.ts`.
++Z into the palm. The sockets are exported in the GLB and are aligned with
+weapon-space grip targets in `client/src/entities.ts`.
 The left hand is a mirrored instance with its own attachment orientation.
 
 Review screenshots for knife idle/draw/inspect/stab, rifle hip/aim/reload and pistol

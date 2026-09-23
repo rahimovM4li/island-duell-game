@@ -20,7 +20,7 @@ const ENVIRONMENT_NAMES = [
   'bush', 'grass', 'stump', 'rock_chips', 'rubble', 'barrel',
   'brazier', 'torch', 'spawn_marker', 'ruin_wall', 'ruin_cap',
 ] as const;
-const ASSET_REVISION = '2026-09-22-anatomical-hands';
+const ASSET_REVISION = '2026-09-22-grip-alignment';
 
 type AssetWeapon = (typeof WEAPON_NAMES)[number];
 type AssetLandmark = (typeof LANDMARK_NAMES)[number];
@@ -338,6 +338,7 @@ class GameAssetLibrary {
       group.add(posed.clone(true));
       group.userData.compactAsset = true;
       group.userData.anatomicalHand = true;
+      group.userData.gripCenter = new THREE.Vector3().fromArray(posed.userData.grip_center);
       group.traverse((object) => {
         const mesh = object as THREE.Mesh;
         if (!mesh.isMesh) return;

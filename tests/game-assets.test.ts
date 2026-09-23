@@ -4,6 +4,30 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { findSemanticChild } from '../client/src/game-assets';
 
+describe('authored hand pose export', () => {
+  it('preserves grip sockets and the finger-release morph through compression', () => {
+    const buffer = readFileSync(path.resolve('client/public/assets/view-hands.glb'));
+    const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + buffer.readUInt32LE(12)));
+    for (const name of ['hand_knife', 'hand_trigger', 'hand_support']) {
+      const node = gltf.nodes.find((entry: any) => entry.name === name);
+      const socket = node?.extras?.grip_center;
+      expect(socket).toHaveLength(3);
+      expect(socket.every(Number.isFinite)).toBe(true);
+      // The socket must lie between the palm and curled fingers, not in front
+      // of the fingertips (the previous 0.162 depth made the weapon float).
+      expect(socket[1]).toBeGreaterThan(0.25);
+      expect(socket[1]).toBeLessThan(0.35);
+      expect(socket[2]).toBeGreaterThan(0.02);
+      expect(socket[2]).toBeLessThan(0.1);
+    }
+    const knife = gltf.nodes.find((entry: any) => entry.name === 'hand_knife');
+    const mesh = gltf.meshes[knife.mesh];
+    expect(mesh.extras.targetNames).toContain('release');
+    expect(mesh.primitives.every((primitive: any) => primitive.targets?.length === 1)).toBe(true);
+    expect(gltf.extensionsRequired).toContain('EXT_meshopt_compression');
+  });
+});
+
 describe('Blender semantic child lookup', () => {
   it('resolves scene-global Blender suffixes inside the owning asset root', () => {
     const watchtower = new THREE.Group();

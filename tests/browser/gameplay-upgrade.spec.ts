@@ -85,6 +85,7 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect.poll(async () => (await view()).knifeAnimating).toBe(true);
     await page.screenshot({ path: testInfo.outputPath('butterfly-draw.png') });
     await expect.poll(async () => (await view()).knifeAnimating).toBe(false);
+    expect((await view()).knifeGripRelease).toBe(0);
     await page.screenshot({ path: testInfo.outputPath('butterfly-ready.png') });
     expect((await view()).hands).toHaveLength(1);
     expect((await view()).hands[0].anatomical).toBe(true);
@@ -93,6 +94,7 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.keyboard.press('f');
     await expect.poll(async () => (await view()).knifeInspecting).toBe(true);
     await page.waitForTimeout(600);
+    expect((await view()).knifeGripRelease).toBeGreaterThan(0.8);
     await page.screenshot({ path: testInfo.outputPath('butterfly-inspect.png') });
     for (let i = 0; i < 3; i++) {
       await page.keyboard.press('f');
@@ -103,6 +105,7 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect.poll(async () => (await view()).stabbing).toBe(true);
     await page.mouse.up();
     expect((await view()).knifeAnimating).toBe(false);
+    expect((await view()).knifeGripRelease).toBe(0);
     await page.screenshot({ path: testInfo.outputPath('butterfly-stab.png') });
     await page.keyboard.press('4');
     await expect.poll(async () => (await view()).weapon).toBe('grenade');

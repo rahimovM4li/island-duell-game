@@ -3,11 +3,13 @@ import { islandMaterial } from './art-direction';
 
 export const KNIFE_DRAW_SECONDS = 0.92;
 export const KNIFE_INSPECT_SECONDS = 1.65;
+export const KNIFE_MODEL_SCALE = { x: 0.65, y: 0.78, z: 0.72 } as const;
 
 /** Original balisong: separate hinge mechanism, milled handles and a beveled fade blade. */
 export function butterflyKnife(): THREE.Group {
   const root = new THREE.Group();
   root.name = 'butterfly-knife';
+  root.scale.set(KNIFE_MODEL_SCALE.x, KNIFE_MODEL_SCALE.y, KNIFE_MODEL_SCALE.z);
   const titanium = islandMaterial('dark');
   const steel = new THREE.MeshStandardMaterial({ color: 0xc4dbe3, metalness: 0.8, roughness: 0.2 });
   const accent = islandMaterial('brass');

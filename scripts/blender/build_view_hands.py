@@ -31,6 +31,7 @@ across = (across - direction * across.dot(direction)).normalized()
 palm = across.cross(direction).normalized()
 frame = Matrix((across, direction, palm))
 elbow = frame @ (bones['forearm.R'].head_local - wrist) * .22
+shoulder = frame @ (bones['upper_arm.R'].head_local - wrist) * .22
 print('CANONICAL_FRAME', [list(v) for v in frame], 'WRIST', list(wrist))
 
 skin = bpy.data.materials.new('Skin')
@@ -44,7 +45,7 @@ glove = bpy.data.materials.new('Charcoal woven glove')
 glove.use_nodes = True
 gs = glove.node_tree.nodes.get('Principled BSDF')
 gs.inputs['Base Color'].default_value = (.032, .041, .044, 1)
-gs.inputs['Roughness'].default_value = .88
+gs.inputs['Roughness'].default_value = .72
 leather = bpy.data.materials.new('Supple leather reinforcement')
 leather.use_nodes = True
 ls = leather.node_tree.nodes.get('Principled BSDF')
@@ -72,7 +73,7 @@ def cloth_texture(material, rgb, woven):
     links.new(mapping.outputs['Vector'], texture.inputs['Vector'])
     links.new(texture.outputs['Color'], nodes.get('Principled BSDF').inputs['Base Color'])
 
-cloth_texture(glove, (.20,.225,.235), True)
+cloth_texture(glove, (.24,.265,.275), True)
 cloth_texture(leather, (.26,.28,.29), False)
 
 def posed_mesh(name, curls):
@@ -95,25 +96,30 @@ def posed_mesh(name, curls):
     mesh = bpy.data.meshes.new_from_object(evaluated)
     obj = bpy.data.objects.new(name, mesh)
     bpy.context.collection.objects.link(obj)
-    # Work in wrist coordinates; a unit is one weapon-model unit, not one metre.
+    obj['grip_center'] = [0, .31, .08] if name == 'hand_support' else [0, .30, .055]
+    # Rigid bone transforms preserve the source forearm length and cross-section.
+    # Only the wrist/ elbow skin weights blend the two adjoining bone transforms.
+    is_knife = name.startswith('hand_knife')
+    elbow_target = Vector((-.08,-.58,-.06)) if is_knife else Vector(
+        (-.17,-.58,-.18) if name == 'hand_trigger' else (-.30,-.55,-.10))
+    elbow_target.normalize(); elbow_target *= elbow.length
+    forearm_rotation = elbow.rotation_difference(elbow_target)
+    upper_direction = Vector((-.10,-.43,-.30) if is_knife else
+        ((-.28,-.42,-.30) if name == 'hand_trigger' else (-.50,-.10,-.25)))
+    upper_rotation = (shoulder-elbow).rotation_difference(upper_direction)
+    removed = {v.index for v in mesh.vertices if v.co.x > -1.5}
     for vert in mesh.vertices:
-        vert.co = frame @ (vert.co - wrist) * .22
-    # Crop the other arm and shoulder at the elbow, retaining the source topology/UVs.
+        p = frame @ (vert.co - wrist) * .22
+        forearm_weight = sum(g.weight for g in vert.groups if body.vertex_groups[g.group].name == 'forearm.R')
+        upper_weight = sum(g.weight for g in vert.groups if body.vertex_groups[g.group].name in ('upper_arm.R', 'deltoid.R', 'clavicle.R'))
+        vert.co = p + forearm_weight * (forearm_rotation @ p - p) + upper_weight * (elbow_target + upper_rotation @ (p-elbow) - p)
+    print('ARM_POSE', name, 'forearm_length', round(elbow_target.length,5),
+          'wrist_bend_degrees', round(math.degrees(forearm_rotation.angle),2))
+    # Keep the real elbow and upper arm so a cropped forearm never floats in view.
     import bmesh
     bm = bmesh.new(); bm.from_mesh(mesh)
-    remove = [v for v in bm.verts if abs(v.co.x) > .55]
+    remove = [v for v in bm.verts if v.index in removed]
     bmesh.ops.delete(bm, geom=remove, context='VERTS')
-    bmesh.ops.bisect_plane(bm, geom=list(bm.verts)+list(bm.edges)+list(bm.faces),
-        plane_co=(0,-.55,0), plane_no=(0,1,0), clear_inner=True)
-    # Preserve the anatomical cross sections; route the elbow below the camera.
-    for v in bm.verts:
-        if v.co.y < 0:
-            t = min(1, -v.co.y / .55)
-            v.co.x -= elbow.x * v.co.y / elbow.y
-            v.co.z -= elbow.z * v.co.y / elbow.y
-            v.co.x -= (1.0 if name == 'hand_knife' else .8) * t**1.35
-            v.co.z -= (.58 if name == 'hand_knife' else .32) * t**1.35
-            v.co.y = (-.40 if name == 'hand_knife' else -.70) * t
     boundary = [e for e in bm.edges if e.is_boundary]
     bmesh.ops.holes_fill(bm, edges=boundary, sides=0)
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
@@ -137,6 +143,13 @@ def posed_mesh(name, curls):
 
 grip = {'index': (65, 80, 45), 'middle': (70, 80, 45), 'ring': (75, 80, 45), 'pinky': (80, 80, 45), 'thumb': (10, 30, 25)}
 models = [posed_mesh('hand_knife', grip)]
+release = posed_mesh('hand_knife_release', {**grip, 'middle': (55,65,35), 'ring': (35,40,25), 'pinky': (25,35,20)})
+assert len(models[0].data.vertices) == len(release.data.vertices), 'Morph topology changed'
+models[0].shape_key_add(name='Basis')
+release_key = models[0].shape_key_add(name='release')
+for point, vertex in zip(release_key.data, release.data.vertices):
+    point.co = vertex.co
+bpy.data.objects.remove(release, do_unlink=True)
 models.append(posed_mesh('hand_trigger', {**grip, 'index': (12, 45, 30)}))
 models.append(posed_mesh('hand_support', {**grip, 'index': (50, 65, 35), 'middle': (55, 65, 35), 'ring': (60, 70, 35), 'pinky': (65, 70, 35)}))
 
@@ -152,7 +165,7 @@ bpy.ops.export_scene.gltf(filepath=str(OUT), export_format='GLB', use_selection=
 for obj in models[1:]: obj.hide_render=True
 
 # Orthographic inspection of the actual baked mesh, with a grip-sized reference cylinder.
-bpy.ops.mesh.primitive_cylinder_add(vertices=32, radius=.052, depth=.4, location=(0,.24,.12), rotation=(0,math.pi/2,0))
+bpy.ops.mesh.primitive_cylinder_add(vertices=32, radius=.05, depth=.55, location=(0,.30,.055), rotation=(0,math.pi/2,0))
 handle = bpy.context.object
 mat = bpy.data.materials.new('Grip reference'); mat.diffuse_color=(.04,.055,.065,1)
 handle.data.materials.append(mat)
