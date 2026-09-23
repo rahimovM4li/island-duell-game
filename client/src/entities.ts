@@ -569,6 +569,9 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
     : { x: 0, y: weapon === 'rifle' ? 0.35 : -0.08, z: 0 };
   g.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
   g.userData.viewmodelBaseRotation = baseRotation;
+  g.traverse((object) => {
+    if ((object as THREE.Mesh).isMesh) object.layers.enable(1);
+  });
   return g;
 }
 
@@ -663,6 +666,15 @@ export class Entities {
     this.rng = mulberry32(deriveSeed(seed, 'client-entity-fx'));
     camera.add(this.viewRoot);
     this.viewRoot.position.set(0.38, -0.38, -0.72);
+    // Camera-relative fill keeps glove contours legible without changing the
+    // sun or illuminating nearby world geometry.
+    const fill = new THREE.DirectionalLight(0xdce8ff, 0.55);
+    fill.name = 'viewmodel-fill';
+    fill.layers.set(1);
+    fill.position.set(-1.2, 1.5, 1.2);
+    fill.target.position.set(0, 0, -1);
+    camera.add(fill, fill.target);
+    camera.layers.enable(1);
   }
 
   // ---------- remote players ----------
@@ -1684,9 +1696,9 @@ export class Entities {
     const knifeView = this.viewWeaponType === 'knife';
     const longGunView = this.viewWeaponType === 'rifle'
       || this.viewWeaponType === 'shotgun' || this.viewWeaponType === 'sniper';
-    const hipX = knifeView ? 0.04 : longGunView ? 0.20 : 0.38;
+    const hipX = knifeView ? -0.04 : longGunView ? 0.20 : 0.38;
     const hipY = knifeView ? -0.04 : longGunView ? -0.14 : -0.28;
-    const hipZ = knifeView ? -0.82 : longGunView ? -0.68 : -0.72;
+    const hipZ = knifeView ? -0.70 : longGunView ? -0.68 : -0.72;
     const aimY = this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065;
     this.viewRoot.position.set(
       THREE.MathUtils.lerp(hipX, 0, this.aimBlend),

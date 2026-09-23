@@ -162,6 +162,12 @@ def posed_mesh(name, curls):
         poly.material_index = 0 if poly.center.y < -.055 else 1
         if -.055 <= poly.center.y < .02:
             poly.material_index = 2
+        if poly.center.y > .20 and poly.center.z < -.025:
+            pad = max(math.exp(-2 * (((poly.center.x - joint.x) / .05)**2
+                                        + ((poly.center.y - joint.y) / .058)**2))
+                      for joint in joints)
+            if pad > .48:
+                poly.material_index = 2
     if name == 'hand_support_close':
         # Shape keys need identical topology. Re-pose the shoulder and elbow
         # after the shared support mesh has been cut into its material panels.
