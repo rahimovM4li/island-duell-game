@@ -1960,6 +1960,12 @@ function frame(): void {
       fpsFrames = 0;
     }
   }
+  if (document.hidden) {
+    // Network callbacks keep receiving the authoritative state; there is no
+    // visible frame to simulate, update the HUD for, or send to the GPU.
+    input.clearEdges();
+    return;
+  }
   visualElapsed += dt;
   let finishVictoryAfterRender = false;
 
@@ -2238,12 +2244,7 @@ function frame(): void {
     && input.roundRosterHeld
     && !victoryCinematic;
   hud.setRoundRoster(
-    lastSnap?.players.map((player) => ({
-      id: player.id,
-      name: player.name,
-      alive: player.alive,
-      kills: player.kills,
-    })) ?? [],
+    lastSnap?.players ?? [],
     myId,
     roundRosterVisible,
   );

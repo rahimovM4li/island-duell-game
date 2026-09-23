@@ -630,8 +630,14 @@ export function bushAt(gen: WorldGen, x: number, z: number): Veg | null {
   let best = Infinity;
   for (const veg of gen.vegetation) {
     if (veg.kind !== 'bush') continue;
-    const d = Math.hypot(x - veg.x, z - veg.z);
-    if (d <= 0.95 * veg.scale && d < best) { nearest = veg; best = d; }
+    const dx = x - veg.x;
+    const dz = z - veg.z;
+    const distanceSquared = dx * dx + dz * dz;
+    const radius = 0.95 * veg.scale;
+    if (distanceSquared <= radius * radius && distanceSquared < best) {
+      nearest = veg;
+      best = distanceSquared;
+    }
   }
   return nearest;
 }
