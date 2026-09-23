@@ -187,6 +187,8 @@ let fireFovKick = 0;
 let cameraEyeHeight = PLAYER_EYE_HEIGHT;
 let showDebug = false;
 let fpsAcc = 0, fpsFrames = 0, fpsShown = 0, bwShown = 0;
+let minimapAccumulator = 0;
+let lobbyUiAccumulator = 0;
 let visualElapsed = 0;
 let matchSeed: number | null = null;
 let resumeToken = '';
@@ -1937,9 +1939,27 @@ let lastFrame = performance.now();
 function frame(): void {
   requestAnimationFrame(frame);
   const now = performance.now();
-  let dt = (now - lastFrame) / 1000;
+  const frameSeconds = (now - lastFrame) / 1000;
   lastFrame = now;
-  dt = Math.min(dt, 0.1);
+  // The simulation is bounded after a stall, but FPS must use real wall time.
+  const dt = Math.min(frameSeconds, 0.1);
+  if (document.hidden || frameSeconds > 0.5) {
+    fpsAcc = 0;
+    fpsFrames = 0;
+  } else {
+    fpsAcc += frameSeconds;
+    fpsFrames += 1;
+    if (fpsAcc >= 0.5) {
+      const measured = fpsFrames / fpsAcc;
+      fpsShown = fpsShown === 0 ? measured : fpsShown * 0.7 + measured * 0.3;
+      if (net) {
+        bwShown = Math.round((net.bytesIn / fpsAcc) / 1024 * 10) / 10;
+        net.bytesIn = 0;
+      }
+      fpsAcc = 0;
+      fpsFrames = 0;
+    }
+  }
   visualElapsed += dt;
   let finishVictoryAfterRender = false;
 
@@ -1954,9 +1974,13 @@ function frame(): void {
 
   if (!world || !entities || !phys || !net) {
     input.clearEdges();
-    updateWaitingCountdown();
+    lobbyUiAccumulator += dt;
+    if (lobbyUiAccumulator >= 0.1) {
+      lobbyUiAccumulator = 0;
+      updateWaitingCountdown();
+      updateLobbyKickControlPositions();
+    }
     lobbyScene.update(visualElapsed);
-    updateLobbyKickControlPositions();
     renderer.render(lobbyScene.scene, lobbyScene.camera);
     return;
   }
@@ -2254,11 +2278,15 @@ function frame(): void {
         hud.setHealProgress(null);
       }
     }
-    hud.drawMinimap(
-      alive ? renderMovePos.x : specPos.x, alive ? renderMovePos.z : specPos.z,
-      alive ? input.yaw : spectateYaw,
-      lastSnap.zone, lastSnap.pings, lastSnap.care, t,
-    );
+    minimapAccumulator += dt;
+    if (minimapAccumulator >= 1 / 15) {
+      minimapAccumulator %= 1 / 15;
+      hud.drawMinimap(
+        alive ? renderMovePos.x : specPos.x, alive ? renderMovePos.z : specPos.z,
+        alive ? input.yaw : spectateYaw,
+        lastSnap.zone, lastSnap.pings, lastSnap.care, t,
+      );
+    }
   }
   networkHudAccumulator += dt;
   if (networkHudAccumulator >= 0.25 && net) {
@@ -2268,21 +2296,15 @@ function frame(): void {
       net.rttMs,
       net.jitterMs,
       net.lossPct,
+      fpsShown,
     );
   }
   updateInteractHint(dt);
   entities.update(dt, visualElapsed);
 
   // --- F3 debug ---
-  fpsAcc += dt; fpsFrames++;
-  if (fpsAcc >= 0.5) {
-    fpsShown = Math.round(fpsFrames / fpsAcc);
-    bwShown = Math.round((net.bytesIn / fpsAcc) / 1024 * 10) / 10;
-    net.bytesIn = 0;
-    fpsAcc = 0; fpsFrames = 0;
-  }
-  if (roundRunning && !document.hidden) {
-    const sample = adaptiveResolution.sample(dt);
+  if (roundRunning && !document.hidden && frameSeconds <= 0.5) {
+    const sample = adaptiveResolution.sample(Math.min(frameSeconds, 0.25));
     if (sample?.changed) {
       renderScale = sample.scale;
       const ratioCap = settings.graphics === 'low' ? 1 : settings.graphics === 'medium' ? 1.5 : 2;
@@ -2290,17 +2312,17 @@ function frame(): void {
       renderer.setSize(window.innerWidth, window.innerHeight);
     }
   }
-  const entityStats = entities.stats();
-  const physicsStats = phys.stats();
-  const worldStats = world.stats();
-  hud.setDebug(showDebug
-    ? `World-Audit ${worldStats.audit.errors} Fehler · ${worldStats.audit.warnings} Hinweise · ${worldStats.audit.walkSurfaces} Rampen · Collider orange/cyan/grün\n`
+  if (showDebug) {
+    const entityStats = entities.stats();
+    const physicsStats = phys.stats();
+    const worldStats = world.stats();
+    hud.setDebug(`World-Audit ${worldStats.audit.errors} Fehler · ${worldStats.audit.warnings} Hinweise · ${worldStats.audit.walkSurfaces} Rampen · Collider orange/cyan/grün\n`
       + `FPS ${fpsShown} · render ${Math.round(renderScale * 100)}% · calls ${renderer.info.render.calls} · tris ${renderer.info.render.triangles}\n`
       + `pos ${move.pos.x.toFixed(1)} ${move.pos.y.toFixed(1)} ${move.pos.z.toFixed(1)} · vel ${Math.hypot(move.velX, move.velZ).toFixed(1)}\n`
       + `entities P${entityStats.players} L${entityStats.pickups} J${entityStats.projectiles} FX${entityStats.effects}\n`
       + `Rapier bodies ${physicsStats.rigidBodies} · colliders ${physicsStats.colliders} · capsules ${physicsStats.playerCapsules} · prone volumes ${physicsStats.proneHitVolumes}\n`
-      + `net ↓ ${bwShown} kB/s · ${net.rttMs.toFixed(0)} ms ±${net.jitterMs.toFixed(0)} · loss ${net.lossPct.toFixed(1)}% · interp ${interpolationDelayMs.toFixed(0)} ms · extra max ${maxRemoteExtrapolationMs.toFixed(0)} ms · pending ${pending.length}`
-    : null);
+      + `net ↓ ${bwShown} kB/s · ${net.rttMs.toFixed(0)} ms ±${net.jitterMs.toFixed(0)} · loss ${net.lossPct.toFixed(1)}% · interp ${interpolationDelayMs.toFixed(0)} ms · extra max ${maxRemoteExtrapolationMs.toFixed(0)} ms · pending ${pending.length}`);
+  } else hud.setDebug(null);
 
   if (!roundRunning || !alive || !inMatch || !networkConnected) input.clearEdges();
   renderer.render(world.scene, camera);

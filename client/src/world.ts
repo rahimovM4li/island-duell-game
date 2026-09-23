@@ -22,6 +22,11 @@ const DAY_SKY = new THREE.Color(0x87b8dc);
 const NIGHT_SKY = new THREE.Color(0x0a1020);
 const DAY_FOGC = new THREE.Color(0xa8c8dc);
 const NIGHT_FOGC = new THREE.Color(0x0c1424);
+const TERRAIN_SAND = new THREE.Color(ISLAND_STYLE.sand);
+const TERRAIN_GRASS = new THREE.Color(ISLAND_STYLE.grass);
+const TERRAIN_STONE = new THREE.Color(ISLAND_STYLE.stone);
+const TERRAIN_TRAIL = new THREE.Color(ISLAND_STYLE.trail);
+const TERRAIN_STEEP = new THREE.Color(0x7d7568);
 
 const LIGHTING_STYLE: Record<LightingPreset, {
   sky: number; fog: number; sun: number; water: number;
@@ -55,15 +60,13 @@ function disposeObject(root: THREE.Object3D): void {
   geometries.forEach((geometry) => geometry.dispose());
 }
 
-function terrainColor(h: number, steep: number): THREE.Color {
+function terrainColor(h: number, steep: number, result: THREE.Color): void {
   // sand → grass → rock by height, rockier when steep
-  const c = new THREE.Color();
-  if (h < 1.4) c.setHex(ISLAND_STYLE.sand);
-  else if (h < 2.2) c.lerpColors(new THREE.Color(ISLAND_STYLE.sand), new THREE.Color(ISLAND_STYLE.grass), (h - 1.4) / 0.8);
-  else if (h < 9) c.setHex(ISLAND_STYLE.grass);
-  else c.lerpColors(new THREE.Color(ISLAND_STYLE.grass), new THREE.Color(ISLAND_STYLE.stone), Math.min(1, (h - 9) / 5));
-  if (steep > 0.55) c.lerp(new THREE.Color(0x7d7568), Math.min(1, (steep - 0.55) * 2));
-  return c;
+  if (h < 1.4) result.copy(TERRAIN_SAND);
+  else if (h < 2.2) result.lerpColors(TERRAIN_SAND, TERRAIN_GRASS, (h - 1.4) / 0.8);
+  else if (h < 9) result.copy(TERRAIN_GRASS);
+  else result.lerpColors(TERRAIN_GRASS, TERRAIN_STONE, Math.min(1, (h - 9) / 5));
+  if (steep > 0.55) result.lerp(TERRAIN_STEEP, Math.min(1, (steep - 0.55) * 2));
 }
 
 function grassClumpGeometry(): THREE.BufferGeometry {
@@ -109,6 +112,7 @@ export class World {
   private readonly auditReport: WorldAuditReport;
   private wreckSail: THREE.Mesh | null = null;
   private grassRest: Float32Array | null = null;
+  private lastDeformationAt = -Infinity;
 
   constructor(readonly gen: WorldGen, private reducedMotion = false) {
     this.auditReport = auditWorld(gen);
@@ -155,6 +159,7 @@ export class World {
   private buildTerrain(): void {
     const p = this.gen.params;
     const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const color = new THREE.Color();
     const cellsPerChunk = CHUNK_SIZE / TERRAIN_CELL; // 16
     for (let cz = 0; cz < CHUNKS_PER_SIDE; cz++) {
       for (let cx = 0; cx < CHUNKS_PER_SIDE; cx++) {
@@ -174,11 +179,14 @@ export class World {
             const hx = sampleHeight(p, x + 1, z) - sampleHeight(p, x - 1, z);
             const hz = sampleHeight(p, x, z + 1) - sampleHeight(p, x, z - 1);
             const steep = Math.min(1, Math.hypot(hx, hz) / 2);
-            const c = terrainColor(h, steep);
-            const pathDistance = Math.min(...this.gen.combatRoutes.map(route => routeDistance(route, x, z)));
+            terrainColor(h, steep, color);
+            let pathDistance = Infinity;
+            for (const route of this.gen.combatRoutes) {
+              pathDistance = Math.min(pathDistance, routeDistance(route, x, z));
+            }
             const pathBlend = 1 - THREE.MathUtils.smoothstep(pathDistance, 0.5, 2.1);
-            c.lerp(new THREE.Color(ISLAND_STYLE.trail), pathBlend * 0.7);
-            col[i3] = c.r; col[i3 + 1] = c.g; col[i3 + 2] = c.b;
+            color.lerp(TERRAIN_TRAIL, pathBlend * 0.7);
+            col[i3] = color.r; col[i3 + 1] = color.g; col[i3 + 2] = color.b;
           }
         }
         for (let iz = 0; iz < verts - 1; iz++) {
@@ -894,7 +902,11 @@ export class World {
 
   /** Per-frame environment update from round time (fog §6.2, day/night, zone). */
   update(t: number, zoneRadius: number, zoneTarget: number, authoritativeTimeOfDay?: number, visualTime = t): void {
-    if (!this.reducedMotion) {
+    // Water normals touch thousands of vertices. Thirty updates per second
+    // keep the small waves smooth while avoiding duplicate GPU uploads on
+    // 60/120/144-Hz displays; gameplay/camera still render every frame.
+    if (!this.reducedMotion && visualTime - this.lastDeformationAt >= 1 / 30) {
+      this.lastDeformationAt = visualTime;
       const waterPositions = this.water.geometry.attributes.position;
       for (let i = 0; i < waterPositions.count; i++) {
         const x = waterPositions.getX(i), z = waterPositions.getY(i);

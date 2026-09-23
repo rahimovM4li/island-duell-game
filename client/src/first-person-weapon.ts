@@ -106,8 +106,14 @@ export function firstPersonWeapon(type: WeaponType | 'none'): THREE.Group | null
       }
       for (const z of [-0.24, -0.02]) box('scope-mount', [0.08, 0.14, 0.05], [0, 0.17, z], dark);
     } else {
-      for (const z of [-0.65, 0.08]) box('iron-sight', [0.05, 0.075, 0.032], [0, 0.155, z], dark);
-      box('sight-dot', [0.017, 0.017, 0.006], [0, 0.175, -0.63], brass);
+      // Leave a real notch around the reticle while aiming. A solid center
+      // post previously covered it in ADS and hid targets behind the sight.
+      for (const z of [-0.65, 0.08]) {
+        for (const x of [-0.044, 0.044]) {
+          box('iron-sight', [0.018, 0.062, 0.032], [x, 0.16, z], dark);
+        }
+      }
+      box('sight-dot', [0.017, 0.017, 0.006], [0.044, 0.225, -0.63], brass);
     }
   }
   box('trigger-guard', [0.045, 0.08, 0.025], [0, -0.12, -0.105], dark);

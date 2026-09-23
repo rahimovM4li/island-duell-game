@@ -656,6 +656,7 @@ export class Entities {
   private victoryProxyId: string | null = null;
   private victoryLights: THREE.PointLight[] = [];
   private victoryBurstPlayed = false;
+  private readonly cameraPosition = new THREE.Vector3();
 
   constructor(
     private scene: THREE.Scene,
@@ -1508,7 +1509,7 @@ export class Entities {
   setViewVisible(v: boolean): void { this.viewRoot.visible = v; }
 
   update(dt: number, time: number): void {
-    const cameraPos = new THREE.Vector3();
+    const cameraPos = this.cameraPosition;
     this.camera.getWorldPosition(cameraPos);
     for (const [, m] of this.pickups) {
       const dropMotion = m.userData.dropMotion as {

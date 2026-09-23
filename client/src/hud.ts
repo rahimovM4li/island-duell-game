@@ -51,6 +51,7 @@ export class Hud {
   private pois: LandmarkPoi[] = [];
   private reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   private roundRosterSignature = '';
+  private crosshairGap = '';
 
   show(): void { $('hud').classList.add('active'); }
   hide(): void {
@@ -60,32 +61,43 @@ export class Hud {
 
   setTimer(t: number, phase: string): void {
     const m = Math.floor(t / 60), s = Math.floor(t % 60);
-    $('round-timer').textContent = `${m}:${s.toString().padStart(2, '0')}`;
-    $('phase-label').textContent =
+    const timer = `${m}:${s.toString().padStart(2, '0')}`;
+    const timerElement = $('round-timer');
+    if (timerElement.textContent !== timer) timerElement.textContent = timer;
+    const phaseText =
       phase === 'loot' ? 'Loot-Phase' : phase === 'closing' ? 'Zone schließt' : 'Endkampf';
+    const phaseElement = $('phase-label');
+    if (phaseElement.textContent !== phaseText) phaseElement.textContent = phaseText;
   }
 
   setZoneInfo(zone: ZoneSnap, t: number): void {
     const el = $('zone-info');
-    if (zone.shrinking) el.textContent = '⚠ Zone schrumpft!';
+    let label: string;
+    if (zone.shrinking) label = '⚠ Zone schrumpft!';
     else if (zone.nextShrinkAt !== null) {
       const left = Math.max(0, Math.ceil(zone.nextShrinkAt - t));
-      el.textContent = `Zone schrumpft in ${Math.floor(left / 60)}:${(left % 60).toString().padStart(2, '0')}`;
-    } else el.textContent = 'Letzte Zone';
+      label = `Zone schrumpft in ${Math.floor(left / 60)}:${(left % 60).toString().padStart(2, '0')}`;
+    } else label = 'Letzte Zone';
+    if (el.textContent !== label) el.textContent = label;
   }
 
-  setAlive(count: number): void { $('alive-count').textContent = `${count} übrig`; }
+  setAlive(count: number): void {
+    const el = $('alive-count');
+    const label = `${count} übrig`;
+    if (el.textContent !== label) el.textContent = label;
+  }
 
   setConnectionQuality(
     quality: ConnectionQuality,
     rttMs: number,
     jitterMs: number,
     lossPct: number,
+    fps: number,
   ): void {
     const el = $('network-quality');
     el.dataset.quality = quality;
-    el.textContent = rttMs > 0 ? `${Math.round(rttMs)} ms` : 'Netz …';
-    el.title = `Ping ${Math.round(rttMs)} ms · Jitter ${Math.round(jitterMs)} ms · Verlust ${lossPct.toFixed(1)} %`;
+    el.textContent = `FPS: ${fps > 0 ? Math.round(fps) : '…'} | Ping: ${rttMs > 0 ? `${Math.round(rttMs)} ms` : '…'}`;
+    el.title = `FPS ${fps > 0 ? Math.round(fps) : '…'} · Ping ${Math.round(rttMs)} ms · Jitter ${Math.round(jitterMs)} ms · Verlust ${lossPct.toFixed(1)} %`;
   }
 
   setWeapon(weapon: WeaponType): void {
@@ -93,14 +105,19 @@ export class Hud {
   }
 
   setCrosshairSpread(pixels: number): void {
-    $('crosshair').style.setProperty('--crosshair-gap', `${Math.max(2, Math.min(22, pixels)).toFixed(1)}px`);
+    const gap = `${Math.max(2, Math.min(22, pixels)).toFixed(1)}px`;
+    if (gap === this.crosshairGap) return;
+    this.crosshairGap = gap;
+    $('crosshair').style.setProperty('--crosshair-gap', gap);
   }
 
   setCompass(yaw: number): void {
     const degrees = ((-yaw * 180 / Math.PI) % 360 + 360) % 360;
     const directions = ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'];
     const direction = directions[Math.round(degrees / 45) % directions.length];
-    $('compass').textContent = `${direction} · ${Math.round(degrees).toString().padStart(3, '0')}°`;
+    const label = `${direction} · ${Math.round(degrees).toString().padStart(3, '0')}°`;
+    const el = $('compass');
+    if (el.textContent !== label) el.textContent = label;
   }
 
   setHp(hp: number): void {
@@ -424,7 +441,8 @@ export class Hud {
 
   setDebug(text: string | null): void {
     const el = $('debug');
-    el.style.display = text ? 'block' : 'none';
+    const display = text ? 'block' : 'none';
+    if (el.style.display !== display) el.style.display = display;
     if (text) el.textContent = text;
   }
 
