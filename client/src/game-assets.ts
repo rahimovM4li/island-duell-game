@@ -20,7 +20,7 @@ const ENVIRONMENT_NAMES = [
   'bush', 'grass', 'stump', 'rock_chips', 'rubble', 'barrel',
   'brazier', 'torch', 'spawn_marker', 'ruin_wall', 'ruin_cap',
 ] as const;
-const ASSET_REVISION = '2026-09-22-grip-alignment';
+const ASSET_REVISION = '2026-09-23-leather-gloves';
 
 type AssetWeapon = (typeof WEAPON_NAMES)[number];
 type AssetLandmark = (typeof LANDMARK_NAMES)[number];

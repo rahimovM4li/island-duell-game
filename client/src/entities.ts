@@ -549,12 +549,11 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
     }
   }
 
-  const scale = weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper'
-    ? 0.36 : 0.54;
+  const scale = weapon === 'knife' ? 0.78 : weapon === 'rifle' ? 0.52
+    : weapon === 'shotgun' || weapon === 'sniper' ? 0.42 : 0.54;
   g.scale.setScalar(scale);
-  const baseRotation = weapon === 'knife'
-    ? { x: 0.65, y: 0, z: 0.92 }
-    : { x: 0, y: -0.08, z: 0 };
+  const baseRotation = weapon === 'knife' ? { x: 0.65, y: 0, z: 0.92 }
+    : { x: 0, y: weapon === 'rifle' ? 0.35 : -0.08, z: 0 };
   g.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
   g.userData.viewmodelBaseRotation = baseRotation;
   return g;
@@ -1660,16 +1659,25 @@ export class Entities {
     this.aimBlend += ((this.aiming && this.reloadT < 0 ? 1 : 0) - this.aimBlend) * (1 - Math.exp(-dt * 14));
     this.sprintBlend += ((this.viewSprinting && !this.aiming && this.reloadT < 0 ? 1 : 0) - this.sprintBlend) * (1 - Math.exp(-dt * 12));
     this.stridePhase += this.viewSpeed * dt * 1.9;
+    const knifeView = this.viewWeaponType === 'knife';
+    const rifleView = this.viewWeaponType === 'rifle';
+    const hipX = knifeView ? 0.04 : rifleView ? 0.20 : 0.38;
+    const hipY = knifeView ? -0.04 : rifleView ? -0.14 : -0.28;
+    const hipZ = knifeView ? -0.82 : rifleView ? -0.68 : -0.72;
+    const aimY = this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065;
     this.viewRoot.position.set(
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? 0.33 : 0.38, 0, this.aimBlend),
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.22 : -0.28, this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065, this.aimBlend),
-      THREE.MathUtils.lerp(this.viewWeaponType === 'knife' ? -0.82 : -0.72, -0.57, this.aimBlend),
+      THREE.MathUtils.lerp(hipX, 0, this.aimBlend),
+      THREE.MathUtils.lerp(hipY, aimY, this.aimBlend),
+      THREE.MathUtils.lerp(hipZ, -0.57, this.aimBlend),
     );
     if (this.viewWeapon) {
+      if (rifleView) {
+        this.viewWeapon.scale.setScalar(THREE.MathUtils.lerp(0.52, 0.42, this.aimBlend));
+      }
       const baseRotation = this.viewWeapon.userData.viewmodelBaseRotation as {
         x: number; y: number; z: number;
       } | undefined;
-      const isKnife = this.viewWeaponType === 'knife';
+      const isKnife = knifeView;
       const swing = Math.sin(this.swingT * Math.PI) * 1.1;
       const kick = Math.sin(this.kickT * Math.PI) * 0.06;
       let reloadDrop = 0;

@@ -45,12 +45,15 @@ glove = bpy.data.materials.new('Charcoal woven glove')
 glove.use_nodes = True
 gs = glove.node_tree.nodes.get('Principled BSDF')
 gs.inputs['Base Color'].default_value = (.032, .041, .044, 1)
-gs.inputs['Roughness'].default_value = .72
+gs.inputs['Roughness'].default_value = .56
+gs.inputs['Coat Weight'].default_value = .12
 leather = bpy.data.materials.new('Supple leather reinforcement')
 leather.use_nodes = True
 ls = leather.node_tree.nodes.get('Principled BSDF')
 ls.inputs['Base Color'].default_value = (.065, .079, .082, 1)
-ls.inputs['Roughness'].default_value = .72
+ls.inputs['Roughness'].default_value = .44
+ls.inputs['Coat Weight'].default_value = .25
+ls.inputs['Coat Roughness'].default_value = .28
 
 def cloth_texture(material, rgb, woven):
     """Small repeatable material grain; no external proprietary textures."""
@@ -60,21 +63,22 @@ def cloth_texture(material, rgb, woven):
     for y in range(128):
         for x in range(128):
             thread = math.sin(x * math.pi / 8) * math.sin(y * math.pi / 8) if woven else 0
-            grain = thread * .012 + rng.uniform(-.015, .015)
+            crease = math.sin(x * .17 + math.sin(y * .09) * 2) * math.sin(y * .14)
+            grain = thread * .012 + crease * .008 + rng.uniform(-.016, .016)
             pixels.extend([max(0, c + grain) for c in rgb] + [1])
     image.pixels = pixels
     image.pack()
     nodes = material.node_tree.nodes
     texture = nodes.new('ShaderNodeTexImage'); texture.image = image
     coordinates = nodes.new('ShaderNodeTexCoord')
-    mapping = nodes.new('ShaderNodeMapping'); mapping.inputs['Scale'].default_value = (32,32,32)
+    mapping = nodes.new('ShaderNodeMapping'); mapping.inputs['Scale'].default_value = (12,12,12)
     links = material.node_tree.links
     links.new(coordinates.outputs['UV'], mapping.inputs['Vector'])
     links.new(mapping.outputs['Vector'], texture.inputs['Vector'])
     links.new(texture.outputs['Color'], nodes.get('Principled BSDF').inputs['Base Color'])
 
-cloth_texture(glove, (.24,.265,.275), True)
-cloth_texture(leather, (.26,.28,.29), False)
+cloth_texture(glove, (.31,.33,.34), True)
+cloth_texture(leather, (.27,.29,.30), False)
 
 def posed_mesh(name, curls):
     for pb in rig.pose.bones:
@@ -125,12 +129,31 @@ def posed_mesh(name, curls):
     bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
     bm.to_mesh(mesh); bm.free()
     for vert in mesh.vertices: vert.co *= 1.35
+    joints = [frame @ (rig.pose.bones[f'f_{finger}.01.R'].head - wrist) * (.22 * 1.35)
+              for finger in ('index', 'middle', 'ring', 'pinky')]
+    for vert in mesh.vertices:
+        if vert.co.z >= -.018 or vert.co.y < .24:
+            continue
+        # Raise the existing dorsal surface over the joints, preserving a
+        # continuous glove instead of attaching independent hard-shell beads.
+        contour = max(math.exp(-2 * (((vert.co.x - joint.x) / .047)**2
+                                      + ((vert.co.y - joint.y) / .055)**2)) for joint in joints)
+        vert.co.z -= .012 * contour
     mesh.update()
     # Cut the cuff boundary through faces so its edge is a continuous seam.
     bm = bmesh.new(); bm.from_mesh(mesh)
-    for y in (-.055, .02):
+    for y in (-.085, -.055, -.025, .005, .02, .045):
         bmesh.ops.bisect_plane(bm, geom=list(bm.verts)+list(bm.edges)+list(bm.faces),
             plane_co=(0,y,0), plane_no=(0,1,0))
+    for vertex in bm.verts:
+        y = vertex.co.y
+        if -.085 < y < .045:
+            # A shallow raised leather cuff follows the actual wrist surface.
+            roll = .08 * max(0, 1 - abs((y + .02) / .065))
+            roll += .045 * math.exp(-((y + .055) / .014)**2)
+            roll += .035 * math.exp(-((y - .02) / .014)**2)
+            vertex.co.x *= 1 + roll
+            vertex.co.z *= 1 + roll
     bm.to_mesh(mesh); bm.free(); mesh.update()
     mesh.materials.clear(); mesh.materials.append(skin); mesh.materials.append(glove); mesh.materials.append(leather)
     for poly in mesh.polygons:

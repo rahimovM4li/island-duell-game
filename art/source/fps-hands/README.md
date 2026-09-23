@@ -30,6 +30,8 @@ npm run assets:build
 
 The builder removes source constraints, poses the finger chains, preserves the
 anatomical mesh and skin UVs, and bakes static knife, trigger and support poses.
+It sculpts shallow knuckle contours into that mesh, raises the leather wrist
+cuff, and exports a restrained woven grain with glancing leather highlights.
 The gameplay animation moves these posed meshes with their weapon attachment;
 there is no runtime skeletal animation or finger IK. The source rig stays intact.
 The elbow and upper-arm poses follow the source rig's skin weights, preserving
