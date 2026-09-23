@@ -10,15 +10,19 @@ describe('permanent butterfly loadout', () => {
     const entities = new Entities(new THREE.Scene(), new THREE.PerspectiveCamera(), 42);
     entities.setViewWeapon('knife');
     entities.update(0.2, 0.2);
+    const equippedAngle = entities.viewmodelStats().knifeBladeAngle;
     entities.inspectKnife();
     entities.update(0, 0.2);
-    expect(entities.viewmodelStats()).toMatchObject({ knifeInspecting: true, knifeBladeAngle: 0 });
+    expect(entities.viewmodelStats()).toMatchObject({ knifeInspecting: true, knifeProgress: 0 });
+    expect(entities.viewmodelStats().knifeBladeAngle).toBeCloseTo(equippedAngle);
     for (let i = 0; i < 4; i++) {
       entities.update(0.6, 1 + i);
       expect(entities.viewmodelStats().knifeBladeAngle).toBeGreaterThan(0.1);
+      const beforeRestart = entities.viewmodelStats().knifeBladeAngle;
       entities.inspectKnife();
       entities.update(0, 1 + i);
-      expect(entities.viewmodelStats()).toMatchObject({ knifeInspecting: true, knifeBladeAngle: 0 });
+      expect(entities.viewmodelStats()).toMatchObject({ knifeInspecting: true, knifeProgress: 0 });
+      expect(entities.viewmodelStats().knifeBladeAngle).toBeCloseTo(beforeRestart);
     }
     entities.meleeSwing();
     entities.inspectKnife();
@@ -38,6 +42,7 @@ describe('permanent butterfly loadout', () => {
   it('builds separate handles and a finite beveled blade with a restrained geometry budget', () => {
     const model = butterflyKnife();
     expect(model.getObjectByName('knife-safe-handle')).toBeDefined();
+    expect(model.getObjectByName('knife-safe-grip')?.parent?.name).toBe('knife-safe-handle');
     expect(model.getObjectByName('knife-bite-pivot')?.parent?.name).toBe('knife-blade-pivot');
     let triangles = 0;
     model.traverse(o => {
@@ -77,5 +82,8 @@ describe('permanent butterfly loadout', () => {
     const end = knifePose(0.99999);
     expect(Math.cos(end.blade)).toBeCloseTo(1);
     expect(end.bite).toBeCloseTo(0);
+    expect(knifePose(0).grip).toBe(0);
+    expect(knifePose(0.4, true).grip).toBeGreaterThan(0.9);
+    expect(knifePose(0.97, true).grip).toBe(0);
   });
 });

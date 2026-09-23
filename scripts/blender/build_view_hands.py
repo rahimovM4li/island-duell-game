@@ -105,11 +105,11 @@ def posed_mesh(name, curls):
     # Only the wrist/ elbow skin weights blend the two adjoining bone transforms.
     is_knife = name.startswith('hand_knife')
     elbow_target = Vector((-.08,-.58,-.06)) if is_knife else Vector(
-        (-.17,-.58,-.18) if name == 'hand_trigger' else (-.30,-.55,-.10))
+        (-.17,-.58,-.18) if name == 'hand_trigger' else (-.25,-.55,-.10))
     elbow_target.normalize(); elbow_target *= elbow.length
     forearm_rotation = elbow.rotation_difference(elbow_target)
     upper_direction = Vector((-.10,-.43,-.30) if is_knife else
-        ((-.28,-.42,-.30) if name == 'hand_trigger' else (-.50,-.10,-.25)))
+        ((-.28,-.42,-.30) if name == 'hand_trigger' else (-.12,-.55,-.10)))
     upper_rotation = (shoulder-elbow).rotation_difference(upper_direction)
     removed = {v.index for v in mesh.vertices if v.co.x > -1.5}
     for vert in mesh.vertices:
@@ -162,19 +162,51 @@ def posed_mesh(name, curls):
         poly.material_index = 0 if poly.center.y < -.055 else 1
         if -.055 <= poly.center.y < .02:
             poly.material_index = 2
+    if name == 'hand_support_close':
+        # Shape keys need identical topology. Re-pose the shoulder and elbow
+        # after the shared support mesh has been cut into its material panels.
+        old_elbow = elbow_target * 1.35
+        new_elbow = Vector((-.03,-.60,-.03)).normalized() * old_elbow.length
+        forearm_turn = old_elbow.rotation_difference(new_elbow)
+        upper_turn = upper_direction.rotation_difference(Vector((0,-.60,-.06)))
+        for vert in mesh.vertices:
+            p = vert.co.copy()
+            forearm_weight = sum(g.weight for g in vert.groups if body.vertex_groups[g.group].name == 'forearm.R')
+            upper_weight = sum(g.weight for g in vert.groups if body.vertex_groups[g.group].name in ('upper_arm.R', 'deltoid.R', 'clavicle.R'))
+            vert.co = p + forearm_weight * (forearm_turn @ p - p) + upper_weight * (new_elbow + upper_turn @ (p-old_elbow) - p)
+        mesh.update()
     return obj
 
 grip = {'index': (65, 80, 45), 'middle': (70, 80, 45), 'ring': (75, 80, 45), 'pinky': (80, 80, 45), 'thumb': (10, 30, 25)}
 models = [posed_mesh('hand_knife', grip)]
-release = posed_mesh('hand_knife_release', {**grip, 'middle': (55,65,35), 'ring': (35,40,25), 'pinky': (25,35,20)})
-assert len(models[0].data.vertices) == len(release.data.vertices), 'Morph topology changed'
-models[0].shape_key_add(name='Basis')
-release_key = models[0].shape_key_add(name='release')
-for point, vertex in zip(release_key.data, release.data.vertices):
-    point.co = vertex.co
-bpy.data.objects.remove(release, do_unlink=True)
-models.append(posed_mesh('hand_trigger', {**grip, 'index': (12, 45, 30)}))
-models.append(posed_mesh('hand_support', {**grip, 'index': (50, 65, 35), 'middle': (55, 65, 35), 'ring': (60, 70, 35), 'pinky': (65, 70, 35)}))
+def add_pose_key(base, target, key_name):
+    assert len(base.data.vertices) == len(target.data.vertices), 'Morph topology changed'
+    if not base.data.shape_keys:
+        base.shape_key_add(name='Basis')
+    key = base.shape_key_add(name=key_name)
+    for point, vertex in zip(key.data, target.data.vertices):
+        point.co = vertex.co
+    bpy.data.objects.remove(target, do_unlink=True)
+
+add_pose_key(models[0], posed_mesh('hand_knife_release', {
+    **grip, 'middle': (55,65,35), 'ring': (35,40,25), 'pinky': (25,35,20),
+}), 'release')
+models.append(posed_mesh('hand_trigger', {
+    **grip, 'index': (30, 60, 35), 'middle': (80, 88, 52),
+    'ring': (84, 90, 52), 'pinky': (86, 90, 52),
+}))
+support_curl = {**grip, 'index': (50, 65, 35), 'middle': (55, 65, 35),
+                'ring': (60, 70, 35), 'pinky': (65, 70, 35)}
+support = posed_mesh('hand_support', support_curl)
+add_pose_key(support, posed_mesh('hand_support_close', {
+    **support_curl, 'index': (72, 82, 48), 'middle': (78, 88, 52),
+    'ring': (80, 90, 52), 'pinky': (82, 90, 52),
+}), 'close')
+add_pose_key(support, posed_mesh('hand_support_bolt', {
+    **support_curl, 'index': (68, 78, 45), 'middle': (74, 82, 48),
+    'ring': (76, 84, 48), 'pinky': (78, 86, 48),
+}), 'bolt')
+models.append(support)
 
 for obj in list(bpy.data.objects):
     if obj not in models:

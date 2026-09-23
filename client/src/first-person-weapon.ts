@@ -8,12 +8,16 @@ const smooth = (a: number, b: number, t: number): number => {
   return k * k * (3 - 2 * k);
 };
 
-export function reloadPose(progress: number): { magazine: number; bolt: number; reach: number } {
-  if (progress < 0 || progress >= 1) return { magazine: 0, bolt: 0, reach: 0 };
+export function reloadPose(progress: number): { magazine: number; bolt: number; reach: number; magazineHand: number; boltHand: number } {
+  if (progress < 0 || progress >= 1) return { magazine: 0, bolt: 0, reach: 0, magazineHand: 0, boltHand: 0 };
+  const magazineHand = smooth(0.03, 0.18, progress) * (1 - smooth(0.67, 0.77, progress));
+  const boltHand = smooth(0.74, 0.82, progress) * (1 - smooth(0.91, 0.98, progress));
   return {
     magazine: smooth(0.15, 0.34, progress) * (1 - smooth(0.48, 0.68, progress)),
     bolt: smooth(0.74, 0.82, progress) * (1 - smooth(0.84, 0.94, progress)),
-    reach: smooth(0.05, 0.18, progress) * (1 - smooth(0.7, 0.96, progress)),
+    reach: Math.max(magazineHand, boltHand),
+    magazineHand,
+    boltHand,
   };
 }
 
@@ -48,7 +52,17 @@ export function firstPersonWeapon(type: WeaponType | 'none'): THREE.Group | null
   const bolt = new THREE.Group();
   bolt.name = 'moving-bolt';
   root.add(magazine, bolt);
+  const socket = (parent: THREE.Object3D, name: string, x: number, y: number, z: number): void => {
+    const anchor = new THREE.Object3D();
+    anchor.name = name;
+    anchor.position.set(x, y, z);
+    parent.add(anchor);
+  };
   if (type === 'pistol') {
+    socket(root, 'weapon-primary-grip', 0, -0.21, 0.04);
+    socket(root, 'weapon-support-grip', -0.065, -0.235, 0.08);
+    socket(magazine, 'weapon-magazine-grip', -0.06, -0.25, 0.025);
+    socket(bolt, 'weapon-bolt-grip', -0.09, 0.065, -0.04);
     box('frame', [0.15, 0.1, 0.5], [0, -0.045, -0.15], dark);
     box('slide', [0.16, 0.15, 0.53], [0, 0.065, -0.15], steel, bolt);
     box('grip', [0.135, 0.27, 0.16], [0, -0.2, 0.035], rubber).rotation.x = -0.18;
@@ -60,6 +74,10 @@ export function firstPersonWeapon(type: WeaponType | 'none'): THREE.Group | null
     tube('muzzle', 0.04, 0.04, [0, 0.045, -0.425], dark);
   } else {
     const sniper = type === 'sniper', shotgun = type === 'shotgun';
+    socket(root, 'weapon-primary-grip', 0, -0.21, 0.04);
+    socket(root, 'weapon-support-grip', 0, -0.025, sniper ? -0.70 : -0.55);
+    socket(magazine, 'weapon-magazine-grip', -0.085, shotgun ? -0.16 : -0.26, shotgun ? -0.17 : -0.21);
+    socket(bolt, 'weapon-bolt-grip', -0.12, 0.075, 0.01);
     box('receiver', [0.16, 0.19, 0.62], [0, 0.01, -0.14], steel);
     box('stock', [0.13, 0.23, 0.48], [0, -0.05, 0.42], sniper ? rubber : wood);
     box('butt-pad', [0.16, 0.25, 0.055], [0, -0.05, 0.67], rubber);
@@ -70,7 +88,8 @@ export function firstPersonWeapon(type: WeaponType | 'none'): THREE.Group | null
     box('handguard', [0.155, 0.14, 0.48], [0, -0.02, -0.62], shotgun ? wood : rubber);
     for (let i = 0; i < 7; i++) box('handguard-rib', [0.165, 0.145, 0.018], [0, -0.02, -0.8 + i * 0.06], dark);
     box('ejection-port', [0.008, 0.075, 0.18], [0.085, 0.04, -0.12], dark);
-    box('bolt-handle', [0.15, 0.027, 0.035], [0.12, 0.075, 0.01], steel, bolt);
+    // Left-side charging handle is reachable by the support hand during reload.
+    box('bolt-handle', [0.15, 0.027, 0.035], [-0.12, 0.075, 0.01], steel, bolt);
     if (shotgun) {
       tube('tube-magazine', 0.035, 0.85, [0, -0.055, -0.78], dark);
       box('loading-shell', [0.048, 0.05, 0.11], [0, -0.16, -0.17], brass, magazine);

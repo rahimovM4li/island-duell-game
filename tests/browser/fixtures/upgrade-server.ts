@@ -43,6 +43,12 @@ process.on('message', (message: { id: number; action: string }) => {
       room.pushInventory(player);
       yaw = Math.atan2(x, z);
     }
+    if (message.action === 'equip-shotgun' || message.action === 'equip-sniper') {
+      const type = message.action === 'equip-shotgun' ? 'shotgun' : 'sniper';
+      player.inv.primary = { type, mag: type === 'shotgun' ? 6 : 5 };
+      player.inv.active = 2;
+      room.pushInventory(player);
+    }
     if (message.action === 'empty-slots') {
       player.inv.primary = player.inv.secondary = null;
       player.inv.throwables = { frag: 0, smoke: 0, flash: 0 };

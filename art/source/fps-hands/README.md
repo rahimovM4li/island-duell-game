@@ -18,6 +18,10 @@ No Counter-Strike or VALORANT game assets are included.
   dedicated first-person arms with authored poses rather than a small world-character mesh.
 - [Epic: First Person Rendering](https://dev.epicgames.com/documentation/en-us/unreal-engine/first-person-rendering):
   evaluate the viewmodel through the game camera; screen coverage and perspective matter.
+- [Epic: Animation Montages](https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-montage-in-unreal-engine):
+  give inspect, draw, reload and attack their own timed phases so they can interrupt cleanly.
+- [Unity: Two Bone IK Constraint](https://docs.unity3d.com/Packages/com.unity.animation.rigging@1.2/manual/constraints/TwoBoneIKConstraint.html):
+  keep the hand on an effector target and control the elbow's direction independently.
 
 ## Rebuild
 
@@ -33,12 +37,23 @@ anatomical mesh and skin UVs, and bakes static knife, trigger and support poses.
 It sculpts shallow knuckle contours into that mesh, raises the leather wrist
 cuff, and exports a restrained woven grain with glancing leather highlights.
 The gameplay animation moves these posed meshes with their weapon attachment;
-there is no runtime skeletal animation or finger IK. The source rig stays intact.
+there is no runtime skeletal animation or finger IK. Instead, each weapon has
+explicit grip sockets, including moving magazine/bolt targets. These targets
+anchor the hand through the draw, inspect and reload phases, so the hand does
+not slide away when the object rotates. The source rig stays intact.
 The elbow and upper-arm poses follow the source rig's skin weights, preserving
 forearm length and shape while routing the upper arms below the camera. Exported
 grip sockets place each weapon handle inside the curled fingers. The knife mesh
 also contains a `release` shape key: the lower fingers open during a butterfly
 flip and close around the handles when the animation ends.
+The support hand has a `close` shape key for the magazine phase. It bends the
+fingers and redirects the elbow down and out of frame without changing mesh
+topology. A separate `bolt` key curls the fingers at the charging handle while
+keeping the forearm on its normal path. The grip follows the magazine until
+insertion, then returns to the fore-end; the bolt phase has a separate target.
+Re-triggering the knife inspect
+blends briefly from the current pose into the new draw phase so repeated F
+presses remain continuous.
 Canonical exported axes are +X towards the thumb, +Y towards the fingertips and
 +Z into the palm. The sockets are exported in the GLB and are aligned with
 weapon-space grip targets in `client/src/entities.ts`.

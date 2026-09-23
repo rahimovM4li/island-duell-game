@@ -24,6 +24,9 @@ describe('authored hand pose export', () => {
     const mesh = gltf.meshes[knife.mesh];
     expect(mesh.extras.targetNames).toContain('release');
     expect(mesh.primitives.every((primitive: any) => primitive.targets?.length === 1)).toBe(true);
+    const support = gltf.nodes.find((entry: any) => entry.name === 'hand_support');
+    expect(gltf.meshes[support.mesh].extras.targetNames).toContain('close');
+    expect(gltf.meshes[support.mesh].extras.targetNames).toContain('bolt');
     expect(gltf.extensionsRequired).toContain('EXT_meshopt_compression');
   });
 });

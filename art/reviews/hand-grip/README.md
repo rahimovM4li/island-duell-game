@@ -27,4 +27,12 @@ The same hand export is used on firearms. In the rifle hip view the left support
 
 ![Revised rifle aiming frame](rifle-aim.png)
 
+During reload the left hand follows the moving magazine with a closed grip,
+then moves to the left-side charging handle. Each phase has its own finger
+pose and keeps the forearm entering from the lower edge:
+
+![Support hand on the magazine](rifle-reload.png)
+
+![Support hand at the charging handle](rifle-bolt.png)
+
 All in-game images are 1280 × 720 Playwright captures from `tests/browser/gameplay-upgrade.spec.ts`. The grip inspection is rendered from the same baked mesh by `scripts/blender/build_view_hands.py`. The supplied references show higher-detail commercial assets; this review checks pose, proportions, grip contact and screen coverage. The glove and rifle still use the game's simpler art style.

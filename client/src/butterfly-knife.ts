@@ -59,6 +59,10 @@ export function butterflyKnife(): THREE.Group {
   safe.name = 'knife-safe-handle';
   safe.position.x = -0.058;
   root.add(safe);
+  const grip = new THREE.Object3D();
+  grip.name = 'knife-safe-grip';
+  grip.position.y = -0.26;
+  safe.add(grip);
   handle(safe, 'safe');
   const rotor = new THREE.Group();
   rotor.name = 'knife-blade-pivot';
@@ -113,9 +117,11 @@ const frames = [
   [0.67, 2, 0.34, 0.12], [0.86, 2, -0.055, -0.035], [1, 2, 0, 0],
 ] as const;
 
-/** Time-based hinge keyframes; -1 is the open combat pose. Angles never reset mid-flip. */
-export function knifePose(progress: number, inspect = false, reducedMotion = false) {
-  if (progress < 0 || progress >= 1 || reducedMotion) return { blade: 0, bite: 0, wrist: 0, inspect: 0 };
+export interface KnifePose { blade: number; bite: number; wrist: number; inspect: number; grip: number }
+
+/** One timeline drives hinges, wrist and finger contact. -1 is the open combat pose. */
+export function knifePose(progress: number, inspect = false, reducedMotion = false): KnifePose {
+  if (progress < 0 || progress >= 1 || reducedMotion) return { blade: 0, bite: 0, wrist: 0, inspect: 0, grip: 0 };
   const t = THREE.MathUtils.clamp(progress, 0, 1);
   const phase = inspect ? (t < 0.25 ? -1 : (t - 0.25) / 0.75) : t;
   let blade = 0, bite = 0, wrist = 0;
@@ -133,14 +139,20 @@ export function knifePose(progress: number, inspect = false, reducedMotion = fal
     bite = fold * Math.PI;
     wrist = fold * -0.65;
   }
-  return { blade, bite, wrist, inspect: inspect ? Math.sin(t * Math.PI) : 0 };
+  const grip = smooth(THREE.MathUtils.clamp((t - 0.12) / 0.14, 0, 1))
+    * (1 - smooth(THREE.MathUtils.clamp((t - 0.76) / 0.17, 0, 1)));
+  return { blade, bite, wrist, inspect: inspect ? Math.sin(t * Math.PI) : 0, grip };
 }
 
-export function animateKnife(model: THREE.Object3D, progress: number, inspect: boolean, reducedMotion: boolean): ReturnType<typeof knifePose> {
-  const pose = knifePose(progress, inspect, reducedMotion);
+export function applyKnifePose(model: THREE.Object3D, pose: KnifePose): void {
   const blade = model.getObjectByName('knife-blade-pivot');
   const bite = model.getObjectByName('knife-bite-pivot');
   if (blade) blade.rotation.z = pose.blade;
   if (bite) bite.rotation.z = pose.bite;
+}
+
+export function animateKnife(model: THREE.Object3D, progress: number, inspect: boolean, reducedMotion: boolean): KnifePose {
+  const pose = knifePose(progress, inspect, reducedMotion);
+  applyKnifePose(model, pose);
   return pose;
 }

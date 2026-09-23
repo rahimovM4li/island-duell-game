@@ -16,7 +16,7 @@ import { gameAssets, isSharedAssetResource } from './game-assets';
 import { droppedPickupPose } from './pickup-drop-animation';
 import { shouldShowSpectatorLabel } from './spectator-labels';
 import { firstPersonWeapon, reloadPose } from './first-person-weapon';
-import { butterflyKnife, animateKnife, KNIFE_DRAW_SECONDS, KNIFE_INSPECT_SECONDS, KNIFE_MODEL_SCALE } from './butterfly-knife';
+import { butterflyKnife, applyKnifePose, knifePose, KNIFE_DRAW_SECONDS, KNIFE_INSPECT_SECONDS, type KnifePose } from './butterfly-knife';
 
 const PLAYER_COLORS = PLAYER_SKINS.map((skin) => skin.color);
 const HIT_FLASH_BODY = new THREE.Color(0xffffff);
@@ -473,9 +473,14 @@ function spectatorNameLabel(playerName: string): THREE.Sprite {
   return sprite;
 }
 
+function handGripOffset(hand: THREE.Object3D): THREE.Vector3 {
+  return (hand.userData.gripCenter as THREE.Vector3).clone().multiply(hand.scale).applyQuaternion(hand.quaternion);
+}
+
 function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Group {
   const g = new THREE.Group();
-  if (weapon !== 'none') g.add(weaponModel(weapon));
+  const heldModel = weapon === 'none' ? null : weaponModel(weapon);
+  if (heldModel) g.add(heldModel);
   const throwable = weapon === 'grenade' || weapon === 'smoke' || weapon === 'flash';
 
   // Authored anatomical poses use +X toward the thumb, +Y along the fingers,
@@ -487,13 +492,10 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
     primary.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
       new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0),
     ));
-    const gripOffset = (hand: THREE.Group): THREE.Vector3 => (hand.userData.gripCenter as THREE.Vector3)
-      .clone().multiply(hand.scale).applyQuaternion(hand.quaternion);
-    primary.position.set(
-      0,
-      weapon === 'knife' ? -0.26 * KNIFE_MODEL_SCALE.y : throwable ? 0 : -0.21,
-      weapon === 'knife' ? 0 : 0.04,
-    ).sub(gripOffset(primary));
+    const primarySocket = heldModel?.getObjectByName(weapon === 'knife' ? 'knife-safe-grip' : 'weapon-primary-grip');
+    const target = primarySocket?.getWorldPosition(new THREE.Vector3())
+      ?? new THREE.Vector3(0, throwable ? 0 : -0.21, weapon === 'knife' ? 0 : 0.04);
+    primary.position.copy(target).sub(handGripOffset(primary));
     primary.userData.restPosition = primary.position.clone();
     g.add(primary);
     if (weapon === 'pistol' || weapon === 'rifle' || weapon === 'shotgun' || weapon === 'sniper') {
@@ -506,16 +508,27 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
         ));
         // Mirroring preserves the index finger above the pinky; the left palm
         // faces inward and cups the firing hand from the opposite side.
-        support.position.set(-0.065, -0.235, 0.08).sub(gripOffset(support));
       } else {
         support.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
           new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0),
         ));
         support.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.55));
-        support.position.set(0, -0.025, weapon === 'sniper' ? -0.70 : -0.55).sub(gripOffset(support));
       }
+      const supportTarget = heldModel?.getObjectByName('weapon-support-grip')?.getWorldPosition(new THREE.Vector3())
+        ?? new THREE.Vector3(weapon === 'pistol' ? -0.065 : 0, weapon === 'pistol' ? -0.235 : -0.025,
+          weapon === 'pistol' ? 0.08 : weapon === 'sniper' ? -0.70 : -0.55);
+      support.position.copy(supportTarget).sub(handGripOffset(support));
+      support.userData.restTarget = supportTarget;
+      support.userData.activeTarget = supportTarget.clone();
       support.userData.restPosition = support.position.clone();
       support.userData.restQuaternion = support.quaternion.clone();
+      // Turn the palm toward the magazine while the forearm continues down
+      // out of frame. The finger pose closes as this orientation settles.
+      support.userData.magazineQuaternion = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().makeBasis(
+          new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0),
+        ),
+      );
       g.add(support);
     }
   } else {
@@ -618,6 +631,8 @@ export class Entities {
   private viewWeaponType: WeaponType | 'none' | null = null;
   private viewSkinColor = PLAYER_COLORS[1];
   private knifeT = -1;
+  private knifeCurrentPose: KnifePose = knifePose(-1);
+  private knifeRestartFrom: KnifePose | null = null;
   private knifeInspect = false;
   private swingT = 1; // 0..1 melee swing animation
   private kickT = 1;  // fire recoil
@@ -1403,11 +1418,14 @@ export class Entities {
   meleeSwing(): void {
     this.swingT = 0;
     this.knifeT = -1; // combat immediately interrupts a cosmetic flourish
+    this.knifeRestartFrom = null;
     this.weaponSwitchT = -1;
   }
 
   inspectKnife(): void {
     if (this.viewWeaponType !== 'knife' || this.swingT < 1) return;
+    this.knifeRestartFrom = this.knifeT >= 0 && !this.reducedMotion
+      ? { ...this.knifeCurrentPose } : null;
     this.knifeInspect = true;
     this.knifeT = 0;
   }
@@ -1430,6 +1448,9 @@ export class Entities {
     this.swingT = 1;
     this.knifeT = weapon === 'knife' ? 0 : -1;
     this.knifeInspect = false;
+    this.knifeRestartFrom = null;
+    this.knifeCurrentPose = weapon === 'knife' ? knifePose(0) : knifePose(-1);
+    if (weapon === 'knife') applyKnifePose(this.viewWeapon, this.knifeCurrentPose);
     this.viewRoot.add(this.viewWeapon);
     if (animateSwitch && previousWeapon !== null) this.startWeaponSwitch(false);
   }
@@ -1439,6 +1460,7 @@ export class Entities {
     if (this.viewWeaponType === 'knife') {
       this.knifeT = 0;
       this.knifeInspect = false;
+      this.knifeRestartFrom = null;
     }
     this.weaponSwitchCount += 1;
     this.lastWeaponSwitchSameWeapon = sameWeapon;
@@ -1660,10 +1682,11 @@ export class Entities {
     this.sprintBlend += ((this.viewSprinting && !this.aiming && this.reloadT < 0 ? 1 : 0) - this.sprintBlend) * (1 - Math.exp(-dt * 12));
     this.stridePhase += this.viewSpeed * dt * 1.9;
     const knifeView = this.viewWeaponType === 'knife';
-    const rifleView = this.viewWeaponType === 'rifle';
-    const hipX = knifeView ? 0.04 : rifleView ? 0.20 : 0.38;
-    const hipY = knifeView ? -0.04 : rifleView ? -0.14 : -0.28;
-    const hipZ = knifeView ? -0.82 : rifleView ? -0.68 : -0.72;
+    const longGunView = this.viewWeaponType === 'rifle'
+      || this.viewWeaponType === 'shotgun' || this.viewWeaponType === 'sniper';
+    const hipX = knifeView ? 0.04 : longGunView ? 0.20 : 0.38;
+    const hipY = knifeView ? -0.04 : longGunView ? -0.14 : -0.28;
+    const hipZ = knifeView ? -0.82 : longGunView ? -0.68 : -0.72;
     const aimY = this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065;
     this.viewRoot.position.set(
       THREE.MathUtils.lerp(hipX, 0, this.aimBlend),
@@ -1671,7 +1694,7 @@ export class Entities {
       THREE.MathUtils.lerp(hipZ, -0.57, this.aimBlend),
     );
     if (this.viewWeapon) {
-      if (rifleView) {
+      if (longGunView) {
         this.viewWeapon.scale.setScalar(THREE.MathUtils.lerp(0.52, 0.42, this.aimBlend));
       }
       const baseRotation = this.viewWeapon.userData.viewmodelBaseRotation as {
@@ -1702,27 +1725,44 @@ export class Entities {
         switchSide = envelope * (this.reducedMotion ? 0.02 : 0.075);
         if (progress >= 1) this.weaponSwitchT = -1;
       }
-      this.viewWeapon.rotation.x = (baseRotation?.x ?? 0) - swing * (isKnife ? 0.7 : 0.9) + reloadDrop * 0.35;
+      this.viewWeapon.rotation.x = (baseRotation?.x ?? 0) - swing * (isKnife ? 0.42 : 0.9) + reloadDrop * 0.35;
       this.viewWeapon.rotation.y = (baseRotation?.y ?? -0.08) * (1 - this.aimBlend);
       this.viewWeapon.rotation.z = (baseRotation?.z ?? 0) + reloadRoll + switchRoll;
       this.viewWeapon.position.x = -reloadDrop * 0.18 + switchSide;
-      this.viewWeapon.position.z = swing * (isKnife ? -0.5 : -0.25) + kick + reloadDrop * 0.04 + switchDrop * 0.2;
+      this.viewWeapon.position.z = swing * (isKnife ? -0.28 : -0.25) + kick + reloadDrop * 0.04 + switchDrop * 0.2;
       this.viewWeapon.position.y = Math.sin(time * 1.7) * 0.008 + reloadDrop * 0.18 - switchDrop;
       if (isKnife) {
         const duration = this.knifeInspect ? KNIFE_INSPECT_SECONDS : KNIFE_DRAW_SECONDS;
         if (this.knifeT >= 0) {
           this.knifeT += dt;
-          if (this.knifeT >= duration) this.knifeT = -1;
+          if (this.knifeT >= duration) {
+            this.knifeT = -1;
+            this.knifeRestartFrom = null;
+          }
         }
-        const pose = animateKnife(this.viewWeapon, this.knifeT < 0 ? -1 : this.knifeT / duration, this.knifeInspect, this.reducedMotion);
+        const targetPose = knifePose(this.knifeT < 0 ? -1 : this.knifeT / duration, this.knifeInspect, this.reducedMotion);
+        let pose = targetPose;
+        if (this.knifeRestartFrom && this.knifeT >= 0) {
+          const u = THREE.MathUtils.clamp(this.knifeT / 0.12, 0, 1);
+          const blend = u * u * (3 - 2 * u);
+          const from = this.knifeRestartFrom;
+          pose = {
+            blade: THREE.MathUtils.lerp(from.blade, targetPose.blade, blend),
+            bite: THREE.MathUtils.lerp(from.bite, targetPose.bite, blend),
+            wrist: THREE.MathUtils.lerp(from.wrist, targetPose.wrist, blend),
+            inspect: THREE.MathUtils.lerp(from.inspect, targetPose.inspect, blend),
+            grip: THREE.MathUtils.lerp(from.grip, targetPose.grip, blend),
+          };
+          if (u >= 1) this.knifeRestartFrom = null;
+        }
+        applyKnifePose(this.viewWeapon, pose);
+        this.knifeCurrentPose = pose;
         const hand = this.viewWeapon.getObjectByName('trigger-hand');
         if (hand?.userData.anatomicalHand) {
-          // Loosen the lower fingers to clear the rotating handle, then close
-          // around both handles again. The thumb/index keep the safe handle.
-          const release = this.knifeT < 0 || this.reducedMotion ? 0
-            : Math.min(1, Math.sin(Math.PI * this.knifeT / duration) * 3);
+          // The palm stays on the safe handle while lower fingers clear the
+          // moving handle only during the hinge's release phase.
+          const release = pose.grip;
           hand.position.copy(hand.userData.restPosition as THREE.Vector3);
-          hand.position.x -= 0.058 * KNIFE_MODEL_SCALE.x * release;
           hand.traverse((object) => {
             const mesh = object as THREE.Mesh;
             const index = mesh.morphTargetDictionary?.release;
@@ -1746,14 +1786,44 @@ export class Entities {
       const support = this.viewWeapon.getObjectByName('support-hand');
       if (support) {
         const rest = support.userData.restPosition as THREE.Vector3;
-        support.position.copy(rest);
-        support.position.z += mechanism.reach * (this.viewWeaponType === 'pistol' ? 0 : 0.33);
-        support.position.y -= mechanism.reach * 0.16 + mechanism.magazine * 0.4;
         const restQuaternion = support.userData.restQuaternion as THREE.Quaternion | undefined;
         if (restQuaternion) {
           support.quaternion.copy(restQuaternion);
-          support.rotateX(mechanism.bolt * -0.45);
-        } else support.rotation.x = mechanism.bolt * -0.45;
+          const magazineQuaternion = support.userData.magazineQuaternion as THREE.Quaternion | undefined;
+          if (magazineQuaternion) support.quaternion.slerp(magazineQuaternion,
+            Math.max(mechanism.magazineHand, mechanism.boltHand));
+          support.rotateX(-mechanism.boltHand * 0.18);
+        }
+        const restTarget = support.userData.restTarget as THREE.Vector3 | undefined;
+        if (restTarget && progress >= 0) {
+          this.viewWeapon.updateMatrixWorld(true);
+          const contact = restTarget.clone();
+          const magazineGrip = this.viewWeapon.getObjectByName('weapon-magazine-grip');
+          const boltGrip = this.viewWeapon.getObjectByName('weapon-bolt-grip');
+          if (magazineGrip) {
+            const target = this.viewWeapon.worldToLocal(magazineGrip.getWorldPosition(new THREE.Vector3()));
+            contact.lerp(target, mechanism.magazineHand);
+          }
+          if (boltGrip) {
+            const target = this.viewWeapon.worldToLocal(boltGrip.getWorldPosition(new THREE.Vector3()));
+            contact.lerp(target, mechanism.boltHand);
+          }
+          support.position.copy(contact).sub(handGripOffset(support));
+          support.userData.activeTarget = contact;
+        } else {
+          support.position.copy(rest);
+          if (restTarget) support.userData.activeTarget = restTarget;
+        }
+        const close = mechanism.magazineHand;
+        const boltCurl = mechanism.boltHand * 0.75;
+        support.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          const closeIndex = mesh.morphTargetDictionary?.close;
+          const boltIndex = mesh.morphTargetDictionary?.bolt;
+          if (closeIndex !== undefined && mesh.morphTargetInfluences) mesh.morphTargetInfluences[closeIndex] = close;
+          if (boltIndex !== undefined && mesh.morphTargetInfluences) mesh.morphTargetInfluences[boltIndex] = boltCurl;
+        });
+        support.userData.gripClose = close;
       }
       const motion = this.reducedMotion ? 0 : (1 - this.aimBlend) * (this.viewGrounded ? Math.min(1, this.viewSpeed / 6) : 0);
       this.viewWeapon.position.x += Math.sin(this.stridePhase) * 0.028 * motion;
@@ -1795,8 +1865,12 @@ export class Entities {
     switching: boolean;
     knifeAnimating: boolean;
     knifeInspecting: boolean;
+    knifeProgress: number;
     knifeBladeAngle: number;
     knifeGripRelease: number;
+    primaryGripError: number | null;
+    supportGripError: number | null;
+    supportGripClose: number;
     stabbing: boolean;
     reloadProgress: number;
     magazineOffset: number;
@@ -1809,6 +1883,20 @@ export class Entities {
   } {
     this.camera.updateMatrixWorld(true);
     this.viewRoot.updateMatrixWorld(true);
+    const triggerHand = this.viewWeapon?.getObjectByName('trigger-hand');
+    const primarySocket = this.viewWeapon?.getObjectByName(
+      this.viewWeaponType === 'knife' ? 'knife-safe-grip' : 'weapon-primary-grip',
+    );
+    const primaryGripError = triggerHand?.userData.anatomicalHand && primarySocket
+      ? new THREE.Vector3().copy(triggerHand.userData.gripCenter as THREE.Vector3)
+        .applyMatrix4(triggerHand.matrixWorld).distanceTo(primarySocket.getWorldPosition(new THREE.Vector3()))
+      : null;
+    const supportHand = this.viewWeapon?.getObjectByName('support-hand');
+    const supportGripError = supportHand?.userData.anatomicalHand && supportHand.userData.activeTarget
+      ? new THREE.Vector3().copy(supportHand.userData.gripCenter as THREE.Vector3)
+        .applyMatrix4(supportHand.matrixWorld)
+        .distanceTo(this.viewWeapon!.localToWorld((supportHand.userData.activeTarget as THREE.Vector3).clone()))
+      : null;
     const hands: Array<{
       anatomical: boolean;
       ndcMin: { x: number; y: number; z: number };
@@ -1842,8 +1930,12 @@ export class Entities {
       switching: this.weaponSwitchT >= 0,
       knifeAnimating: this.knifeT >= 0,
       knifeInspecting: this.knifeT >= 0 && this.knifeInspect,
+      knifeProgress: this.knifeT < 0 ? -1 : this.knifeT / (this.knifeInspect ? KNIFE_INSPECT_SECONDS : KNIFE_DRAW_SECONDS),
       knifeBladeAngle: this.viewWeapon?.getObjectByName('knife-blade-pivot')?.rotation.z ?? 0,
       knifeGripRelease: this.viewWeapon?.getObjectByName('trigger-hand')?.userData.gripRelease ?? 0,
+      primaryGripError,
+      supportGripError,
+      supportGripClose: supportHand?.userData.gripClose ?? 0,
       stabbing: this.viewWeaponType === 'knife' && this.swingT < 1,
       reloadProgress: this.reloadT < 0 ? -1 : Math.min(1, this.reloadT / this.reloadDuration),
       magazineOffset: this.viewWeapon?.getObjectByName('moving-magazine')?.position.y ?? 0,

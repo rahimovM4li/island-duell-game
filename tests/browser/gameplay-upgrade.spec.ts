@@ -51,6 +51,8 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.waitForTimeout(1000);
     await page.screenshot({ path: testInfo.outputPath('wreck-rifle.png') });
     expect((await view()).hands.map((hand: any) => hand.anatomical)).toEqual([true, true]);
+    expect((await view()).primaryGripError).toBeLessThan(0.001);
+    expect((await view()).supportGripError).toBeLessThan(0.001);
     const before = (await command('state')).mag;
     await page.mouse.down();
     await page.waitForTimeout(180);
@@ -62,7 +64,12 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.mouse.up({ button: 'right' });
     await page.keyboard.press('r');
     await expect.poll(async () => (await view()).magazineOffset).toBeLessThan(-0.2);
+    expect((await view()).supportGripError).toBeLessThan(0.001);
+    expect((await view()).supportGripClose).toBeGreaterThan(0.8);
     await page.screenshot({ path: testInfo.outputPath('rifle-reload.png') });
+    await expect.poll(async () => (await view()).reloadProgress, { timeout: 8000 }).toBeGreaterThan(0.82);
+    expect((await view()).supportGripError).toBeLessThan(0.001);
+    await page.screenshot({ path: testInfo.outputPath('rifle-bolt.png') });
     await expect.poll(async () => (await command('state')).reloading, { timeout: 8000 }).toBe(false);
     expect((await command('state')).mag).toBe(20);
     await page.keyboard.press('3');
@@ -71,6 +78,8 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.screenshot({ path: testInfo.outputPath('pistol.png') });
     expect((await view()).hands).toHaveLength(2);
     expect((await view()).hands.every((hand: any) => hand.anatomical)).toBe(true);
+    expect((await view()).primaryGripError).toBeLessThan(0.001);
+    expect((await view()).supportGripError).toBeLessThan(0.001);
     const slots = await page.locator('#slots .slot').evaluateAll(elements => elements.map(el => {
       const rect = el.getBoundingClientRect();
       return { width: rect.width, height: rect.height };
@@ -86,6 +95,7 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await page.screenshot({ path: testInfo.outputPath('butterfly-draw.png') });
     await expect.poll(async () => (await view()).knifeAnimating).toBe(false);
     expect((await view()).knifeGripRelease).toBe(0);
+    expect((await view()).primaryGripError).toBeLessThan(0.001);
     await page.screenshot({ path: testInfo.outputPath('butterfly-ready.png') });
     expect((await view()).hands).toHaveLength(1);
     expect((await view()).hands[0].anatomical).toBe(true);
@@ -93,12 +103,18 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     expect((await command('state')).active).toBe(1);
     await page.keyboard.press('f');
     await expect.poll(async () => (await view()).knifeInspecting).toBe(true);
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(150);
+    expect((await view()).primaryGripError).toBeLessThan(0.001);
+    await page.screenshot({ path: testInfo.outputPath('butterfly-inspect-contact.png') });
+    await page.waitForTimeout(450);
     expect((await view()).knifeGripRelease).toBeGreaterThan(0.8);
+    expect((await view()).primaryGripError).toBeLessThan(0.001);
     await page.screenshot({ path: testInfo.outputPath('butterfly-inspect.png') });
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: testInfo.outputPath('butterfly-inspect-return.png') });
     for (let i = 0; i < 3; i++) {
       await page.keyboard.press('f');
-      await expect.poll(async () => (await view()).knifeBladeAngle).toBeLessThan(0.5);
+      await expect.poll(async () => (await view()).knifeProgress).toBeLessThan(0.12);
       await page.waitForTimeout(400);
     }
     await page.mouse.down();
@@ -121,6 +137,18 @@ test('upgraded firearms fire, aim, reload and switch through real game input', a
     await expect.poll(async () => (await command('state')).throwables.flash).toBe(0);
     await page.keyboard.press('2');
     await expect.poll(async () => (await view()).weapon).toBe('rifle');
+    await command('equip-shotgun');
+    await expect.poll(async () => (await view()).weapon).toBe('shotgun');
+    await page.waitForTimeout(350);
+    expect((await view()).primaryGripError).toBeLessThan(0.001);
+    expect((await view()).supportGripError).toBeLessThan(0.001);
+    await page.screenshot({ path: testInfo.outputPath('shotgun-grip.png') });
+    await command('equip-sniper');
+    await expect.poll(async () => (await view()).weapon).toBe('sniper');
+    await page.waitForTimeout(350);
+    expect((await view()).primaryGripError).toBeLessThan(0.001);
+    expect((await view()).supportGripError).toBeLessThan(0.001);
+    await page.screenshot({ path: testInfo.outputPath('sniper-grip.png') });
     await page.keyboard.press('1');
     await expect.poll(async () => (await view()).knifeAnimating).toBe(true);
     await command('empty-slots');
