@@ -11,9 +11,9 @@ The user-provided knife and rifle screenshots add three targets: a larger glove 
 | --- | --- | --- |
 | Knife idle | ![Previous idle: long bent arm and upright blade](before.png) | ![Revised idle: continuous forearm and diagonal blade](knife-idle.png) |
 
-The previous forearm was stretched and swept sideways by vertex coordinates after posing. The revised export preserves its original length and cross-section and bends it through the source bone weights. The handle is aligned with a grip socket inside the curled fingers. The larger knife view and raised leather cuff give the glove more of the screen coverage in the user's reference; the sculpted knuckle contours and restrained material grain keep the glove a continuous surface.
+The previous forearm was stretched and swept sideways by vertex coordinates after posing. The revised export preserves its original length and cross-section and bends it through the source bone weights. The handle is aligned with a grip socket inside the curled fingers. The latest framing makes the knife smaller and shifts it down and to the right, so the blade and glove no longer cover the crosshair. The sculpted knuckle contours and restrained material grain keep the glove a continuous surface.
 
-The lower fingers loosen during the butterfly inspect animation and close around both handles again at rest:
+The lower fingers loosen during the butterfly inspect animation and close around both handles again at rest. Inspection has its own handle-flip timing and a brief open hold, while staying on the right side of the frame:
 
 ![Revised butterfly inspect frame](knife-inspect.png)
 
@@ -21,9 +21,9 @@ The Blender inspection below shows the posed anatomical fingers wrapping a grip-
 
 ![Posed fingers around a grip reference](grip-inspection.png)
 
-The same hand export is used on firearms. In the rifle hip view the left support hand wraps around the fore-end, while aiming keeps the sights clear and routes the elbow below the frame:
+The same hand export is used on firearms. In the rifle hip view the left support hand wraps around the fore-end. The rifle now points straighter while firing, and aiming brings a smaller stock below the crosshair, with the sights still visible:
 
-![Revised rifle hip frame](rifle-hip.png)
+![Revised rifle while firing from the hip](rifle-hip-fire.png)
 
 ![Revised rifle aiming frame](rifle-aim.png)
 

@@ -562,11 +562,11 @@ function viewmodelFor(weapon: WeaponType | 'none', skinColor: number): THREE.Gro
     }
   }
 
-  const scale = weapon === 'knife' ? 0.78 : weapon === 'rifle' ? 0.52
+  const scale = weapon === 'knife' ? 0.72 : weapon === 'rifle' ? 0.52
     : weapon === 'shotgun' || weapon === 'sniper' ? 0.42 : 0.54;
   g.scale.setScalar(scale);
   const baseRotation = weapon === 'knife' ? { x: 0.65, y: 0, z: 0.92 }
-    : { x: 0, y: weapon === 'rifle' ? 0.35 : -0.08, z: 0 };
+    : { x: 0, y: weapon === 'rifle' ? 0.08 : -0.08, z: 0 };
   g.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
   g.userData.viewmodelBaseRotation = baseRotation;
   g.traverse((object) => {
@@ -1696,18 +1696,18 @@ export class Entities {
     const knifeView = this.viewWeaponType === 'knife';
     const longGunView = this.viewWeaponType === 'rifle'
       || this.viewWeaponType === 'shotgun' || this.viewWeaponType === 'sniper';
-    const hipX = knifeView ? -0.04 : longGunView ? 0.20 : 0.38;
-    const hipY = knifeView ? -0.04 : longGunView ? -0.14 : -0.28;
-    const hipZ = knifeView ? -0.70 : longGunView ? -0.68 : -0.72;
-    const aimY = this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : -0.065;
+    const hipX = knifeView ? 0.23 : longGunView ? 0.20 : 0.38;
+    const hipY = knifeView ? -0.20 : longGunView ? -0.14 : -0.28;
+    const hipZ = knifeView ? -0.86 : longGunView ? -0.68 : -0.72;
+    const aimY = this.viewWeaponType === 'pistol' ? -0.09 : this.viewWeaponType === 'sniper' ? -0.086 : this.viewWeaponType === 'rifle' ? -0.07 : -0.065;
     this.viewRoot.position.set(
       THREE.MathUtils.lerp(hipX, 0, this.aimBlend),
       THREE.MathUtils.lerp(hipY, aimY, this.aimBlend),
-      THREE.MathUtils.lerp(hipZ, -0.57, this.aimBlend),
+      THREE.MathUtils.lerp(hipZ, this.viewWeaponType === 'rifle' ? -0.68 : -0.57, this.aimBlend),
     );
     if (this.viewWeapon) {
       if (longGunView) {
-        this.viewWeapon.scale.setScalar(THREE.MathUtils.lerp(0.52, 0.42, this.aimBlend));
+        this.viewWeapon.scale.setScalar(THREE.MathUtils.lerp(0.52, this.viewWeaponType === 'rifle' ? 0.34 : 0.42, this.aimBlend));
       }
       const baseRotation = this.viewWeapon.userData.viewmodelBaseRotation as {
         x: number; y: number; z: number;
@@ -1782,10 +1782,10 @@ export class Entities {
           });
           hand.userData.gripRelease = release;
         }
-        this.viewWeapon.rotation.z += pose.wrist * 0.4;
-        this.viewWeapon.rotation.y += pose.inspect * 0.15;
-        this.viewWeapon.position.x -= pose.inspect * 0.16 + swing * 0.16;
-        this.viewWeapon.position.y += pose.inspect * 0.10;
+        this.viewWeapon.rotation.z += pose.wrist * 0.55;
+        this.viewWeapon.rotation.y += pose.inspect * 0.12;
+        this.viewWeapon.position.x += pose.inspect * 0.15 - swing * 0.16;
+        this.viewWeapon.position.y -= pose.inspect * 0.05;
       }
       const mechanism = reloadPose(progress);
       const magazine = this.viewWeapon.getObjectByName('moving-magazine');
@@ -1880,6 +1880,7 @@ export class Entities {
     knifeProgress: number;
     knifeBladeAngle: number;
     knifeGripRelease: number;
+    centerObstruction: string | null;
     primaryGripError: number | null;
     supportGripError: number | null;
     supportGripClose: number;
@@ -1908,6 +1909,11 @@ export class Entities {
       ? new THREE.Vector3().copy(supportHand.userData.gripCenter as THREE.Vector3)
         .applyMatrix4(supportHand.matrixWorld)
         .distanceTo(this.viewWeapon!.localToWorld((supportHand.userData.activeTarget as THREE.Vector3).clone()))
+      : null;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+    const centerObstruction = this.viewRoot.visible && this.viewWeapon
+      ? raycaster.intersectObject(this.viewWeapon, true)[0]?.object.name ?? null
       : null;
     const hands: Array<{
       anatomical: boolean;
@@ -1945,6 +1951,7 @@ export class Entities {
       knifeProgress: this.knifeT < 0 ? -1 : this.knifeT / (this.knifeInspect ? KNIFE_INSPECT_SECONDS : KNIFE_DRAW_SECONDS),
       knifeBladeAngle: this.viewWeapon?.getObjectByName('knife-blade-pivot')?.rotation.z ?? 0,
       knifeGripRelease: this.viewWeapon?.getObjectByName('trigger-hand')?.userData.gripRelease ?? 0,
+      centerObstruction,
       primaryGripError,
       supportGripError,
       supportGripClose: supportHand?.userData.gripClose ?? 0,

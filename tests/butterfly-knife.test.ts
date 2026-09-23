@@ -86,4 +86,15 @@ describe('permanent butterfly loadout', () => {
     expect(knifePose(0.4, true).grip).toBeGreaterThan(0.9);
     expect(knifePose(0.97, true).grip).toBe(0);
   });
+
+  it('inspects from an open blade, flips once and pauses open before returning', () => {
+    expect(knifePose(0, true).blade).toBe(0);
+    expect(knifePose(0.4, true).grip).toBeGreaterThan(0.9);
+    const hold = knifePose(0.78, true);
+    expect(hold.blade).toBeCloseTo(2 * Math.PI);
+    expect(hold.bite).toBeCloseTo(0);
+    expect(hold.grip).toBe(0);
+    expect(hold.inspect).toBeGreaterThan(0.9);
+    expect(knifePose(0.98, true).inspect).toBeLessThan(hold.inspect);
+  });
 });

@@ -116,6 +116,13 @@ const frames = [
   [0, 1, 1, -0.65], [0.18, 1.5, 0.7, 0.18], [0.42, 2.08, -0.85, -0.16],
   [0.67, 2, 0.34, 0.12], [0.86, 2, -0.055, -0.035], [1, 2, 0, 0],
 ] as const;
+// An inspection starts with the open blade, rolls the free handle through the
+// fingers, then holds the open knife briefly before returning to the idle grip.
+const inspectFrames = [
+  [0, 0, 0, 0], [0.10, 0.08, -0.12, 0.18], [0.24, 0.90, 0.72, -0.20],
+  [0.39, 1.65, -0.75, -0.32], [0.54, 2.05, 0.35, 0.12],
+  [0.69, 2, 0, 0.14], [0.84, 2, 0, 0.14], [1, 2, 0, 0],
+] as const;
 
 export interface KnifePose { blade: number; bite: number; wrist: number; inspect: number; grip: number }
 
@@ -123,25 +130,26 @@ export interface KnifePose { blade: number; bite: number; wrist: number; inspect
 export function knifePose(progress: number, inspect = false, reducedMotion = false): KnifePose {
   if (progress < 0 || progress >= 1 || reducedMotion) return { blade: 0, bite: 0, wrist: 0, inspect: 0, grip: 0 };
   const t = THREE.MathUtils.clamp(progress, 0, 1);
-  const phase = inspect ? (t < 0.25 ? -1 : (t - 0.25) / 0.75) : t;
-  let blade = 0, bite = 0, wrist = 0;
-  if (phase >= 0) {
-    const end = frames.findIndex((f) => f[0] > phase);
-    const b = frames[end < 0 ? frames.length - 1 : end];
-    const a = frames[Math.max(0, (end < 0 ? frames.length - 1 : end) - 1)];
-    const k = smooth((phase - a[0]) / (b[0] - a[0] || 1));
-    blade = THREE.MathUtils.lerp(a[1], b[1], k) * Math.PI;
-    bite = THREE.MathUtils.lerp(a[2], b[2], k) * Math.PI;
-    wrist = THREE.MathUtils.lerp(a[3], b[3], k);
-  } else {
-    const fold = smooth(t / 0.25);
-    blade = fold * Math.PI;
-    bite = fold * Math.PI;
-    wrist = fold * -0.65;
-  }
-  const grip = smooth(THREE.MathUtils.clamp((t - 0.12) / 0.14, 0, 1))
-    * (1 - smooth(THREE.MathUtils.clamp((t - 0.76) / 0.17, 0, 1)));
-  return { blade, bite, wrist, inspect: inspect ? Math.sin(t * Math.PI) : 0, grip };
+  const timeline = inspect ? inspectFrames : frames;
+  const end = timeline.findIndex((f) => f[0] > t);
+  const b = timeline[end < 0 ? timeline.length - 1 : end];
+  const a = timeline[Math.max(0, (end < 0 ? timeline.length - 1 : end) - 1)];
+  const k = smooth((t - a[0]) / (b[0] - a[0] || 1));
+  const grip = inspect
+    ? smooth(THREE.MathUtils.clamp((t - 0.13) / 0.16, 0, 1))
+      * (1 - smooth(THREE.MathUtils.clamp((t - 0.59) / 0.14, 0, 1)))
+    : smooth(THREE.MathUtils.clamp((t - 0.12) / 0.14, 0, 1))
+      * (1 - smooth(THREE.MathUtils.clamp((t - 0.76) / 0.17, 0, 1)));
+  const presentation = inspect
+    ? smooth(THREE.MathUtils.clamp(t / 0.08, 0, 1))
+      * (1 - smooth(THREE.MathUtils.clamp((t - 0.82) / 0.18, 0, 1))) : 0;
+  return {
+    blade: THREE.MathUtils.lerp(a[1], b[1], k) * Math.PI,
+    bite: THREE.MathUtils.lerp(a[2], b[2], k) * Math.PI,
+    wrist: THREE.MathUtils.lerp(a[3], b[3], k),
+    inspect: presentation,
+    grip,
+  };
 }
 
 export function applyKnifePose(model: THREE.Object3D, pose: KnifePose): void {
