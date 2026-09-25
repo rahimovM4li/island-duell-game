@@ -298,6 +298,7 @@ export type GameEvent =
   | { type: 'smoke'; state: 'pop'; id: number; x: number; y: number; z: number; radius: number }
   | { type: 'flash'; x: number; y: number; z: number }
   | { type: 'flashed'; target: string; intensity: number; duration: number } // victim only
+  | { type: 'easterEgg'; target: string } // owner only
   | { type: 'cookout'; by: string; x: number; y: number; z: number };       // frag detonated in hand
 
 // ---------- socket.io event names ----------
@@ -319,6 +320,7 @@ export const C2S = {
   input: 'input',
   craft: 'craft',
   useBandage: 'useBandage',
+  activateEasterEgg: 'activateEasterEgg',
   rematch: 'rematch',
   leaveGame: 'leaveGame',
   kickPlayer: 'kickPlayer',

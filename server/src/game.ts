@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import {
   AMMO_CAP, AMMO_PICKUP, ARMOR_PER_PLATE, BANDAGE_DURATION, BANDAGE_HEAL,
   BANDAGE_USE_TIME, BOT_DIFFICULTIES, BOT_NAMES, BotDifficulty, CARE_PACKAGE_AT,
-  FLASH_FUSE, FLASH_MAX_BLIND, FLASH_RADIUS,
+  FINAL_COLLAPSE_AT, FLASH_FUSE, FLASH_MAX_BLIND, FLASH_RADIUS,
   GRENADE_FUSE, GRENADE_RADIUS,
   INTERACT_HOLD_SECS, INTERACT_RANGE, ItemType, LOUD_PING_SECONDS, MATCH_MODE_PACE,
   MatchMode, MAX_BANDAGES, MAX_LAG_COMPENSATION_MS,
@@ -16,7 +16,7 @@ import {
   SMOKE_RADIUS, SPRINT_SPEED,
   RECIPES, Recipe, RESOURCE_NODE_CHARGES, RESOURCE_YIELD, ROUNDS_PER_MATCH,
   MAX_SUDDEN_DEATH_ROUNDS, ROUND_END_SCOREBOARD_SECS, SERVER_TICK_HZ,
-  SNAPSHOT_HZ, THROW_ORDER, THROW_WEAPON, ThrowKind, WEAPONS, WeaponType, AmmoType,
+  SHRINK_DURATION, SNAPSHOT_HZ, THROW_ORDER, THROW_WEAPON, ThrowKind, WEAPONS, WeaponType, AmmoType,
   WEAPON_DROP_ANIMATION_SECS, WEAPON_DROP_DISTANCE, WEAPON_DROP_OWNER_LOCK_SECS,
 } from '@shared/constants';
 import { GamePhysics, RapierModule, Vec3 } from '@shared/physics';
@@ -110,6 +110,7 @@ interface MatchPlayer {
   connected: boolean;
   alive: boolean;
   hp: number;
+  easterEggActive: boolean;
   move: MoveState;
   yaw: number;
   pitch: number;
@@ -537,6 +538,16 @@ export class GameRoom {
       if (this.inMatch) this.tryBandage(socket.data.playerId as string);
     });
 
+    socket.on(C2S.activateEasterEgg, () => {
+      const conn = this.connFor(socket);
+      if (!conn || conn.socket.id !== socket.id || !this.roundActive) return;
+      const player = this.players.get(conn.id);
+      if (!player || !player.connected || !player.alive || player.isBot || player.easterEggActive) return;
+      player.easterEggActive = true;
+      player.zoneDamageAcc = 0;
+      this.sendTo(player.id, [{ type: 'easterEgg', target: player.id }]);
+    });
+
     socket.on(C2S.rematch, () => {
       const c = this.connFor(socket);
       if (!c || this.inMatch) return;
@@ -840,6 +851,7 @@ export class GameRoom {
   private freshMatchPlayer(id: string, name: string, isBot = false): MatchPlayer {
     return {
       id, name, isBot, connected: true, alive: true, hp: PLAYER_MAX_HP,
+      easterEggActive: false,
       move: freshMoveState({ x: 0, y: 20, z: 0 }), yaw: 0, pitch: 0, aiming: false,
       lastSeq: 0,
       inputBuffer: { queue: [], lastAcceptedSeq: 0 },
@@ -910,6 +922,7 @@ export class GameRoom {
       const y = sampleHeight(this.gen.params, sp.x, sp.z) + 0.3;
       p.alive = p.connected;
       p.hp = PLAYER_MAX_HP;
+      p.easterEggActive = false;
       p.move = freshMoveState({ x: sp.x, y, z: sp.z });
       p.aiming = false;
       p.inv = this.freshInventory();
@@ -1538,7 +1551,7 @@ export class GameRoom {
     target: MatchPlayer, attacker: MatchPlayer | null, amount: number,
     weapon: WeaponType, cause: 'weapon' | 'grenade', events: GameEvent[], headshot: boolean,
   ): void {
-    if (!target.alive) return;
+    if (!target.alive || target.easterEggActive) return;
 
     const armor = resolveArmorHit(amount, {
       shield: target.inv.shield,
@@ -1669,7 +1682,7 @@ export class GameRoom {
   private updateZoneDamage(dt: number, events: GameEvent[]): void {
     const zone = zoneAt(this.t, this.n, MATCH_MODE_PACE[this.matchMode]);
     for (const p of this.players.values()) {
-      if (!p.alive) continue;
+      if (!p.alive || p.easterEggActive) continue;
       const d = Math.hypot(p.move.pos.x, p.move.pos.z);
       if (d <= zone.radius) continue;
       p.zoneDamageAcc += zone.dot * dt;
@@ -2334,7 +2347,18 @@ export class GameRoom {
   private checkRoundEnd(): void {
     if (!this.roundActive) return;
     const alive = [...this.players.values()].filter((p) => p.alive);
-    if (alive.length > 1) return;
+    if (alive.length > 1) {
+      const limit = (FINAL_COLLAPSE_AT + SHRINK_DURATION[3] + 20) / MATCH_MODE_PACE[this.matchMode];
+      if (!alive.some((p) => p.easterEggActive) || this.t < limit) return;
+      // Multiple protected players can outlive the final zone. Rank remaining
+      // players by proximity to its center so the round still finishes.
+      alive.sort((a, b) =>
+        Math.hypot(b.move.pos.x, b.move.pos.z) - Math.hypot(a.move.pos.x, a.move.pos.z)
+        || a.id.localeCompare(b.id));
+      this.eliminationGroups.push(...alive.map((p) => [p.id]));
+      this.endRound();
+      return;
+    }
     if (alive.length === 1) this.eliminationGroups.push([alive[0].id]);
     // if 0 alive, flushDeaths already grouped the double-KO tail
     this.endRound();

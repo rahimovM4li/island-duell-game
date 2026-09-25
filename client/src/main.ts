@@ -1444,6 +1444,7 @@ function onMatchStart(m: MatchStartMsg): void {
 
 function onRoundStart(m: RoundStartMsg): void {
   if (!gen || !world || !phys || !entities) return;
+  input.resetEasterEgg();
   world.setLightingPreset(m.lightingPreset);
   cancelVictoryCinematic();
   lastElimination = null;
@@ -1697,6 +1698,9 @@ function playPickupSound(item: GameEvent & { type: 'pickupRemove' }): void {
 
 function onEvent(e: GameEvent): void {
   switch (e.type) {
+    case 'easterEgg':
+      if (e.target === myId) hud.announce('🥚 Easter Egg! Unendlich Leben für diese Runde.', 3000);
+      break;
     case 'shot': {
       const d = e.by === myId ? 0 : distToMe(e.ox, e.oy, e.oz);
       const w = e.weapon;
@@ -2101,6 +2105,7 @@ function frame(): void {
       updateLocalFootsteps(inputStep);
 
       if (input.gameplayActive && input.inspectPressed) entities.inspectKnife();
+      if (input.gameplayActive && input.easterEggPressed) net.activateEasterEgg();
       if (input.gameplayActive && input.craftPressed) net.craft(input.craftPressed);
       if (input.gameplayActive && input.bandagePressed) { net.useBandage(); bandageStart = now; }
       input.clearEdges();

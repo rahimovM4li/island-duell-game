@@ -51,6 +51,7 @@ export function shouldBlockGameplayKey(
     || code === 'F3'
     || code === 'Tab'
     || code === 'KeyF'
+    || code === 'KeyP'
     || code === 'KeyQ';
 }
 
@@ -61,6 +62,7 @@ export class InputState {
   private fireHeld = false;
   private aimHeld = false;
   private sniperScoped = false;
+  private pPressCount = 0;
   private wheelDelta = 0;
   private touch: TouchInputSource | null = null;
   pointerLocked = false;
@@ -68,6 +70,7 @@ export class InputState {
   // per-frame edge events
   slotPressed: 1 | 2 | 3 | 4 | null = null;
   inspectPressed = false;
+  easterEggPressed = false;
   reloadPressed = false;
   dropPressed = false;
   jumpPressed = false;
@@ -85,6 +88,12 @@ export class InputState {
       if (e.repeat) return;
       const k = e.code;
       this.keys.add(k);
+      if (k === 'KeyP' && this.gameplayActive && !e.ctrlKey && !e.metaKey && !e.altKey && this.pPressCount < 2) {
+        this.pPressCount += 1;
+        if (this.pPressCount === 2) {
+          this.easterEggPressed = true;
+        }
+      }
       if (k === 'Digit1') this.slotPressed = 1;
       else if (k === 'Digit2') this.slotPressed = 2;
       else if (k === 'Digit3') this.slotPressed = 3;
@@ -102,6 +111,7 @@ export class InputState {
     window.addEventListener('blur', () => {
       this.keys.clear(); this.fireHeld = false; this.aimHeld = false;
       this.dropPressed = false;
+      this.easterEggPressed = false;
       keyboardLockController()?.unlock();
     });
 
@@ -143,6 +153,7 @@ export class InputState {
         this.aimHeld = false;
         this.wheelDelta = 0;
         this.dropPressed = false;
+        this.easterEggPressed = false;
       }
     });
   }
@@ -214,6 +225,11 @@ export class InputState {
   setSettings(settings: PlayerSettings): void { this.settings = settings; }
   setSniperScoped(scoped: boolean): void { this.sniperScoped = scoped; }
 
+  resetEasterEgg(): void {
+    this.pPressCount = 0;
+    this.easterEggPressed = false;
+  }
+
   consumeWheelDelta(): number {
     const delta = this.wheelDelta;
     this.wheelDelta = 0;
@@ -261,6 +277,7 @@ export class InputState {
   clearEdges(): void {
     this.slotPressed = null;
     this.inspectPressed = false;
+    this.easterEggPressed = false;
     this.reloadPressed = false;
     this.dropPressed = false;
     this.jumpPressed = false;

@@ -148,6 +148,7 @@ export class Net {
   sendInput(inp: InputMsg): void { this.socket.emit(C2S.input, inp); }
   craft(recipe: Recipe): void { this.socket.emit(C2S.craft, { recipe }); }
   useBandage(): void { this.socket.emit(C2S.useBandage); }
+  activateEasterEgg(): void { this.socket.emit(C2S.activateEasterEgg); }
   rematch(): void { this.socket.emit(C2S.rematch); }
   kickPlayer(playerId: string): void { this.socket.emit(C2S.kickPlayer, { playerId }); }
 
